@@ -235,9 +235,7 @@
             </div>
         </main>
 
-        <footer class="mt-auto text-white-50 custom-footer-padding">
-            <p>Jamie Cummins & Malte Elson, <a class="footer-link" target="_blank" href="https://www.dig.psy.unibe.ch/index_eng.html">Psychology of Digitalisation</a>, University of Bern, 2025</p>
-        </footer>
+        {% include '_partials/footer.html' %}
     </div>
 
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
@@ -672,6 +670,6 @@
         checkStatus();
     }
     window.onload = pollTaskStatus;
-</script>
+    </script>
 </body>
 </html>

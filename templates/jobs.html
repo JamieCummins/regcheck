@@ -39,9 +39,7 @@
         <p class="lead">We currently do not have any vacancies. However, if you are interested in working with us on RegCheck, there are always possibilities to apply for funding. If you have an idea for a collaboration, please get in touch through our <a class="footer-link" href="{{ url_for('contact') }}">contact page</a>.</p><br><br>
     </main>
 
-    <footer class="mt-auto text-white-50 custom-footer-padding">
-      <p>Jamie Cummins & Malte Elson, <a class="footer-link" target="_blank" href="https://www.dig.psy.unibe.ch/index_eng.html">Psychology of Digitalisation</a>, University of Bern, 2025</p>
-    </footer>
+    {% include '_partials/footer.html' %}
   </div>
   <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
 </body>

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import pickle
+import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -26,6 +29,38 @@ except ModuleNotFoundError:  # pragma: no cover - graceful fallback
     pd = None
 
 
+_SENTENCE_SPLIT_PATTERN = re.compile(r"(?:\n{2,}|(?<=[.!?])\s+)")
+
+
+def _fallback_sentence_split(text: str) -> list[str]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+    return [part.strip() for part in _SENTENCE_SPLIT_PATTERN.split(cleaned) if part.strip()]
+
+
+@lru_cache(maxsize=1)
+def _ensure_nltk_sentence_tokenizer() -> None:
+    if nltk is None:  # pragma: no cover - optional dependency
+        return
+
+    data_dir = Path("./nltk_data")
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    data_path = str(data_dir)
+    if data_path not in nltk.data.path:
+        nltk.data.path.append(data_path)
+
+    for resource in ("punkt_tab", "punkt"):
+        try:
+            nltk.download(resource, download_dir=data_path, quiet=True)
+        except Exception:
+            continue
+
+
 def _get_tokenizer(model_name: str = "text-embedding-3-large"):
     if tiktoken is None:
         raise RuntimeError("tiktoken is required for token-based chunking")
@@ -38,12 +73,21 @@ def extract_chunks_tokens(
     encoding_name: str = "text-embedding-3-large",
 ) -> list[str]:
     """Token-based chunking that keeps chunk boundaries on sentence edges when possible."""
-    if nltk is None:
-        raise RuntimeError("nltk is required for sentence tokenization.")
     tokenizer = _get_tokenizer(encoding_name)
-    from nltk.tokenize import sent_tokenize
+    sentences: list[str]
+    if nltk is None:
+        sentences = _fallback_sentence_split(text)
+    else:
+        from nltk.tokenize import sent_tokenize
 
-    sentences = sent_tokenize(text)
+        try:
+            sentences = sent_tokenize(text)
+        except LookupError:
+            _ensure_nltk_sentence_tokenizer()
+            try:
+                sentences = sent_tokenize(text)
+            except Exception:
+                sentences = _fallback_sentence_split(text)
     chunks: list[str] = []
     current: list[str] = []
     current_tokens = 0
