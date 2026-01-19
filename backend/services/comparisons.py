@@ -68,6 +68,15 @@ def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 
 
+def _normalize_reasoning_effort_value(value: str | None) -> str | None:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in {"low", "medium", "high"}:
+        return "medium"
+    return normalized
+
+
 def _openai_error_param(exc: Exception) -> str | None:
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
@@ -78,16 +87,10 @@ def _openai_error_param(exc: Exception) -> str | None:
                 return param.strip()
 
     message = str(exc)
-    for candidate in ("reasoning_effort", "response_format", "temperature"):
+    for candidate in ("reasoning_effort", "response_format"):
         if candidate in message:
             return candidate
     return None
-
-
-def _openai_default_temperature(model: str) -> float:
-    if model.startswith("gpt-5"):
-        return 1
-    return 0
 
 
 def _openai_chat_json(
@@ -100,11 +103,11 @@ def _openai_chat_json(
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": _openai_default_temperature(model),
         "response_format": {"type": "json_object"},
     }
-    if reasoning_effort:
-        kwargs["reasoning_effort"] = reasoning_effort
+    normalized_effort = _normalize_reasoning_effort_value(reasoning_effort)
+    if normalized_effort:
+        kwargs["reasoning_effort"] = normalized_effort
 
     while True:
         try:
@@ -135,10 +138,10 @@ def _openai_chat_text(
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": _openai_default_temperature(model),
     }
-    if reasoning_effort:
-        kwargs["reasoning_effort"] = reasoning_effort
+    normalized_effort = _normalize_reasoning_effort_value(reasoning_effort)
+    if normalized_effort:
+        kwargs["reasoning_effort"] = normalized_effort
 
     while True:
         try:
