@@ -2,6 +2,8 @@
 
 AI-assisted comparison tool for preregistrations/clinical trial registrations/preclinical (animals) registrations and published papers. FastAPI serves the web UI and HTTP API; a CLI entrypoint enables backend-only runs with CSV-defined dimensions. Redis is used for task state when running via the web app.
 
+Status: beta (under active development).
+
 ## Contents
 - `app.py` / `backend/`: FastAPI app, routes, services (comparisons, embeddings, parsing).
 - `templates/` + `static/`: Frontend pages and assets.
@@ -11,7 +13,7 @@ AI-assisted comparison tool for preregistrations/clinical trial registrations/pr
 - `backend/cli.py`: Headless CLI for running comparisons without the UI.
 
 ## Prerequisites
-- Python 3.11+ (virtualenv recommended)
+- Python 3.12+ (virtualenv recommended)
 - Redis (local or remote) for the web flow; CLI can run without Redis.
 - API keys as needed: `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY` (set whichever provider you use).
 - Optional: GROBID/DPT2 settings if using those parsers.
@@ -40,14 +42,15 @@ GROQ_API_KEY=...
 DEEPSEEK_API_KEY=...
 
 # Optional model overrides
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_EXPERIMENT_MODEL=gpt-4o-mini
-OPENAI_EXPERIMENT_REASONING_EFFORT=high
+OPENAI_MODEL=gpt-5
+OPENAI_COMPARISON_MODEL=gpt-5
+OPENAI_EXPERIMENT_MODEL=gpt-5
+OPENAI_EXPERIMENT_REASONING_EFFORT=medium        # low | medium | high
 GROQ_MODEL=llama-3.3-70b-versatile
 DEEPSEEK_MODEL=deepseek-reasoner
 
 # Optional parser overrides
-GROBID_URL=https://.../api/processFulltextDocument
+GROBID_URL=https://kermitt2-grobid.hf.space/api/processFulltextDocument
 DPT_API_KEY=...
 DPT_URL=https://api.va.eu-west-1.landing.ai/v1/ade/parse
 
@@ -84,7 +87,7 @@ python -m backend.cli general \
   --append-previous-output \
   --reasoning-effort medium \
   --output-format csv \
-  --output result.json
+  --output result.csv
 ```
 
 Clinical trial (by registration ID) vs paper:
@@ -94,10 +97,11 @@ python -m backend.cli clinical \
   --paper /path/paper.pdf \
   --client openai \
   --parser-choice grobid \
-  --dimensions-csv custom_dimensions.csv \  # optional; overrides defaults
   --output-format csv \
-  --output result.json
+  --output result.csv
 ```
+To override default dimensions, add `--dimensions-csv custom_dimensions.csv`.
+
 Animals (PCT) trial vs paper (CSV required until API is available):
 ```bash
 python -m backend.cli animals \
@@ -110,7 +114,7 @@ python -m backend.cli animals \
   --reasoning-effort medium \
   --dimensions-csv custom_dimensions.csv \
   --output-format csv \
-  --output result.json
+  --output result.csv
 ```
 If `--output` is omitted, results print to stdout. `--output-format` accepts `csv` (default) or `json`. `--append-previous-output` passes prior dimension responses into later prompts.
 
