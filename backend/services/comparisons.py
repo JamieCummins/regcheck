@@ -68,6 +68,28 @@ def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 
 
+def _openai_error_param(exc: Exception) -> str | None:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            param = error.get("param")
+            if isinstance(param, str) and param.strip():
+                return param.strip()
+
+    message = str(exc)
+    for candidate in ("reasoning_effort", "response_format", "temperature"):
+        if candidate in message:
+            return candidate
+    return None
+
+
+def _openai_default_temperature(model: str) -> float:
+    if model.startswith("gpt-5"):
+        return 1
+    return 0
+
+
 def _openai_chat_json(
     openai_client: OpenAI,
     *,
@@ -78,7 +100,7 @@ def _openai_chat_json(
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": 0,
+        "temperature": _openai_default_temperature(model),
         "response_format": {"type": "json_object"},
     }
     if reasoning_effort:
@@ -89,21 +111,15 @@ def _openai_chat_json(
             response = openai_client.chat.completions.create(**kwargs)
             break
         except Exception as exc:
-            if "reasoning_effort" in kwargs:
+            param = _openai_error_param(exc)
+            if param and param in kwargs:
                 logger.info(
-                    "OpenAI call failed with reasoning_effort; retrying without it",
+                    "OpenAI call failed with %s; retrying without it",
+                    param,
                     extra={"model": model},
                     exc_info=exc,
                 )
-                kwargs.pop("reasoning_effort", None)
-                continue
-            if "response_format" in kwargs:
-                logger.info(
-                    "OpenAI call failed with response_format; retrying without it",
-                    extra={"model": model},
-                    exc_info=exc,
-                )
-                kwargs.pop("response_format", None)
+                kwargs.pop(param, None)
                 continue
             raise
     return _message_content_to_text(response.choices[0].message)
@@ -119,23 +135,26 @@ def _openai_chat_text(
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": 0,
+        "temperature": _openai_default_temperature(model),
     }
     if reasoning_effort:
         kwargs["reasoning_effort"] = reasoning_effort
 
-    try:
-        response = openai_client.chat.completions.create(**kwargs)
-    except Exception as exc:
-        if "reasoning_effort" in kwargs:
-            logger.info(
-                "OpenAI call failed with reasoning_effort; retrying without it",
-                extra={"model": model},
-                exc_info=exc,
-            )
-            kwargs.pop("reasoning_effort", None)
+    while True:
+        try:
             response = openai_client.chat.completions.create(**kwargs)
-        else:
+            break
+        except Exception as exc:
+            param = _openai_error_param(exc)
+            if param and param in kwargs:
+                logger.info(
+                    "OpenAI call failed with %s; retrying without it",
+                    param,
+                    extra={"model": model},
+                    exc_info=exc,
+                )
+                kwargs.pop(param, None)
+                continue
             raise
     return _message_content_to_text(response.choices[0].message)
 
