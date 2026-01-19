@@ -98,7 +98,7 @@ python -m backend.cli clinical \
   --output-format csv \
   --output result.json
 ```
-Animals (PCT) trial vs paper (CSV required until API is available):
+Animals (PCT) trial vs paper (Experimental CLI-only feature - CSV required until API is available):
 ```bash
 python -m backend.cli animals \
   --registration-id PCTE0000405 \
