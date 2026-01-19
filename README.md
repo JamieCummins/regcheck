@@ -1,4 +1,5 @@
 # RegCheck
+Citation: Cummins, J., Clarke, B., Hussey, I., & Elson, M. (2026). RegCheck: A tool for automating comparisons between study registrations and papers. ArXiv: XXX. 
 
 AI-assisted comparison tool for preregistrations/clinical trial registrations/preclinical (animals) registrations and published papers. FastAPI serves the web UI and HTTP API; a CLI entrypoint enables backend-only runs with CSV-defined dimensions. Redis is used for task state when running via the web app.
 

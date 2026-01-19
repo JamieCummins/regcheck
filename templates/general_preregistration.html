@@ -385,6 +385,7 @@
       <header class="mb-4">
           {% include '_partials/navbar.html' %}
       </header>
+      {% include '_partials/mobile_notice.html' %}
       <main class="px-3">
         <form method="post" action="{{ url_for('compare') }}" enctype="multipart/form-data">
           <div class="form-step-wrapper">
