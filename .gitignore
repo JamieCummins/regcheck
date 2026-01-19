@@ -1,0 +1,34 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Virtualenvs
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Test/cache artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+
+# Local runtime artifacts (intentionally not committed)
+uploads/
+nltk_data/
+*.db
+*.rdb
+
+# Large sample documents (not redistributed)
+test_materials/**/*.pdf
+test_materials/**/*.docx
+
+# Native libraries
+*.dylib
