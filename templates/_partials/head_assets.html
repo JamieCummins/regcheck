@@ -1,0 +1,8 @@
+{% set version = static_version | default('20240519') %}
+<script src="{{ url_for('static', path='js/color-modes.js') }}?v={{ version }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', path='css/bootstrap.min.css') }}?v={{ version }}">
+<link rel="stylesheet" href="{{ url_for('static', path='css/custom-styles.css') }}?v={{ version }}">
+<link rel="stylesheet" href="{{ url_for('static', path='css/cover.css') }}?v={{ version }}">
+<link rel="icon" href="{{ url_for('static', path='assets/favicon.ico') }}?v={{ version }}" type="image/x-icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

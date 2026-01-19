@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-bs-theme="auto">
+<head>
+    {% set static_version = '20240519' %}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="author" content="Jamie Cummins">
+    <title>RegCheck Jobs</title>
+    <link rel="canonical" href="https://getbootstrap.com/docs/5.3/examples/cover/">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
+    <style>
+      header {
+          position: sticky;
+          top: 0;
+          z-index: 1000;
+      }
+
+      main {
+          flex-grow: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+      }
+  </style>
+
+</head>
+{% set nav_active = 'jobs' %}
+<body class="d-flex text-center text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+      <header class="mb-auto">
+          {% include '_partials/navbar.html' %}
+      </header>
+    <main class="px-3 contact-margin-top">
+        <h1>Openings</h1>
+        <p class="lead">We currently do not have any vacancies. However, if you are interested in working with us on RegCheck, there are always possibilities to apply for funding. If you have an idea for a collaboration, please get in touch through our <a class="footer-link" href="{{ url_for('contact') }}">contact page</a>.</p><br><br>
+    </main>
+
+    <footer class="mt-auto text-white-50 custom-footer-padding">
+      <p>Jamie Cummins & Malte Elson, <a class="footer-link" target="_blank" href="https://www.dig.psy.unibe.ch/index_eng.html">Psychology of Digitalisation</a>, University of Bern, 2025</p>
+    </footer>
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+dimension,definition
+Study type,Whether the study is primarily framed as exploratory or confirmatory research. 
+Total sample size,The overall sum of animals specified for collection in the protocol/paper.
+Sample size per group,The number of animals specified for collection for each group in the protocol/paper.
+Planned interventions,"The intervention, or interventions, which are reported or planned in the study."
+bias reduction measures,"The protocols, steps, and methods which are described aimed at reducing bias in the study."
+Outcomes: primary,The prespecified main outcome that a study is designed and powered to assess. It provides the most important evidence regarding the effectiveness (or other main effect) of an intervention or exposure.
+Outcomes: secondary,"Prespecified outcomes that help to interpret or contextualize the effect of the intervention but are not the primary focus of the trial. They may address other important effects of interest, provide information about mechanisms, or generate hypotheses for future studies."
+Planned analyses,The planned statistical analyses which are associated with each outcome of interest in the study.
+Planned hypotheses,"A planned hypothesis is an explicitly stated, a priori prediction about the expected relationship between variables, formulated before data collection or analysis. It typically specifies: The variables of interest (independent, dependent, or mediating/moderating variables), The expected direction, form, or presence of an effect or association, and, The theoretical or empirical rationale motivating the prediction. Planned hypotheses differ from exploratory or post hoc interpretations in that they are declared prior to seeing the data and serve as the basis for confirmatory testing."
+Miscellaneous content,"This is any content specified in a protocol or paper that is not entailed within (i) study type (exploratory vs. confirmatory), (ii) sample size, (iii) planned interventions, (iv) bias reduction measures, (v) primary and secondary outcomes, (vi) planned analyses, and (vii) planned hypotheses. "
