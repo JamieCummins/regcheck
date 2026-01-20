@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    {% set static_version = '20240519' %}
+    {% set static_version = '20260119' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -161,6 +161,7 @@
         <header class="mb-auto">
             {% include '_partials/navbar.html' %}
         </header>
+        {% include '_partials/mobile_notice.html' %}
 
         <main class="px-3 results-main">
             <h1 class="text-center" id="results-page-tagline">Your RegCheck Report</h1>
@@ -235,9 +236,7 @@
             </div>
         </main>
 
-        <footer class="mt-auto text-white-50 custom-footer-padding">
-            <p>Jamie Cummins & Malte Elson, <a class="footer-link" target="_blank" href="https://www.dig.psy.unibe.ch/index_eng.html">Psychology of Digitalisation</a>, University of Bern, 2025</p>
-        </footer>
+        {% include '_partials/footer.html' %}
     </div>
 
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
@@ -672,6 +671,6 @@
         checkStatus();
     }
     window.onload = pollTaskStatus;
-</script>
+    </script>
 </body>
 </html>
