@@ -6,10 +6,9 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 
 try:  # pragma: no cover - optional dependency
     import nltk
@@ -22,12 +21,6 @@ try:  # pragma: no cover - optional dependency
     import tiktoken
 except ModuleNotFoundError:  # pragma: no cover - graceful fallback
     tiktoken = None
-
-try:  # pragma: no cover - optional dependency
-    import pandas as pd
-except ModuleNotFoundError:  # pragma: no cover - graceful fallback
-    pd = None
-
 
 _SENTENCE_SPLIT_PATTERN = re.compile(r"(?:\n{2,}|(?<=[.!?])\s+)")
 
@@ -135,8 +128,13 @@ def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-
     return np.asarray(embeddings, dtype=np.float32)
 
 
-def openai_embed_text(text: str, model: str = "text-embedding-3-large") -> tuple[list[str], np.ndarray]:
-    segments = extract_chunks_tokens(text, encoding_name=model)
+def openai_embed_text(
+    text: str,
+    model: str = "text-embedding-3-large",
+    *,
+    max_chunk_tokens: int = 300,
+) -> tuple[list[str], np.ndarray]:
+    segments = extract_chunks_tokens(text, max_chunk_tokens=max_chunk_tokens, encoding_name=model)
     embeddings = openai_embed_segments(segments, model=model)
     return list(segments), embeddings
 
@@ -157,45 +155,45 @@ def load_embeddings(path: str) -> tuple[list[str], np.ndarray]:
         data = pickle.load(handle)
     return list(data["segments"]), np.asarray(data["embeddings"], dtype=np.float32)
 
-
-def _segments_to_df(
-    segments: Sequence[str],
-    embeddings: np.ndarray,
-    chunk_ids: Sequence[str] | None = None,
-) -> pd.DataFrame:
-    if pd is None:
-        raise RuntimeError("pandas is required to create embedding DataFrames")
-    ids = (
-        list(chunk_ids)
-        if chunk_ids is not None
-        else [f"CHUNK_{i+1:04d}" for i in range(len(segments))]
-    )
-    return pd.DataFrame({"chunk_id": ids, "chunk": list(segments), "embedding": list(embeddings)})
-
-
 def retrieve_relevant_chunks(
-    prompt: str,
-    df: pd.DataFrame,
+    query_embedding: np.ndarray,
+    corpus: "EmbeddingCorpus",
     top_k: int | None = None,
     threshold: float | None = None,
-) -> pd.DataFrame:
+) -> list[tuple[str, str, float]]:
     if top_k is None and threshold is None:
         raise ValueError("At least one of 'top_k' or 'threshold' must be specified.")
 
-    if pd is None:
-        raise RuntimeError("pandas is required for similarity retrieval")
+    if not isinstance(query_embedding, np.ndarray):
+        query_embedding = np.asarray(query_embedding, dtype=np.float32)
+    qvec = query_embedding.astype(np.float32, copy=False).reshape(-1)
+    qnorm = float(np.linalg.norm(qvec)) or 1.0
 
-    topic_embedding = get_embedding(prompt)
-    similarities = cosine_similarity([topic_embedding], np.vstack(df["embedding"]))[0]
-    df = df.copy()
-    df["similarity"] = similarities
-    df_sorted = df.sort_values(by="similarity", ascending=False)
+    embeddings = corpus.embeddings
+    if embeddings.size == 0:
+        return []
+    # cosine similarity: (E·q) / (||E|| * ||q||)
+    sims = (embeddings @ qvec) / (corpus.norms * qnorm)
 
     if threshold is not None:
-        df_sorted = df_sorted[df_sorted["similarity"] >= threshold]
-    if top_k is not None:
-        df_sorted = df_sorted.head(top_k)
-    return df_sorted[["chunk_id", "chunk", "similarity"]]
+        idx = np.flatnonzero(sims >= threshold)
+    else:
+        idx = np.arange(sims.shape[0])
+
+    if idx.size == 0:
+        return []
+
+    if top_k is not None and idx.size > top_k:
+        # argpartition yields top_k indices in arbitrary order; then sort by score desc.
+        local = np.argpartition(sims[idx], -top_k)[-top_k:]
+        idx = idx[local]
+    # Sort by similarity descending
+    idx = idx[np.argsort(sims[idx])[::-1]]
+
+    return [
+        (corpus.chunk_ids[int(i)], corpus.segments[int(i)], float(sims[int(i)]))
+        for i in idx
+    ]
 
 
 def get_top_k_segments_openai(
@@ -230,7 +228,8 @@ def count_tokens(text: str, model_name: str = "gpt-4o") -> int:
 class EmbeddingCorpus:
     segments: list[str]
     embeddings: np.ndarray
-    df: Any
+    chunk_ids: list[str]
+    norms: np.ndarray
 
 
 def build_corpus(
@@ -239,20 +238,29 @@ def build_corpus(
     embeddings_path: str | None = None,
     chunk_prefix: str | None = None,
     max_segments: int | None = None,
+    max_chunk_tokens: int = 300,
 ) -> EmbeddingCorpus:
     segments: list[str]
     embeddings: np.ndarray
     if embeddings_path and os.path.exists(embeddings_path):
         segments, embeddings = load_embeddings(embeddings_path)
     else:
-        segments, embeddings = openai_embed_text(text, model=model)
-        if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
-            segments = segments[:max_segments]
-            embeddings = embeddings[: max_segments]
-        if embeddings_path:
-            save_embeddings(segments, embeddings, embeddings_path)
+        segments, embeddings = openai_embed_text(text, model=model, max_chunk_tokens=max_chunk_tokens)
+
+    if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
+        segments = segments[:max_segments]
+        embeddings = embeddings[: max_segments]
+    if embeddings_path and not os.path.exists(embeddings_path):
+        save_embeddings(segments, embeddings, embeddings_path)
+
     chunk_ids = [
         f"{(chunk_prefix or 'CHUNK').upper()}_{i+1:04d}" for i in range(len(segments))
     ]
-    df = _segments_to_df(segments, embeddings, chunk_ids=chunk_ids)
-    return EmbeddingCorpus(segments=list(segments), embeddings=embeddings, df=df)
+    norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
+    norms[norms == 0] = 1.0
+    return EmbeddingCorpus(
+        segments=list(segments),
+        embeddings=np.asarray(embeddings, dtype=np.float32),
+        chunk_ids=list(chunk_ids),
+        norms=norms,
+    )
