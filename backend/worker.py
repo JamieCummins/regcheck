@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import gzip
+from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from backend.core.config import get_settings
@@ -17,11 +20,40 @@ from backend.services.comparisons import (
 logger = logging.getLogger(__name__)
 
 
+async def _restore_upload(redis_client, path: str, redis_key: str | None) -> None:
+    """Recreate an uploaded file on the worker dyno if it doesn't exist locally."""
+    if not path or Path(path).exists():
+        return
+    if not redis_key:
+        raise FileNotFoundError(f"Missing redis key to restore upload for {path}")
+    encoded = await redis_client.get(redis_key)
+    if not encoded:
+        raise FileNotFoundError(f"Upload payload not found in redis for key {redis_key}")
+    try:
+        compressed = base64.b64decode(encoded)
+        raw = gzip.decompress(compressed)
+    except Exception as exc:
+        raise ValueError(f"Failed to decode stored upload for key {redis_key}: {exc}") from exc
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+
+
 async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
     comparison_type = job.get("comparison_type")
     task_id = job.get("task_id")
+    upload_keys = job.get("upload_keys") or {}
 
     async def _runner() -> None:
+        # Restore uploads if missing on worker dyno
+        try:
+            await _restore_upload(redis_client, job.get("paper_path", ""), upload_keys.get("paper"))
+            await _restore_upload(redis_client, job.get("prereg_path", ""), upload_keys.get("prereg"))
+            await _restore_upload(redis_client, job.get("registration_csv_path", ""), upload_keys.get("csv"))
+        except Exception as exc:
+            logger.error("Failed to restore uploads for job", exc_info=exc, extra={"task_id": task_id})
+            raise
+
         if comparison_type == "clinical_trials":
             await clinical_trial_comparison(
                 job.get("registration_id", ""),
