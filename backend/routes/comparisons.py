@@ -208,6 +208,18 @@ async def _queue_comparison(
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
     redis_client = request.app.state.redis
+    upload_ttl = max(86400, getattr(settings, "task_ttl_seconds", 86400))
+
+    # Basic backpressure: refuse new jobs if queue + in-flight exceeds configured limit.
+    try:
+        queued = await redis_client.llen("comparison:queue")
+        in_flight = await redis_client.llen("comparison:processing")
+        if queued + in_flight >= settings.max_queue_length:
+            raise HTTPException(status_code=503, detail="System is busy; please retry shortly.")
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Failed to compute queue depth; proceeding without backpressure", exc_info=exc)
 
     selected_dimensions = _parse_dimensions(dimensions_data)
     dimension_names = [item["dimension"] for item in selected_dimensions]
@@ -240,7 +252,11 @@ async def _queue_comparison(
         except Exception:
             pass
     else:
-        await _store_upload_to_redis(redis_client, paper_redis_key, paper_path)
+        await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
+        try:
+            Path(paper_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
@@ -267,7 +283,11 @@ async def _queue_comparison(
             except Exception:
                 pass
         else:
-            await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path)
+            await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
+            try:
+                Path(stored_prereg_path).unlink(missing_ok=True)
+            except Exception:
+                pass
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
             raise HTTPException(status_code=400, detail="Registration ID is required for this option")
@@ -287,7 +307,11 @@ async def _queue_comparison(
             except Exception:
                 pass
         else:
-            await _store_upload_to_redis(redis_client, csv_redis_key, stored_csv_path)
+            await _store_upload_to_redis(redis_client, csv_redis_key, stored_csv_path, ttl_seconds=upload_ttl)
+            try:
+                Path(stored_csv_path).unlink(missing_ok=True)
+            except Exception:
+                pass
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
@@ -302,6 +326,7 @@ async def _queue_comparison(
     }
     try:
         await _safe_hset(redis_client, task_id, initial_payload)
+        await redis_client.expire(task_id, settings.task_ttl_seconds)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
         raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
@@ -362,7 +387,6 @@ async def _queue_comparison(
         )
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
-        await _safe_hset(redis_client, task_id, {"partial": "enabled"})
     return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
 
 
