@@ -226,63 +226,59 @@ async def _queue_comparison(
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
 
+    job_payload = {
+        "comparison_type": comparison_type,
+        "task_id": task_id,
+        "client": client,
+        "parser_choice": parser_choice_normalized,
+        "reasoning_effort": effort_normalized,
+        "append_previous_output": append_previous,
+        "selected_dimensions": selected_dimensions,
+    }
+
     if comparison_type == "clinical_trials":
-        asyncio.create_task(
-            run_with_concurrency_limit(
-                lambda: clinical_trial_comparison(
-                    registration_id,  # type: ignore[arg-type]
-                    paper_path,
-                    paper_ext,
-                    client,
-                    task_id,
-                    redis_client,
-                    parser_choice=parser_choice_normalized,
-                    reasoning_effort=effort_normalized,
-                    selected_dimensions=selected_dimensions,
-                    append_previous_output=append_previous,
-                )
-            )
+        job_payload.update(
+            {
+                "registration_id": registration_id,
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+            }
         )
     elif comparison_type == "general_preregistration":
         multiple_experiments_flag = _bool_from_yes(multiple_experiments)
-        asyncio.create_task(
-            run_with_concurrency_limit(
-                lambda: general_preregistration_comparison(
-                    stored_prereg_path,  # type: ignore[arg-type]
-                    prereg_ext or "",
-                    paper_path,
-                    paper_ext,
-                    client,
-                    parser_choice_normalized,
-                    task_id,
-                    redis_client,
-                    selected_dimensions,
-                    append_previous_output=append_previous,
-                    reasoning_effort=effort_normalized,
-                    multiple_experiments=multiple_experiments_flag,
-                    experiment_number=experiment_number,
-                    experiment_text=experiment_text,
-                )
-            )
+        job_payload.update(
+            {
+                "prereg_path": stored_prereg_path,
+                "prereg_ext": prereg_ext or "",
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+                "multiple_experiments": multiple_experiments_flag,
+                "experiment_number": experiment_number,
+                "experiment_text": experiment_text,
+            }
         )
     else:
-        asyncio.create_task(
-            run_with_concurrency_limit(
-                lambda: animals_trial_comparison(
-                    registration_id or "",
-                    paper_path,
-                    paper_ext,
-                    client,
-                    registration_csv_path=stored_csv_path,  # type: ignore[arg-type]
-                    parser_choice=parser_choice_normalized,
-                    task_id=task_id,
-                    redis_client=redis_client,
-                    selected_dimensions=selected_dimensions,
-                    append_previous_output=append_previous,
-                    reasoning_effort=effort_normalized,
-                )
-            )
+        job_payload.update(
+            {
+                "registration_id": registration_id,
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+                "registration_csv_path": stored_csv_path,
+            }
         )
+
+    try:
+        await redis_client.rpush("comparison:queue", json.dumps(job_payload))
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.error("Failed to enqueue comparison job", exc_info=exc, extra={"task_id": task_id})
+        await redis_client.hset(
+            task_id,
+            mapping={
+                "state": "FAILURE",
+                "status": "Failed to enqueue job; please retry.",
+            },
+        )
+        raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
     await redis_client.hset(task_id, mapping={"partial": "enabled"})
     return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
