@@ -174,6 +174,20 @@ def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> st
     return None
 
 
+async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2) -> None:
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            await redis_client.hset(task_id, mapping=mapping)
+            return
+        except Exception as exc:  # pragma: no cover - defensive logging
+            last_error = exc
+            logger.error("Redis hset failed (attempt %s/%s)", attempt + 1, retries + 1, exc_info=exc)
+            await asyncio.sleep(0.2 * (attempt + 1))
+    if last_error:
+        raise last_error
+
+
 async def _queue_comparison(
     request: Request,
     *,
@@ -287,9 +301,10 @@ async def _queue_comparison(
         "comparison_type": comparison_type,
     }
     try:
-        await redis_client.hset(task_id, mapping=initial_payload)
+        await _safe_hset(redis_client, task_id, initial_payload)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
+        raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
 
     job_payload = {
         "comparison_type": comparison_type,
@@ -347,7 +362,7 @@ async def _queue_comparison(
         )
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
-    await redis_client.hset(task_id, mapping={"partial": "enabled"})
+        await _safe_hset(redis_client, task_id, {"partial": "enabled"})
     return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
 
 
