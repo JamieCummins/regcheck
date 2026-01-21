@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -14,10 +15,26 @@ from ..services.comparisons import (
     clinical_trial_comparison,
     general_preregistration_comparison,
     animals_trial_comparison,
+    run_with_concurrency_limit,
 )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def _upload_limit() -> int:
+    raw = os.getenv("MAX_UPLOAD_BYTES")
+    if raw is None:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return max(1, parsed)
+
+
+MAX_UPLOAD_BYTES = _upload_limit()
 
 ComparisonType = Literal[
     "clinical_trials",
@@ -26,11 +43,36 @@ ComparisonType = Literal[
 ]
 
 
-async def _store_upload(destination: Path, upload: UploadFile) -> str:
+async def _store_upload(
+    destination: Path,
+    upload: UploadFile,
+    *,
+    max_bytes: int | None = None,
+) -> str:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    contents = await upload.read()
-    with open(destination, "wb") as handle:
-        handle.write(contents)
+    size_limit = max_bytes or MAX_UPLOAD_BYTES
+    total_read = 0
+    try:
+        with open(destination, "wb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if size_limit and total_read > size_limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Uploaded file exceeds the permitted size limit.",
+                    )
+                handle.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        try:
+            await upload.seek(0)
+        except Exception:
+            pass
     return str(destination)
 
 
@@ -48,10 +90,11 @@ async def _save_upload(
     upload: UploadFile,
     *,
     prefix: str,
+    max_bytes: int | None = None,
 ) -> tuple[str, str]:
     filename = _safe_filename(upload.filename)
     destination = upload_dir / f"{prefix}_{filename}"
-    stored = await _store_upload(destination, upload)
+    stored = await _store_upload(destination, upload, max_bytes=max_bytes)
     return stored, _file_ext(filename)
 
 
@@ -133,7 +176,9 @@ async def _queue_comparison(
     if paper is None:
         raise HTTPException(status_code=400, detail="Paper upload is required")
     task_id = str(uuid.uuid4())
-    paper_path, paper_ext = await _save_upload(upload_dir, paper, prefix=f"{task_id}_paper")
+    paper_path, paper_ext = await _save_upload(
+        upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
+    )
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
@@ -150,7 +195,7 @@ async def _queue_comparison(
                 status_code=400, detail="Preregistration upload is required for this option"
             )
         stored_prereg_path, prereg_ext = await _save_upload(
-            upload_dir, preregistration, prefix=f"{task_id}_prereg"
+            upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
         )
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
@@ -161,7 +206,7 @@ async def _queue_comparison(
                 detail="CSV required for animals trials until API retrieval is implemented.",
             )
         stored_csv_path, _ = await _save_upload(
-            upload_dir, registration_csv, prefix=f"{task_id}_registration"
+            upload_dir, registration_csv, prefix=f"{task_id}_registration", max_bytes=MAX_UPLOAD_BYTES
         )
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
@@ -183,53 +228,59 @@ async def _queue_comparison(
 
     if comparison_type == "clinical_trials":
         asyncio.create_task(
-            clinical_trial_comparison(
-                registration_id,  # type: ignore[arg-type]
-                paper_path,
-                paper_ext,
-                client,
-                task_id,
-                redis_client,
-                parser_choice=parser_choice_normalized,
-                reasoning_effort=effort_normalized,
-                selected_dimensions=selected_dimensions,
-                append_previous_output=append_previous,
+            run_with_concurrency_limit(
+                lambda: clinical_trial_comparison(
+                    registration_id,  # type: ignore[arg-type]
+                    paper_path,
+                    paper_ext,
+                    client,
+                    task_id,
+                    redis_client,
+                    parser_choice=parser_choice_normalized,
+                    reasoning_effort=effort_normalized,
+                    selected_dimensions=selected_dimensions,
+                    append_previous_output=append_previous,
+                )
             )
         )
     elif comparison_type == "general_preregistration":
         multiple_experiments_flag = _bool_from_yes(multiple_experiments)
         asyncio.create_task(
-            general_preregistration_comparison(
-                stored_prereg_path,  # type: ignore[arg-type]
-                prereg_ext or "",
-                paper_path,
-                paper_ext,
-                client,
-                parser_choice_normalized,
-                task_id,
-                redis_client,
-                selected_dimensions,
-                append_previous_output=append_previous,
-                reasoning_effort=effort_normalized,
-                multiple_experiments=multiple_experiments_flag,
-                experiment_number=experiment_number,
-                experiment_text=experiment_text,
+            run_with_concurrency_limit(
+                lambda: general_preregistration_comparison(
+                    stored_prereg_path,  # type: ignore[arg-type]
+                    prereg_ext or "",
+                    paper_path,
+                    paper_ext,
+                    client,
+                    parser_choice_normalized,
+                    task_id,
+                    redis_client,
+                    selected_dimensions,
+                    append_previous_output=append_previous,
+                    reasoning_effort=effort_normalized,
+                    multiple_experiments=multiple_experiments_flag,
+                    experiment_number=experiment_number,
+                    experiment_text=experiment_text,
+                )
             )
         )
     else:
         asyncio.create_task(
-            animals_trial_comparison(
-                registration_id or "",
-                paper_path,
-                paper_ext,
-                client,
-                registration_csv_path=stored_csv_path,  # type: ignore[arg-type]
-                parser_choice=parser_choice_normalized,
-                task_id=task_id,
-                redis_client=redis_client,
-                selected_dimensions=selected_dimensions,
-                append_previous_output=append_previous,
-                reasoning_effort=effort_normalized,
+            run_with_concurrency_limit(
+                lambda: animals_trial_comparison(
+                    registration_id or "",
+                    paper_path,
+                    paper_ext,
+                    client,
+                    registration_csv_path=stored_csv_path,  # type: ignore[arg-type]
+                    parser_choice=parser_choice_normalized,
+                    task_id=task_id,
+                    redis_client=redis_client,
+                    selected_dimensions=selected_dimensions,
+                    append_previous_output=append_previous,
+                    reasoning_effort=effort_normalized,
+                )
             )
         )
 
