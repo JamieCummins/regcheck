@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import gzip
 import json
 import logging
 import os
@@ -98,6 +100,20 @@ async def _save_upload(
     return stored, _file_ext(filename)
 
 
+async def _store_upload_to_redis(redis_client, redis_key: str, file_path: str, ttl_seconds: int = 86400) -> None:
+    """Store an uploaded file's contents in Redis (compressed + base64) so workers can reconstruct it."""
+    try:
+        raw = Path(file_path).read_bytes()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read uploaded file: {exc}") from exc
+    compressed = gzip.compress(raw)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    try:
+        await redis_client.set(redis_key, encoded, ex=ttl_seconds)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to persist upload to queue store") from exc
+
+
 def _bool_from_yes(value: str | None) -> bool:
     return (value or "").strip().lower() == "yes"
 
@@ -179,10 +195,14 @@ async def _queue_comparison(
     paper_path, paper_ext = await _save_upload(
         upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
     )
+    paper_redis_key = f"upload:{task_id}:paper"
+    await _store_upload_to_redis(redis_client, paper_redis_key, paper_path)
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
     stored_csv_path: str | None = None
+    prereg_redis_key: str | None = None
+    csv_redis_key: str | None = None
 
     if comparison_type == "clinical_trials":
         if not registration_id or not registration_id.strip():
@@ -197,6 +217,8 @@ async def _queue_comparison(
         stored_prereg_path, prereg_ext = await _save_upload(
             upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
         )
+        prereg_redis_key = f"upload:{task_id}:prereg"
+        await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path)
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
             raise HTTPException(status_code=400, detail="Registration ID is required for this option")
@@ -208,6 +230,8 @@ async def _queue_comparison(
         stored_csv_path, _ = await _save_upload(
             upload_dir, registration_csv, prefix=f"{task_id}_registration", max_bytes=MAX_UPLOAD_BYTES
         )
+        csv_redis_key = f"upload:{task_id}:csv"
+        await _store_upload_to_redis(redis_client, csv_redis_key, stored_csv_path)
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
@@ -234,6 +258,11 @@ async def _queue_comparison(
         "reasoning_effort": effort_normalized,
         "append_previous_output": append_previous,
         "selected_dimensions": selected_dimensions,
+        "upload_keys": {
+            "paper": paper_redis_key,
+            "prereg": prereg_redis_key,
+            "csv": csv_redis_key,
+        },
     }
 
     if comparison_type == "clinical_trials":
