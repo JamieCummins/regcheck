@@ -157,7 +157,6 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 await redis_client.expire(task_id, settings.task_ttl_seconds)
             except Exception:  # pragma: no cover - best-effort failure status
                 logger.warning("Failed to update task status after error", exc_info=exc, extra={"task_id": task_id})
-        raise
     finally:
         # Always clean up uploaded artifacts stored in S3 for this task.
         if s3_cfg is not None:
