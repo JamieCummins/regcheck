@@ -341,7 +341,7 @@ async def extract_experiment_specific_paper_text(
     client_choice: str = "openai",
     reasoning_effort: str | None = None,
 ) -> str:
-    """Use an OpenAI model to isolate intro, relevant experiment, and general discussion text.
+    """Use a generative LLM to isolate intro, relevant experiment, and general discussion text.
 
     The model is also instructed to inline summaries of referenced experiments in square brackets.
     """
@@ -374,8 +374,9 @@ async def extract_experiment_specific_paper_text(
             {
                 "role": "system",
                 "content": (
-                    "You are an expert academic editor. Your job is to extract only the requested sections "
-                    "from a multi-experiment paper while preserving the original language."
+                    "You are an expert academic text extractor. Your job is to extract only the requested sections "
+                    "from a multi-experiment paper while preserving the original language, annotating relevant "
+                    "information of other studies where referenced in-text in square brackets following that reference."
                 ),
             },
             {"role": "user", "content": user_prompt},
