@@ -338,6 +338,8 @@ async def extract_experiment_specific_paper_text(
     full_paper_text: str,
     experiment_label: str,
     experiment_note: str | None = None,
+    client_choice: str = "openai",
+    reasoning_effort: str | None = None,
 ) -> str:
     """Use an OpenAI model to isolate intro, relevant experiment, and general discussion text.
 
@@ -368,8 +370,6 @@ async def extract_experiment_specific_paper_text(
     user_prompt += f"\n\nFull paper text:\n{full_paper_text}"
 
     def _invoke_llm() -> str:
-        openai_client = get_openai_client()
-        model = _openai_experiment_model()
         messages = [
             {
                 "role": "system",
@@ -380,12 +380,35 @@ async def extract_experiment_specific_paper_text(
             },
             {"role": "user", "content": user_prompt},
         ]
-        return _openai_chat_text(
-            openai_client,
-            model=model,
-            messages=messages,
-            reasoning_effort=_env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high"),
-        )
+        if client_choice == "openai":
+            openai_client = get_openai_client()
+            model = _openai_experiment_model()
+            normalized_effort = _normalize_reasoning_effort_value(
+                reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
+            )
+            return _openai_chat_text(
+                openai_client,
+                model=model,
+                messages=messages,
+                reasoning_effort=normalized_effort,
+            )
+        if client_choice == "deepseek":
+            deepseek_client = get_deepseek_client()
+            response = deepseek_client.chat.completions.create(
+                model=_deepseek_model(),
+                messages=messages,
+                temperature=0,
+            )
+            raw_content = _message_content_to_text(response.choices[0].message)
+            return _strip_deepseek_reasoning(raw_content)
+        if client_choice == "groq":
+            response = groq_client.chat.completions.create(
+                model=_groq_model(),
+                messages=messages,
+                temperature=0,
+            )
+            return _message_content_to_text(response.choices[0].message)
+        raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
     content = await asyncio.to_thread(_invoke_llm)
     cleaned = (content or "").strip()
@@ -498,6 +521,8 @@ async def general_preregistration_comparison(
                 extracted_paper_sections,
                 experiment_label=experiment_label,
                 experiment_note=experiment_note,
+                client_choice=client_choice,
+                reasoning_effort=reasoning_effort,
             )
             extracted_paper_sections = canonical_paper_text
             if task_id and redis_client:
