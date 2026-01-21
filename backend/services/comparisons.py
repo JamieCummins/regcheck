@@ -28,7 +28,7 @@ from .embeddings import (
     get_embedding,
     retrieve_relevant_chunks,
 )
-from .pdf_parsers import extract_body_text, pdf2dpt, pdf2grobid
+from .pdf_parsers import extract_body_text, extract_dpt_text, pdf2dpt, pdf2grobid
 from .trials import extract_nct_id, extract_nested_trial
 
 logger = logging.getLogger(__name__)
@@ -458,7 +458,7 @@ async def general_preregistration_comparison(
                 paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 paper_text = await pdf2dpt(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
                 paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
@@ -736,7 +736,7 @@ async def clinical_trial_comparison(
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
                 paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
@@ -927,7 +927,7 @@ async def animals_trial_comparison(
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
                 paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
