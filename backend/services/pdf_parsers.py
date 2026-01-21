@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -50,6 +51,40 @@ async def pdf2dpt(
         raise RuntimeError(f"DPT parsing failed: {exc}") from exc
     response.raise_for_status()
     return response.json()
+
+
+def extract_dpt_text(payload: Any) -> str:
+    """Recursively collect textual content from a DPT response payload."""
+    chunks: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if node is None:
+            return
+        if isinstance(node, str):
+            text = node.strip()
+            if text:
+                chunks.append(text)
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_lower = str(key).lower()
+                if isinstance(value, str) and any(token in key_lower for token in ("text", "content", "paragraph", "body")):
+                    _walk(value)
+                else:
+                    _walk(value)
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+
+    _walk(payload)
+    if chunks:
+        return "\n\n".join(chunks)
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return str(payload)
 
 
 def extract_body_text(xml_content: str) -> str:
