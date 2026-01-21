@@ -11,12 +11,6 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
-from ..services.comparisons import (
-    clinical_trial_comparison,
-    general_preregistration_comparison,
-    animals_trial_comparison,
-    run_with_concurrency_limit,
-)
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 
 router = APIRouter()

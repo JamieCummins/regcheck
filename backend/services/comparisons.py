@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, TypeVar
 
-import numpy as np
 from dotenv import load_dotenv
 
 from groq import Groq
@@ -84,6 +83,15 @@ def _groq_model() -> str:
 
 def _max_embedding_segments() -> int:
     configured = _env_int("MAX_EMBEDDING_SEGMENTS", DEFAULT_MAX_SEGMENTS)
+    return max(100, configured)
+
+
+def _embedding_model() -> str:
+    return _env_str("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+
+
+def _embedding_max_chunk_tokens() -> int:
+    configured = _env_int("EMBEDDING_MAX_CHUNK_TOKENS", 300)
     return max(100, configured)
 
 
@@ -324,42 +332,6 @@ def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k:
     bounded = min(max_k, bounded)
     return min(total_segments, bounded)
 
-
-def _rerank_candidates(
-    rows: list[tuple[str, str, float]],
-    corpus: EmbeddingCorpus,
-    query: str,
-    alpha: float = 0.7,
-) -> list[tuple[str, str, float]]:
-    """Re-rank candidate rows using fresh query embedding; combine with prior score."""
-    if not rows:
-        return rows
-    try:
-        qvec = get_embedding(query)
-    except Exception:
-        return rows
-
-    df = corpus.df
-    reranked: list[tuple[str, str, float]] = []
-    qnorm = np.linalg.norm(qvec) or 1.0
-    for cid, text, prev_sim in rows:
-        try:
-            match = df.loc[df["chunk_id"] == cid]
-            if match.empty:
-                reranked.append((cid, text, prev_sim))
-                continue
-            emb = match.iloc[0]["embedding"]
-            if emb is None:
-                reranked.append((cid, text, prev_sim))
-                continue
-            emb_norm = np.linalg.norm(emb) or 1.0
-            cos = float(np.dot(emb, qvec) / (emb_norm * qnorm))
-            score = alpha * cos + (1 - alpha) * prev_sim
-            reranked.append((cid, text, score))
-        except Exception:
-            reranked.append((cid, text, prev_sim))
-    reranked.sort(key=lambda x: x[2], reverse=True)
-    return reranked
 
 
 async def extract_experiment_specific_paper_text(
@@ -1243,14 +1215,18 @@ def run_comparison(
     paper_key = f"paper:{hashlib.sha256(extracted_paper_sections.encode('utf-8')).hexdigest()}"
 
     max_segments = _max_embedding_segments()
+    embedding_model = _embedding_model()
+    max_chunk_tokens = _embedding_max_chunk_tokens()
 
     prereg_corpus = cache.get(prereg_key)
     if prereg_corpus is None:
         prereg_corpus = build_corpus(
             preregistration_input,
+            model=embedding_model,
             embeddings_path=prereg_path,
             chunk_prefix="PREREG",
             max_segments=max_segments,
+            max_chunk_tokens=max_chunk_tokens,
         )
         cache[prereg_key] = prereg_corpus
 
@@ -1258,9 +1234,11 @@ def run_comparison(
     if paper_corpus is None:
         paper_corpus = build_corpus(
             extracted_paper_sections,
+            model=embedding_model,
             embeddings_path=paper_path,
             chunk_prefix="PAPER",
             max_segments=max_segments,
+            max_chunk_tokens=max_chunk_tokens,
         )
         cache[paper_key] = paper_corpus
 
@@ -1276,6 +1254,8 @@ def run_comparison(
     prereg_top_k = top_k if top_k is not None else _compute_top_k(len(prereg_corpus.segments))
     paper_top_k = top_k if top_k is not None else _compute_top_k(len(paper_corpus.segments))
 
+    query_embedding = get_embedding(augmented_query, model=embedding_model)
+
     candidate_factor = 3
     prereg_candidate_k = min(
         len(prereg_corpus.segments), max(prereg_top_k * candidate_factor, prereg_top_k + 5)
@@ -1284,50 +1264,15 @@ def run_comparison(
         len(paper_corpus.segments), max(paper_top_k * candidate_factor, paper_top_k + 5)
     )
 
-    prereg_hits: dict[str, tuple[str, float]] = {}
-    paper_hits: dict[str, tuple[str, float]] = {}
-    prereg_df = retrieve_relevant_chunks(
-        augmented_query, prereg_corpus.df, top_k=prereg_candidate_k
+    prereg_candidates = retrieve_relevant_chunks(
+        query_embedding, prereg_corpus, top_k=prereg_candidate_k
     )
-    for _, row in prereg_df.iterrows():
-        cid = row.get("chunk_id")
-        sim = float(row.get("similarity", 0))
-        text = row.get("chunk", "")
-        if cid is None:
-            continue
-        existing = prereg_hits.get(cid)
-        if existing is None or sim > existing[1]:
-            prereg_hits[cid] = (text, sim)
+    paper_candidates = retrieve_relevant_chunks(
+        query_embedding, paper_corpus, top_k=paper_candidate_k
+    )
 
-    paper_df = retrieve_relevant_chunks(augmented_query, paper_corpus.df, top_k=paper_candidate_k)
-    for _, row in paper_df.iterrows():
-        cid = row.get("chunk_id")
-        sim = float(row.get("similarity", 0))
-        text = row.get("chunk", "")
-        if cid is None:
-            continue
-        existing = paper_hits.get(cid)
-        if existing is None or sim > existing[1]:
-            paper_hits[cid] = (text, sim)
-
-    prereg_top_rows = sorted(
-        ([cid, text, sim] for cid, (text, sim) in prereg_hits.items()),
-        key=lambda x: x[2],
-        reverse=True,
-    )[:prereg_candidate_k]
-    paper_top_rows = sorted(
-        ([cid, text, sim] for cid, (text, sim) in paper_hits.items()),
-        key=lambda x: x[2],
-        reverse=True,
-    )[:paper_candidate_k]
-
-    # Re-rank candidates with fresh cosine scoring and trim to final k
-    prereg_top_rows = _rerank_candidates(prereg_top_rows, prereg_corpus, augmented_query)[
-        :prereg_top_k
-    ]
-    paper_top_rows = _rerank_candidates(paper_top_rows, paper_corpus, augmented_query)[
-        :paper_top_k
-    ]
+    prereg_top_rows = prereg_candidates[:prereg_top_k]
+    paper_top_rows = paper_candidates[:paper_top_k]
 
     def _sort_by_numeric_id(rows: list[tuple[str, str, float]]) -> list[tuple[str, str, float]]:
         def _id_num(cid: str) -> int:
