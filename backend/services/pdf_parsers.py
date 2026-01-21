@@ -35,13 +35,19 @@ async def pdf2dpt(
     )
     headers = {"Authorization": api_key}
     data = {"model": "dpt-2-latest"}
-    timeout = httpx.Timeout(60.0, read=60.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        with open(filename, "rb") as document:
-            files = {"document": document}
-            response = await client.post(
-                dpt_url, headers=headers, data=data, files=files
-            )
+    timeout_seconds = float(os.environ.get("DPT_TIMEOUT_SECONDS", "240") or 240)
+    timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            with open(filename, "rb") as document:
+                files = {"document": document}
+                response = await client.post(
+                    dpt_url, headers=headers, data=data, files=files
+                )
+    except httpx.ReadTimeout as exc:
+        raise RuntimeError("DPT parsing timed out; please retry or use grobid parser") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"DPT parsing failed: {exc}") from exc
     response.raise_for_status()
     return response.json()
 
