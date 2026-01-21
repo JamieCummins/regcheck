@@ -238,6 +238,7 @@ def build_corpus(
     model: str = "text-embedding-3-large",
     embeddings_path: str | None = None,
     chunk_prefix: str | None = None,
+    max_segments: int | None = None,
 ) -> EmbeddingCorpus:
     segments: list[str]
     embeddings: np.ndarray
@@ -245,6 +246,9 @@ def build_corpus(
         segments, embeddings = load_embeddings(embeddings_path)
     else:
         segments, embeddings = openai_embed_text(text, model=model)
+        if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
+            segments = segments[:max_segments]
+            embeddings = embeddings[: max_segments]
         if embeddings_path:
             save_embeddings(segments, embeddings, embeddings_path)
     chunk_ids = [

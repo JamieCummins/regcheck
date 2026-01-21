@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal, TypeVar
 
 import numpy as np
 from dotenv import load_dotenv
@@ -41,6 +41,10 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MAX_SEGMENTS = 1200
+DEFAULT_MAX_CONCURRENT_TASKS = 2
+
+T = TypeVar("T")
 
 
 def _env_str(name: str, default: str | None = None) -> str:
@@ -50,6 +54,16 @@ def _env_str(name: str, default: str | None = None) -> str:
     if default is None:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _openai_model() -> str:
@@ -66,6 +80,22 @@ def _deepseek_model() -> str:
 
 def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def _max_embedding_segments() -> int:
+    configured = _env_int("MAX_EMBEDDING_SEGMENTS", DEFAULT_MAX_SEGMENTS)
+    return max(100, configured)
+
+
+_comparison_semaphore = asyncio.Semaphore(
+    max(1, _env_int("MAX_CONCURRENT_COMPARISON_TASKS", DEFAULT_MAX_CONCURRENT_TASKS))
+)
+
+
+async def run_with_concurrency_limit(func: Callable[[], Awaitable[T]]) -> T:
+    """Run a coroutine factory under a shared semaphore to cap concurrent comparisons."""
+    async with _comparison_semaphore:
+        return await func()
 
 
 def _normalize_reasoning_effort_value(value: str | None) -> str | None:
@@ -429,9 +459,11 @@ async def general_preregistration_comparison(
                 parser = pdf_parser or pdf2grobid
                 paper_text = await parser(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 paper_text = await pdf2dpt(paper_input)
                 extracted_paper_sections = str(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -702,10 +734,12 @@ async def clinical_trial_comparison(
                 parser_callable = pdf_parser or pdf2grobid
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = str(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -891,10 +925,12 @@ async def animals_trial_comparison(
                 parser_callable = pdf_parser or pdf2grobid
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = str(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -1206,17 +1242,25 @@ def run_comparison(
     prereg_key = f"prereg:{hashlib.sha256(preregistration_input.encode('utf-8')).hexdigest()}"
     paper_key = f"paper:{hashlib.sha256(extracted_paper_sections.encode('utf-8')).hexdigest()}"
 
+    max_segments = _max_embedding_segments()
+
     prereg_corpus = cache.get(prereg_key)
     if prereg_corpus is None:
         prereg_corpus = build_corpus(
-            preregistration_input, embeddings_path=prereg_path, chunk_prefix="PREREG"
+            preregistration_input,
+            embeddings_path=prereg_path,
+            chunk_prefix="PREREG",
+            max_segments=max_segments,
         )
         cache[prereg_key] = prereg_corpus
 
     paper_corpus = cache.get(paper_key)
     if paper_corpus is None:
         paper_corpus = build_corpus(
-            extracted_paper_sections, embeddings_path=paper_path, chunk_prefix="PAPER"
+            extracted_paper_sections,
+            embeddings_path=paper_path,
+            chunk_prefix="PAPER",
+            max_segments=max_segments,
         )
         cache[paper_key] = paper_corpus
 
