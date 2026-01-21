@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import json
 import logging
-import gzip
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from backend.core.config import get_settings
 from backend.core.redis import create_redis_client
@@ -73,6 +73,7 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
     upload_keys = job.get("upload_keys") or {}
     s3_keys = job.get("s3_keys") or {}
     s3_cfg = get_s3_config()
+    settings = get_settings()
 
     async def _runner() -> None:
         # Restore uploads if missing on worker dyno.
@@ -142,10 +143,33 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
 
     try:
         await run_with_concurrency_limit(_runner)
+    except Exception as exc:
+        logger.error("Job failed", exc_info=exc, extra={"task_id": task_id})
+        if task_id:
+            try:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "state": "FAILURE",
+                        "status": f"Worker error: {exc}",
+                    },
+                )
+                await redis_client.expire(task_id, settings.task_ttl_seconds)
+            except Exception:  # pragma: no cover - best-effort failure status
+                logger.warning("Failed to update task status after error", exc_info=exc, extra={"task_id": task_id})
+        raise
     finally:
         # Always clean up uploaded artifacts stored in S3 for this task.
         if s3_cfg is not None:
             await _cleanup_s3_keys(s3_cfg, s3_keys)
+        # Remove temporary local files to reduce disk pressure.
+        for path_key in ("paper_path", "prereg_path", "registration_csv_path"):
+            value = job.get(path_key)
+            if value:
+                try:
+                    Path(value).unlink(missing_ok=True)
+                except Exception:
+                    continue
 
 
 async def worker_loop() -> None:
@@ -153,25 +177,47 @@ async def worker_loop() -> None:
     redis_client = create_redis_client(settings.redis_url)
     logger.info("Worker started; waiting for jobs on 'comparison:queue'")
 
+    # Recover any jobs left in the processing queue from a previous crash/restart.
+    try:
+        stalled = await redis_client.lrange("comparison:processing", 0, -1)
+        if stalled:
+            await redis_client.rpush("comparison:queue", *stalled)
+            await redis_client.delete("comparison:processing")
+            logger.info("Recovered %d stalled job(s) from processing queue", len(stalled))
+    except Exception as exc:  # pragma: no cover - defensive recovery
+        logger.warning("Failed to recover stalled jobs", exc_info=exc)
+
     while True:
         try:
-            result = await redis_client.brpop("comparison:queue", timeout=5)
+            raw_job = await redis_client.brpoplpush("comparison:queue", "comparison:processing", timeout=5)
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Worker BRPOP failed; retrying", exc_info=exc)
             await asyncio.sleep(5)
             continue
-        if result is None:
+        if raw_job is None:
             continue
 
-        _, raw_job = result
         try:
             job = json.loads(raw_job)
         except Exception as exc:
             logger.error("Failed to decode job payload", exc_info=exc, extra={"raw": raw_job})
+            try:
+                await redis_client.lrem("comparison:processing", 1, raw_job)
+            except Exception:
+                logger.warning("Failed to remove undecodable job from processing queue", exc_info=exc)
             continue
 
         # Fire-and-forget under semaphore
-        asyncio.create_task(_dispatch_job(job, redis_client))
+        async def _run_and_ack(payload: dict[str, Any], raw_payload: str) -> None:
+            try:
+                await _dispatch_job(payload, redis_client)
+            finally:
+                try:
+                    await redis_client.lrem("comparison:processing", 1, raw_payload)
+                except Exception as exc:  # pragma: no cover - best-effort ack cleanup
+                    logger.warning("Failed to remove job from processing queue", exc_info=exc)
+
+        asyncio.create_task(_run_and_ack(job, raw_job))
 
 
 def main() -> None:

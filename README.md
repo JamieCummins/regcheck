@@ -63,12 +63,15 @@ AWS_REGION=us-east-1
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or other AWS auth) must be set for the runtime.
 
 # Optional: resource caps for scaling
-MAX_CONCURRENT_COMPARISON_TASKS=4                # per worker process
+MAX_CONCURRENT_COMPARISON_TASKS=6                # per worker process
 MAX_EMBEDDING_SEGMENTS=1200                      # cap segments per document
 MAX_UPLOAD_BYTES=20971520                        # max upload size (bytes)
 WEB_CONCURRENCY=2                                # gunicorn workers (web dyno)
 WEB_TIMEOUT=120                                  # gunicorn timeout (seconds)
+TASK_TTL_SECONDS=259200                          # expire task metadata after 3 days
+MAX_QUEUE_LENGTH=200                             # max queued+in-flight jobs before returning 503
 ```
+Heroku deployments must set `SESSION_SECRET` (the app will refuse to boot on dynos without it to avoid session resets).
 
 ## Running the web app
 ```bash
@@ -137,6 +140,7 @@ pytest
 ```
 
 ## Notes
+- Default comparison concurrency is now 6 per worker process; tune `MAX_CONCURRENT_COMPARISON_TASKS` and dyno sizing based on memory headroom and provider rate limits.
 - Web flow uses Redis for progress tracking; the CLI calls comparison services directly and works without Redis.
 - On Heroku, use a separate `worker` dyno to process comparisons from the Redis queue; the web dyno enqueues jobs.
 - For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes.
