@@ -451,45 +451,6 @@ async def general_preregistration_comparison(
             )
         raise
 
-    experiment_label = (experiment_number or "").strip()
-    experiment_note = (experiment_text or "").strip()
-    has_multiple_experiments = False
-    if isinstance(multiple_experiments, str):
-        has_multiple_experiments = multiple_experiments.strip().lower() == "yes"
-    else:
-        has_multiple_experiments = bool(multiple_experiments)
-
-    if has_multiple_experiments and experiment_label:
-        if task_id and redis_client:
-            await redis_client.hset(
-                task_id,
-                mapping={
-                    "status": f"Isolating Experiment {experiment_label} text with the model"
-                },
-            )
-        try:
-            canonical_paper_text = await extract_experiment_specific_paper_text(
-                extracted_paper_sections,
-                experiment_label=experiment_label,
-                experiment_note=experiment_note,
-            )
-            extracted_paper_sections = canonical_paper_text
-        except Exception as exc:  # pragma: no cover - defensive guardrail
-            logger.warning(
-                "Experiment-focused paper extraction failed; using full paper text",
-                extra={"task_id": task_id, "experiment_label": experiment_label},
-                exc_info=exc,
-            )
-            if task_id and redis_client:
-                await redis_client.hset(
-                    task_id,
-                    mapping={
-                        "status": (
-                            f"Continuing without experiment-specific extraction for Experiment {experiment_label}"
-                        )
-                    },
-                )
-
     result_obj = ComparisonResult(items=[])
     dimensions_to_compare: list[dict[str, str]] = []
     dimension_names: list[str] = []
@@ -506,6 +467,65 @@ async def general_preregistration_comparison(
             )
             dimension_names.append(dimension_name)
     total_dimensions = len(dimensions_to_compare)
+
+    experiment_label = (experiment_number or "").strip()
+    experiment_note = (experiment_text or "").strip()
+    has_multiple_experiments = False
+    if isinstance(multiple_experiments, str):
+        has_multiple_experiments = multiple_experiments.strip().lower() == "yes"
+    else:
+        has_multiple_experiments = bool(multiple_experiments)
+
+    if has_multiple_experiments and experiment_label:
+        if task_id and redis_client:
+            await redis_client.hset(
+                task_id,
+                mapping={
+                    "state": "IN_PROGRESS",
+                    "result_json": result_obj.model_dump_json(),
+                    "total_dimensions": total_dimensions,
+                    "processed_dimensions": 0,
+                    "dimensions": json.dumps(dimension_names),
+                    "status": f"Isolating Experiment {experiment_label} text with the model",
+                },
+            )
+        try:
+            canonical_paper_text = await extract_experiment_specific_paper_text(
+                extracted_paper_sections,
+                experiment_label=experiment_label,
+                experiment_note=experiment_note,
+            )
+            extracted_paper_sections = canonical_paper_text
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "state": "IN_PROGRESS",
+                        "result_json": result_obj.model_dump_json(),
+                        "total_dimensions": total_dimensions,
+                        "processed_dimensions": 0,
+                        "dimensions": json.dumps(dimension_names),
+                        "status": (
+                            f"Experiment {experiment_label} isolated; embedding preregistration and paper"
+                        ),
+                    },
+                )
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            logger.warning(
+                "Experiment-focused paper extraction failed; using full paper text",
+                extra={"task_id": task_id, "experiment_label": experiment_label},
+                exc_info=exc,
+            )
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "status": (
+                            f"Continuing without experiment-specific extraction for Experiment {experiment_label}"
+                        )
+                    },
+                )
+
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
     logger.info(
@@ -1199,6 +1219,10 @@ def run_comparison(
             extracted_paper_sections, embeddings_path=paper_path, chunk_prefix="PAPER"
         )
         cache[paper_key] = paper_corpus
+
+    # Drop references to large raw texts once corpora are built to ease memory pressure on small dynos.
+    preregistration_input = ""
+    extracted_paper_sections = ""
 
     provided_definition = (dimension_definition or "").strip()
     fallback_definition = dimension_definitions.get(dimension_query, "")
