@@ -177,6 +177,7 @@ async def _queue_comparison(
 ) -> RedirectResponse:
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
+    redis_client = request.app.state.redis
 
     selected_dimensions = _parse_dimensions(dimensions_data)
     dimension_names = [item["dimension"] for item in selected_dimensions]
@@ -235,7 +236,6 @@ async def _queue_comparison(
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
-    redis_client = request.app.state.redis
     initial_payload = {
         "state": "PENDING",
         "status": "Task queued",
