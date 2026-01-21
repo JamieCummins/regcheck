@@ -10,6 +10,7 @@ from typing import Any, Callable, Coroutine
 
 from backend.core.config import get_settings
 from backend.core.redis import create_redis_client
+from backend.core.storage import get_s3_config, s3_delete_key, s3_download_to_path
 from backend.services.comparisons import (
     animals_trial_comparison,
     clinical_trial_comparison,
@@ -39,17 +40,55 @@ async def _restore_upload(redis_client, path: str, redis_key: str | None) -> Non
     target.write_bytes(raw)
 
 
+async def _ensure_s3_upload(cfg, path: str, key: str | None) -> None:
+    if not path or Path(path).exists():
+        return
+    if not key:
+        raise FileNotFoundError(f"Missing S3 key to restore upload for {path}")
+
+    def _download() -> None:
+        s3_download_to_path(cfg, key=key, path=path)
+
+    await asyncio.to_thread(_download)
+
+
+async def _cleanup_s3_keys(cfg, keys: dict[str, Any] | None) -> None:
+    if cfg is None or not keys:
+        return
+
+    def _delete_all() -> None:
+        for value in keys.values():
+            if isinstance(value, str) and value.strip():
+                try:
+                    s3_delete_key(cfg, key=value.strip())
+                except Exception:
+                    continue
+
+    await asyncio.to_thread(_delete_all)
+
+
 async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
     comparison_type = job.get("comparison_type")
     task_id = job.get("task_id")
     upload_keys = job.get("upload_keys") or {}
+    s3_keys = job.get("s3_keys") or {}
+    s3_cfg = get_s3_config()
 
     async def _runner() -> None:
-        # Restore uploads if missing on worker dyno
+        # Restore uploads if missing on worker dyno.
+        # Prefer S3 when configured, otherwise fall back to legacy Redis blobs.
+        paper_path = job.get("paper_path", "") or ""
+        prereg_path = job.get("prereg_path", "") or ""
+        csv_path = job.get("registration_csv_path", "") or ""
         try:
-            await _restore_upload(redis_client, job.get("paper_path", ""), upload_keys.get("paper"))
-            await _restore_upload(redis_client, job.get("prereg_path", ""), upload_keys.get("prereg"))
-            await _restore_upload(redis_client, job.get("registration_csv_path", ""), upload_keys.get("csv"))
+            if s3_cfg is not None:
+                await _ensure_s3_upload(s3_cfg, paper_path, s3_keys.get("paper"))
+                await _ensure_s3_upload(s3_cfg, prereg_path, s3_keys.get("prereg"))
+                await _ensure_s3_upload(s3_cfg, csv_path, s3_keys.get("csv"))
+            else:
+                await _restore_upload(redis_client, paper_path, upload_keys.get("paper"))
+                await _restore_upload(redis_client, prereg_path, upload_keys.get("prereg"))
+                await _restore_upload(redis_client, csv_path, upload_keys.get("csv"))
         except Exception as exc:
             logger.error("Failed to restore uploads for job", exc_info=exc, extra={"task_id": task_id})
             raise
@@ -101,7 +140,12 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
         else:
             logger.warning("Unknown comparison_type in job", extra={"job": job})
 
-    await run_with_concurrency_limit(_runner)
+    try:
+        await run_with_concurrency_limit(_runner)
+    finally:
+        # Always clean up uploaded artifacts stored in S3 for this task.
+        if s3_cfg is not None:
+            await _cleanup_s3_keys(s3_cfg, s3_keys)
 
 
 async def worker_loop() -> None:
