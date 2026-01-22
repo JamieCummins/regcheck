@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -10,14 +11,25 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
-from ..services.comparisons import (
-    clinical_trial_comparison,
-    general_preregistration_comparison,
-    animals_trial_comparison,
-)
+from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def _upload_limit() -> int:
+    raw = os.getenv("MAX_UPLOAD_BYTES")
+    if raw is None:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return max(1, parsed)
+
+
+MAX_UPLOAD_BYTES = _upload_limit()
 
 ComparisonType = Literal[
     "clinical_trials",
@@ -26,11 +38,36 @@ ComparisonType = Literal[
 ]
 
 
-async def _store_upload(destination: Path, upload: UploadFile) -> str:
+async def _store_upload(
+    destination: Path,
+    upload: UploadFile,
+    *,
+    max_bytes: int | None = None,
+) -> str:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    contents = await upload.read()
-    with open(destination, "wb") as handle:
-        handle.write(contents)
+    size_limit = max_bytes or MAX_UPLOAD_BYTES
+    total_read = 0
+    try:
+        with open(destination, "wb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if size_limit and total_read > size_limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Uploaded file exceeds the permitted size limit.",
+                    )
+                handle.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        try:
+            await upload.seek(0)
+        except Exception:
+            pass
     return str(destination)
 
 
@@ -48,11 +85,49 @@ async def _save_upload(
     upload: UploadFile,
     *,
     prefix: str,
+    max_bytes: int | None = None,
 ) -> tuple[str, str]:
     filename = _safe_filename(upload.filename)
     destination = upload_dir / f"{prefix}_{filename}"
-    stored = await _store_upload(destination, upload)
+    stored = await _store_upload(destination, upload, max_bytes=max_bytes)
     return stored, _file_ext(filename)
+
+
+async def _store_upload_to_redis(redis_client, redis_key: str, file_path: str, ttl_seconds: int = 86400) -> None:
+    """Store an uploaded file's contents in Redis (compressed + base64) so workers can reconstruct it."""
+    try:
+        raw = Path(file_path).read_bytes()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read uploaded file: {exc}") from exc
+    import base64
+    import gzip
+
+    compressed = gzip.compress(raw)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    try:
+        await redis_client.set(redis_key, encoded, ex=ttl_seconds)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to persist upload to queue store") from exc
+
+
+async def _store_upload_to_s3(task_id: str, file_path: str, *, label: str) -> str:
+    cfg = get_s3_config()
+    if cfg is None:
+        raise RuntimeError("S3_BUCKET not configured")
+    ext = Path(file_path).suffix.lower()
+    key = f"regcheck/uploads/{task_id}/{label}{ext}"
+
+    def _upload() -> None:
+        with open(file_path, "rb") as handle:
+            s3_upload_fileobj(
+                cfg,
+                key=key,
+                fileobj=handle,
+                content_type=guess_content_type(file_path),
+            )
+
+    await asyncio.to_thread(_upload)
+    return key
 
 
 def _bool_from_yes(value: str | None) -> bool:
@@ -99,6 +174,20 @@ def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> st
     return None
 
 
+async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2) -> None:
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            await redis_client.hset(task_id, mapping=mapping)
+            return
+        except Exception as exc:  # pragma: no cover - defensive logging
+            last_error = exc
+            logger.error("Redis hset failed (attempt %s/%s)", attempt + 1, retries + 1, exc_info=exc)
+            await asyncio.sleep(0.2 * (attempt + 1))
+    if last_error:
+        raise last_error
+
+
 async def _queue_comparison(
     request: Request,
     *,
@@ -118,6 +207,19 @@ async def _queue_comparison(
 ) -> RedirectResponse:
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
+    redis_client = request.app.state.redis
+    upload_ttl = max(86400, getattr(settings, "task_ttl_seconds", 86400))
+
+    # Basic backpressure: refuse new jobs if queue + in-flight exceeds configured limit.
+    try:
+        queued = await redis_client.llen("comparison:queue")
+        in_flight = await redis_client.llen("comparison:processing")
+        if queued + in_flight >= settings.max_queue_length:
+            raise HTTPException(status_code=503, detail="System is busy; please retry shortly.")
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.warning("Failed to compute queue depth; proceeding without backpressure", exc_info=exc)
 
     selected_dimensions = _parse_dimensions(dimensions_data)
     dimension_names = [item["dimension"] for item in selected_dimensions]
@@ -133,7 +235,28 @@ async def _queue_comparison(
     if paper is None:
         raise HTTPException(status_code=400, detail="Paper upload is required")
     task_id = str(uuid.uuid4())
-    paper_path, paper_ext = await _save_upload(upload_dir, paper, prefix=f"{task_id}_paper")
+    paper_path, paper_ext = await _save_upload(
+        upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
+    )
+    paper_redis_key = f"upload:{task_id}:paper"
+    prereg_redis_key: str | None = None
+    csv_redis_key: str | None = None
+
+    # Prefer durable object storage (S3) so worker dynos can always access uploads.
+    # Fall back to storing compressed blobs in Redis when S3 isn't configured.
+    s3_keys: dict[str, str | None] = {"paper": None, "prereg": None, "csv": None}
+    if get_s3_config() is not None:
+        s3_keys["paper"] = await _store_upload_to_s3(task_id, paper_path, label="paper")
+        try:
+            Path(paper_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+    else:
+        await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
+        try:
+            Path(paper_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
@@ -150,8 +273,21 @@ async def _queue_comparison(
                 status_code=400, detail="Preregistration upload is required for this option"
             )
         stored_prereg_path, prereg_ext = await _save_upload(
-            upload_dir, preregistration, prefix=f"{task_id}_prereg"
+            upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
         )
+        prereg_redis_key = f"upload:{task_id}:prereg"
+        if get_s3_config() is not None:
+            s3_keys["prereg"] = await _store_upload_to_s3(task_id, stored_prereg_path, label="prereg")
+            try:
+                Path(stored_prereg_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
+            try:
+                Path(stored_prereg_path).unlink(missing_ok=True)
+            except Exception:
+                pass
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
             raise HTTPException(status_code=400, detail="Registration ID is required for this option")
@@ -161,12 +297,24 @@ async def _queue_comparison(
                 detail="CSV required for animals trials until API retrieval is implemented.",
             )
         stored_csv_path, _ = await _save_upload(
-            upload_dir, registration_csv, prefix=f"{task_id}_registration"
+            upload_dir, registration_csv, prefix=f"{task_id}_registration", max_bytes=MAX_UPLOAD_BYTES
         )
+        csv_redis_key = f"upload:{task_id}:csv"
+        if get_s3_config() is not None:
+            s3_keys["csv"] = await _store_upload_to_s3(task_id, stored_csv_path, label="registration")
+            try:
+                Path(stored_csv_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            await _store_upload_to_redis(redis_client, csv_redis_key, stored_csv_path, ttl_seconds=upload_ttl)
+            try:
+                Path(stored_csv_path).unlink(missing_ok=True)
+            except Exception:
+                pass
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
-    redis_client = request.app.state.redis
     initial_payload = {
         "state": "PENDING",
         "status": "Task queued",
@@ -177,63 +325,68 @@ async def _queue_comparison(
         "comparison_type": comparison_type,
     }
     try:
-        await redis_client.hset(task_id, mapping=initial_payload)
+        await _safe_hset(redis_client, task_id, initial_payload)
+        await redis_client.expire(task_id, settings.task_ttl_seconds)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
+        raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
+
+    job_payload = {
+        "comparison_type": comparison_type,
+        "task_id": task_id,
+        "client": client,
+        "parser_choice": parser_choice_normalized,
+        "reasoning_effort": effort_normalized,
+        "append_previous_output": append_previous,
+        "selected_dimensions": selected_dimensions,
+        "upload_keys": {"paper": paper_redis_key, "prereg": prereg_redis_key, "csv": csv_redis_key},
+        "s3_keys": s3_keys,
+    }
 
     if comparison_type == "clinical_trials":
-        asyncio.create_task(
-            clinical_trial_comparison(
-                registration_id,  # type: ignore[arg-type]
-                paper_path,
-                paper_ext,
-                client,
-                task_id,
-                redis_client,
-                parser_choice=parser_choice_normalized,
-                reasoning_effort=effort_normalized,
-                selected_dimensions=selected_dimensions,
-                append_previous_output=append_previous,
-            )
+        job_payload.update(
+            {
+                "registration_id": registration_id,
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+            }
         )
     elif comparison_type == "general_preregistration":
         multiple_experiments_flag = _bool_from_yes(multiple_experiments)
-        asyncio.create_task(
-            general_preregistration_comparison(
-                stored_prereg_path,  # type: ignore[arg-type]
-                prereg_ext or "",
-                paper_path,
-                paper_ext,
-                client,
-                parser_choice_normalized,
-                task_id,
-                redis_client,
-                selected_dimensions,
-                append_previous_output=append_previous,
-                reasoning_effort=effort_normalized,
-                multiple_experiments=multiple_experiments_flag,
-                experiment_number=experiment_number,
-                experiment_text=experiment_text,
-            )
+        job_payload.update(
+            {
+                "prereg_path": stored_prereg_path,
+                "prereg_ext": prereg_ext or "",
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+                "multiple_experiments": multiple_experiments_flag,
+                "experiment_number": experiment_number,
+                "experiment_text": experiment_text,
+            }
         )
     else:
-        asyncio.create_task(
-            animals_trial_comparison(
-                registration_id or "",
-                paper_path,
-                paper_ext,
-                client,
-                registration_csv_path=stored_csv_path,  # type: ignore[arg-type]
-                parser_choice=parser_choice_normalized,
-                task_id=task_id,
-                redis_client=redis_client,
-                selected_dimensions=selected_dimensions,
-                append_previous_output=append_previous,
-                reasoning_effort=effort_normalized,
-            )
+        job_payload.update(
+            {
+                "registration_id": registration_id,
+                "paper_path": paper_path,
+                "paper_ext": paper_ext,
+                "registration_csv_path": stored_csv_path,
+            }
         )
 
-    await redis_client.hset(task_id, mapping={"partial": "enabled"})
+    try:
+        await redis_client.rpush("comparison:queue", json.dumps(job_payload))
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.error("Failed to enqueue comparison job", exc_info=exc, extra={"task_id": task_id})
+        await redis_client.hset(
+            task_id,
+            mapping={
+                "state": "FAILURE",
+                "status": "Failed to enqueue job; please retry.",
+            },
+        )
+        raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
+
     return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
 
 

@@ -9,9 +9,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal, TypeVar
 
-import numpy as np
 from dotenv import load_dotenv
 
 from groq import Groq
@@ -29,7 +28,7 @@ from .embeddings import (
     get_embedding,
     retrieve_relevant_chunks,
 )
-from .pdf_parsers import extract_body_text, pdf2dpt, pdf2grobid
+from .pdf_parsers import extract_body_text, extract_dpt_text, pdf2dpt, pdf2grobid
 from .trials import extract_nct_id, extract_nested_trial
 
 logger = logging.getLogger(__name__)
@@ -41,6 +40,10 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MAX_SEGMENTS = 1200
+DEFAULT_MAX_CONCURRENT_TASKS = 8
+
+T = TypeVar("T")
 
 
 def _env_str(name: str, default: str | None = None) -> str:
@@ -50,6 +53,16 @@ def _env_str(name: str, default: str | None = None) -> str:
     if default is None:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _openai_model() -> str:
@@ -66,6 +79,31 @@ def _deepseek_model() -> str:
 
 def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def _max_embedding_segments() -> int:
+    configured = _env_int("MAX_EMBEDDING_SEGMENTS", DEFAULT_MAX_SEGMENTS)
+    return max(100, configured)
+
+
+def _embedding_model() -> str:
+    return _env_str("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+
+
+def _embedding_max_chunk_tokens() -> int:
+    configured = _env_int("EMBEDDING_MAX_CHUNK_TOKENS", 300)
+    return max(100, configured)
+
+
+_comparison_semaphore = asyncio.Semaphore(
+    max(1, _env_int("MAX_CONCURRENT_COMPARISON_TASKS", DEFAULT_MAX_CONCURRENT_TASKS))
+)
+
+
+async def run_with_concurrency_limit(func: Callable[[], Awaitable[T]]) -> T:
+    """Run a coroutine factory under a shared semaphore to cap concurrent comparisons."""
+    async with _comparison_semaphore:
+        return await func()
 
 
 def _normalize_reasoning_effort_value(value: str | None) -> str | None:
@@ -295,49 +333,15 @@ def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k:
     return min(total_segments, bounded)
 
 
-def _rerank_candidates(
-    rows: list[tuple[str, str, float]],
-    corpus: EmbeddingCorpus,
-    query: str,
-    alpha: float = 0.7,
-) -> list[tuple[str, str, float]]:
-    """Re-rank candidate rows using fresh query embedding; combine with prior score."""
-    if not rows:
-        return rows
-    try:
-        qvec = get_embedding(query)
-    except Exception:
-        return rows
-
-    df = corpus.df
-    reranked: list[tuple[str, str, float]] = []
-    qnorm = np.linalg.norm(qvec) or 1.0
-    for cid, text, prev_sim in rows:
-        try:
-            match = df.loc[df["chunk_id"] == cid]
-            if match.empty:
-                reranked.append((cid, text, prev_sim))
-                continue
-            emb = match.iloc[0]["embedding"]
-            if emb is None:
-                reranked.append((cid, text, prev_sim))
-                continue
-            emb_norm = np.linalg.norm(emb) or 1.0
-            cos = float(np.dot(emb, qvec) / (emb_norm * qnorm))
-            score = alpha * cos + (1 - alpha) * prev_sim
-            reranked.append((cid, text, score))
-        except Exception:
-            reranked.append((cid, text, prev_sim))
-    reranked.sort(key=lambda x: x[2], reverse=True)
-    return reranked
-
 
 async def extract_experiment_specific_paper_text(
     full_paper_text: str,
     experiment_label: str,
     experiment_note: str | None = None,
+    client_choice: str = "openai",
+    reasoning_effort: str | None = None,
 ) -> str:
-    """Use an OpenAI model to isolate intro, relevant experiment, and general discussion text.
+    """Use a generative LLM to isolate intro, relevant experiment, and general discussion text.
 
     The model is also instructed to inline summaries of referenced experiments in square brackets.
     """
@@ -366,24 +370,46 @@ async def extract_experiment_specific_paper_text(
     user_prompt += f"\n\nFull paper text:\n{full_paper_text}"
 
     def _invoke_llm() -> str:
-        openai_client = get_openai_client()
-        model = _openai_experiment_model()
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an expert academic editor. Your job is to extract only the requested sections "
-                    "from a multi-experiment paper while preserving the original language."
+                    "You are an expert academic text extractor. Your job is to extract only the requested sections "
+                    "from a multi-experiment paper while preserving the original language, annotating relevant "
+                    "information of other studies where referenced in-text in square brackets following that reference."
                 ),
             },
             {"role": "user", "content": user_prompt},
         ]
-        return _openai_chat_text(
-            openai_client,
-            model=model,
-            messages=messages,
-            reasoning_effort=_env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high"),
-        )
+        if client_choice == "openai":
+            openai_client = get_openai_client()
+            model = _openai_experiment_model()
+            normalized_effort = _normalize_reasoning_effort_value(
+                reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
+            )
+            return _openai_chat_text(
+                openai_client,
+                model=model,
+                messages=messages,
+                reasoning_effort=normalized_effort,
+            )
+        if client_choice == "deepseek":
+            deepseek_client = get_deepseek_client()
+            response = deepseek_client.chat.completions.create(
+                model=_deepseek_model(),
+                messages=messages,
+                temperature=0,
+            )
+            raw_content = _message_content_to_text(response.choices[0].message)
+            return _strip_deepseek_reasoning(raw_content)
+        if client_choice == "groq":
+            response = groq_client.chat.completions.create(
+                model=_groq_model(),
+                messages=messages,
+                temperature=0,
+            )
+            return _message_content_to_text(response.choices[0].message)
+        raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
     content = await asyncio.to_thread(_invoke_llm)
     cleaned = (content or "").strip()
@@ -429,9 +455,11 @@ async def general_preregistration_comparison(
                 parser = pdf_parser or pdf2grobid
                 paper_text = await parser(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 paper_text = await pdf2dpt(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -451,45 +479,6 @@ async def general_preregistration_comparison(
             )
         raise
 
-    experiment_label = (experiment_number or "").strip()
-    experiment_note = (experiment_text or "").strip()
-    has_multiple_experiments = False
-    if isinstance(multiple_experiments, str):
-        has_multiple_experiments = multiple_experiments.strip().lower() == "yes"
-    else:
-        has_multiple_experiments = bool(multiple_experiments)
-
-    if has_multiple_experiments and experiment_label:
-        if task_id and redis_client:
-            await redis_client.hset(
-                task_id,
-                mapping={
-                    "status": f"Isolating Experiment {experiment_label} text with the model"
-                },
-            )
-        try:
-            canonical_paper_text = await extract_experiment_specific_paper_text(
-                extracted_paper_sections,
-                experiment_label=experiment_label,
-                experiment_note=experiment_note,
-            )
-            extracted_paper_sections = canonical_paper_text
-        except Exception as exc:  # pragma: no cover - defensive guardrail
-            logger.warning(
-                "Experiment-focused paper extraction failed; using full paper text",
-                extra={"task_id": task_id, "experiment_label": experiment_label},
-                exc_info=exc,
-            )
-            if task_id and redis_client:
-                await redis_client.hset(
-                    task_id,
-                    mapping={
-                        "status": (
-                            f"Continuing without experiment-specific extraction for Experiment {experiment_label}"
-                        )
-                    },
-                )
-
     result_obj = ComparisonResult(items=[])
     dimensions_to_compare: list[dict[str, str]] = []
     dimension_names: list[str] = []
@@ -506,6 +495,67 @@ async def general_preregistration_comparison(
             )
             dimension_names.append(dimension_name)
     total_dimensions = len(dimensions_to_compare)
+
+    experiment_label = (experiment_number or "").strip()
+    experiment_note = (experiment_text or "").strip()
+    has_multiple_experiments = False
+    if isinstance(multiple_experiments, str):
+        has_multiple_experiments = multiple_experiments.strip().lower() == "yes"
+    else:
+        has_multiple_experiments = bool(multiple_experiments)
+
+    if has_multiple_experiments and experiment_label:
+        if task_id and redis_client:
+            await redis_client.hset(
+                task_id,
+                mapping={
+                    "state": "IN_PROGRESS",
+                    "result_json": result_obj.model_dump_json(),
+                    "total_dimensions": total_dimensions,
+                    "processed_dimensions": 0,
+                    "dimensions": json.dumps(dimension_names),
+                    "status": f"Isolating Experiment {experiment_label} text with the model",
+                },
+            )
+        try:
+            canonical_paper_text = await extract_experiment_specific_paper_text(
+                extracted_paper_sections,
+                experiment_label=experiment_label,
+                experiment_note=experiment_note,
+                client_choice=client_choice,
+                reasoning_effort=reasoning_effort,
+            )
+            extracted_paper_sections = canonical_paper_text
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "state": "IN_PROGRESS",
+                        "result_json": result_obj.model_dump_json(),
+                        "total_dimensions": total_dimensions,
+                        "processed_dimensions": 0,
+                        "dimensions": json.dumps(dimension_names),
+                        "status": (
+                            f"Experiment {experiment_label} isolated; embedding preregistration and paper"
+                        ),
+                    },
+                )
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            logger.warning(
+                "Experiment-focused paper extraction failed; using full paper text",
+                extra={"task_id": task_id, "experiment_label": experiment_label},
+                exc_info=exc,
+            )
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "status": (
+                            f"Continuing without experiment-specific extraction for Experiment {experiment_label}"
+                        )
+                    },
+                )
+
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
     logger.info(
@@ -682,10 +732,12 @@ async def clinical_trial_comparison(
                 parser_callable = pdf_parser or pdf2grobid
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -871,10 +923,12 @@ async def animals_trial_comparison(
                 parser_callable = pdf_parser or pdf2grobid
                 paper_text = await parser_callable(paper_input)
                 extracted_paper_sections = extract_body_text(paper_text)
+                paper_text = ""
             elif parser_choice_normalized == "dpt2":
                 parser_callable = dpt_parser or pdf2dpt
                 paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = str(paper_text)
+                extracted_paper_sections = extract_dpt_text(paper_text)
+                paper_text = ""
             else:
                 raise ValueError(f"Unsupported parser choice: {parser_choice}")
         elif paper_ext == ".docx":
@@ -1186,19 +1240,37 @@ def run_comparison(
     prereg_key = f"prereg:{hashlib.sha256(preregistration_input.encode('utf-8')).hexdigest()}"
     paper_key = f"paper:{hashlib.sha256(extracted_paper_sections.encode('utf-8')).hexdigest()}"
 
+    max_segments = _max_embedding_segments()
+    embedding_model = _embedding_model()
+    max_chunk_tokens = _embedding_max_chunk_tokens()
+
     prereg_corpus = cache.get(prereg_key)
     if prereg_corpus is None:
         prereg_corpus = build_corpus(
-            preregistration_input, embeddings_path=prereg_path, chunk_prefix="PREREG"
+            preregistration_input,
+            model=embedding_model,
+            embeddings_path=prereg_path,
+            chunk_prefix="PREREG",
+            max_segments=max_segments,
+            max_chunk_tokens=max_chunk_tokens,
         )
         cache[prereg_key] = prereg_corpus
 
     paper_corpus = cache.get(paper_key)
     if paper_corpus is None:
         paper_corpus = build_corpus(
-            extracted_paper_sections, embeddings_path=paper_path, chunk_prefix="PAPER"
+            extracted_paper_sections,
+            model=embedding_model,
+            embeddings_path=paper_path,
+            chunk_prefix="PAPER",
+            max_segments=max_segments,
+            max_chunk_tokens=max_chunk_tokens,
         )
         cache[paper_key] = paper_corpus
+
+    # Drop references to large raw texts once corpora are built to ease memory pressure on small dynos.
+    preregistration_input = ""
+    extracted_paper_sections = ""
 
     provided_definition = (dimension_definition or "").strip()
     fallback_definition = dimension_definitions.get(dimension_query, "")
@@ -1208,6 +1280,8 @@ def run_comparison(
     prereg_top_k = top_k if top_k is not None else _compute_top_k(len(prereg_corpus.segments))
     paper_top_k = top_k if top_k is not None else _compute_top_k(len(paper_corpus.segments))
 
+    query_embedding = get_embedding(augmented_query, model=embedding_model)
+
     candidate_factor = 3
     prereg_candidate_k = min(
         len(prereg_corpus.segments), max(prereg_top_k * candidate_factor, prereg_top_k + 5)
@@ -1216,50 +1290,15 @@ def run_comparison(
         len(paper_corpus.segments), max(paper_top_k * candidate_factor, paper_top_k + 5)
     )
 
-    prereg_hits: dict[str, tuple[str, float]] = {}
-    paper_hits: dict[str, tuple[str, float]] = {}
-    prereg_df = retrieve_relevant_chunks(
-        augmented_query, prereg_corpus.df, top_k=prereg_candidate_k
+    prereg_candidates = retrieve_relevant_chunks(
+        query_embedding, prereg_corpus, top_k=prereg_candidate_k
     )
-    for _, row in prereg_df.iterrows():
-        cid = row.get("chunk_id")
-        sim = float(row.get("similarity", 0))
-        text = row.get("chunk", "")
-        if cid is None:
-            continue
-        existing = prereg_hits.get(cid)
-        if existing is None or sim > existing[1]:
-            prereg_hits[cid] = (text, sim)
+    paper_candidates = retrieve_relevant_chunks(
+        query_embedding, paper_corpus, top_k=paper_candidate_k
+    )
 
-    paper_df = retrieve_relevant_chunks(augmented_query, paper_corpus.df, top_k=paper_candidate_k)
-    for _, row in paper_df.iterrows():
-        cid = row.get("chunk_id")
-        sim = float(row.get("similarity", 0))
-        text = row.get("chunk", "")
-        if cid is None:
-            continue
-        existing = paper_hits.get(cid)
-        if existing is None or sim > existing[1]:
-            paper_hits[cid] = (text, sim)
-
-    prereg_top_rows = sorted(
-        ([cid, text, sim] for cid, (text, sim) in prereg_hits.items()),
-        key=lambda x: x[2],
-        reverse=True,
-    )[:prereg_candidate_k]
-    paper_top_rows = sorted(
-        ([cid, text, sim] for cid, (text, sim) in paper_hits.items()),
-        key=lambda x: x[2],
-        reverse=True,
-    )[:paper_candidate_k]
-
-    # Re-rank candidates with fresh cosine scoring and trim to final k
-    prereg_top_rows = _rerank_candidates(prereg_top_rows, prereg_corpus, augmented_query)[
-        :prereg_top_k
-    ]
-    paper_top_rows = _rerank_candidates(paper_top_rows, paper_corpus, augmented_query)[
-        :paper_top_k
-    ]
+    prereg_top_rows = prereg_candidates[:prereg_top_k]
+    paper_top_rows = paper_candidates[:paper_top_k]
 
     def _sort_by_numeric_id(rows: list[tuple[str, str, float]]) -> list[tuple[str, str, float]]:
         def _id_num(cid: str) -> int:

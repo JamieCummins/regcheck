@@ -8,6 +8,7 @@ Status: beta (under active development).
 - `app.py` / `backend/`: FastAPI app, routes, services (comparisons, embeddings, parsing).
 - `templates/` + `static/`: Frontend pages and assets.
 - `uploads/`: Runtime uploads directory (created at runtime; ignored by git).
+- `backend/worker.py`: Background worker that pulls comparison jobs from Redis.
 - `nltk_data/`: Not committed; downloaded locally via NLTK.
 - `test_materials/`: CSV example inputs (PDF/DOCX samples intentionally excluded).
 - `backend/cli.py`: Headless CLI for running comparisons without the UI.
@@ -57,7 +58,22 @@ DPT_URL=https://api.va.eu-west-1.landing.ai/v1/ade/parse
 STATIC_DIR=static            # optional override
 TEMPLATES_DIR=templates      # optional override
 UPLOAD_DIR=uploads           # optional override
+
+# Optional: S3-backed upload storage (recommended for multi-dyno deployments)
+S3_BUCKET=your-bucket-name
+AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or other AWS auth) must be set for the runtime.
+
+# Optional: resource caps for scaling
+MAX_CONCURRENT_COMPARISON_TASKS=6                # per worker process
+MAX_EMBEDDING_SEGMENTS=1200                      # cap segments per document
+MAX_UPLOAD_BYTES=20971520                        # max upload size (bytes)
+WEB_CONCURRENCY=2                                # gunicorn workers (web dyno)
+WEB_TIMEOUT=120                                  # gunicorn timeout (seconds)
+TASK_TTL_SECONDS=259200                          # expire task metadata after 3 days
+MAX_QUEUE_LENGTH=200                             # max queued+in-flight jobs before returning 503
 ```
+Heroku deployments must set `SESSION_SECRET` (the app will refuse to boot on dynos without it to avoid session resets).
 
 ## Running the web app
 ```bash
@@ -127,7 +143,10 @@ pytest
 ```
 
 ## Notes
+- Default comparison concurrency is now 6 per worker process; tune `MAX_CONCURRENT_COMPARISON_TASKS` and dyno sizing based on memory headroom and provider rate limits.
 - Web flow uses Redis for progress tracking; the CLI calls comparison services directly and works without Redis.
+- On Heroku, use a separate `worker` dyno to process comparisons from the Redis queue; the web dyno enqueues jobs.
+- For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes.
 - Supported LLM providers: `openai`, `groq`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 
