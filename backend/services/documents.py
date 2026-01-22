@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 
 import docx
@@ -36,7 +37,7 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 
 def convert_txt_to_pdf(txt_path: str) -> str:
-    """Convert a TXT file into a PDF stored within the uploads directory."""
+    """Convert a TXT file into a PDF stored near the source file with a unique name."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -46,7 +47,9 @@ def convert_txt_to_pdf(txt_path: str) -> str:
         for line in txt_file:
             pdf.multi_cell(0, 10, line)
 
-    output_path = UPLOADS_DIR / "converted_txt_to_pdf.pdf"
+    stem = Path(txt_path).stem or "converted_txt"
+    target_dir = Path(txt_path).parent if Path(txt_path).parent else UPLOADS_DIR
+    output_path = target_dir / f"{stem}_{uuid.uuid4().hex}.pdf"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output_path))
     return str(output_path)
