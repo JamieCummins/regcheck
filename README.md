@@ -148,4 +148,4 @@ pytest
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 
 ## License
-MIT (see `LICENSE`).
+GNU Affero General Public License v3.0 (see `LICENSE`).
