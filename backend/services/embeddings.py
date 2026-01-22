@@ -89,14 +89,21 @@ def extract_chunks_tokens(
         sent_tokens = tokenizer.encode(sentence)
         sent_len = len(sent_tokens)
 
-        # Keep sentences intact even if they exceed the target token count; better to have a large
-        # chunk than to truncate mid-sentence.
+        # If a single sentence exceeds the limit, break it into token-sized slices so no chunk
+        # sent to the embeddings API is over the max context.
         if sent_len > max_chunk_tokens:
             if current:
                 chunks.append(" ".join(current).strip())
                 current = []
                 current_tokens = 0
-            chunks.append(sentence.strip())
+            for start in range(0, sent_len, max_chunk_tokens):
+                slice_tokens = sent_tokens[start : start + max_chunk_tokens]
+                try:
+                    piece = tokenizer.decode(slice_tokens)
+                except Exception:
+                    piece = " ".join(sentence.split())  # fallback without token decode
+                if piece.strip():
+                    chunks.append(piece.strip())
             continue
 
         if current_tokens + sent_len <= max_chunk_tokens:
