@@ -31,6 +31,13 @@ def create_app() -> FastAPI:
     app.state.redis = create_redis_client(settings.redis_url)
     app.state.templates = Jinja2Templates(directory=settings.templates_dir)
 
+    @app.on_event("startup")
+    async def warm_redis_connection() -> None:
+        try:
+            await app.state.redis.ping()
+        except Exception as exc:  # pragma: no cover - best-effort warmup
+            logger.warning("Redis warmup ping failed; first request may be slower", exc_info=exc)
+
     app.include_router(pages.router)
     app.include_router(comparisons.router)
     app.include_router(survey.router)
