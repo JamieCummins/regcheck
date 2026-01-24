@@ -174,7 +174,9 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
 
 async def worker_loop() -> None:
     settings = get_settings()
-    redis_client = create_redis_client(settings.redis_url)
+    # Worker uses blocking Redis commands (BRPOPLPUSH). Give reads a bit more
+    # headroom than the command timeout to avoid spurious socket read timeouts.
+    redis_client = create_redis_client(settings.redis_url, socket_timeout=15)
     logger.info("Worker started; waiting for jobs on 'comparison:queue'")
 
     # On deploy/scale events, Redis may not be immediately reachable. Warm up the
