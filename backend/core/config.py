@@ -38,10 +38,16 @@ def get_settings() -> Settings:
         "yes",
     }
     redis_url = (
-        os.environ.get("REDIS_URL")
+        os.environ.get("REDIS_TLS_URL")
+        or os.environ.get("REDIS_URL")
+        or os.environ.get("HEROKU_REDIS_OLIVE_TLS_URL")
         or os.environ.get("HEROKU_REDIS_OLIVE_URL")
+        or os.environ.get("REDISCLOUD_URL")
+        or os.environ.get("REDISGREEN_URL")
         or "redis://localhost:6379/0"
     )
+    if os.environ.get("DYNO") and redis_url.startswith("redis://localhost"):
+        raise RuntimeError("REDIS_URL/REDIS_TLS_URL must be set for production deployments.")
     session_secret_env = (os.environ.get("SESSION_SECRET") or "").strip()
     if (os.environ.get("DYNO") or require_session_secret) and not session_secret_env:
         raise RuntimeError("SESSION_SECRET must be set for production deployments.")

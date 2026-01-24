@@ -5,6 +5,7 @@ import base64
 import gzip
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +176,21 @@ async def worker_loop() -> None:
     settings = get_settings()
     redis_client = create_redis_client(settings.redis_url)
     logger.info("Worker started; waiting for jobs on 'comparison:queue'")
+
+    # On deploy/scale events, Redis may not be immediately reachable. Warm up the
+    # connection with retries so the worker doesn't crash-loop or spam errors.
+    for attempt in range(10):
+        try:
+            await redis_client.ping()
+            break
+        except Exception as exc:  # pragma: no cover - environment dependent
+            delay = min(10, 0.5 * (attempt + 1))
+            logger.warning(
+                "Redis ping failed; retrying",
+                extra={"attempt": attempt + 1, "delay_seconds": delay, "dynd": os.environ.get("DYNO")},
+                exc_info=exc,
+            )
+            await asyncio.sleep(delay)
 
     # Recover any jobs left in the processing queue from a previous crash/restart.
     try:
