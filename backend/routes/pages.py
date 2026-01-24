@@ -54,3 +54,9 @@ async def team(request: Request):
 async def jobs(request: Request):
     templates = request.app.state.templates
     return templates.TemplateResponse("jobs.html", {"request": request})
+
+
+@router.get("/privacy", response_class=HTMLResponse, name="privacy")
+async def privacy(request: Request):
+    templates = request.app.state.templates
+    return templates.TemplateResponse("privacy.html", {"request": request})
