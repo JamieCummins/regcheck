@@ -302,7 +302,16 @@ def build_corpus(
     if embeddings.size == 0:
         norms = np.empty((0,), dtype=np.float32)
     else:
-        norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
+        # Final defensive reshape to avoid AxisError if earlier coercion missed anything.
+        if embeddings.ndim == 1:
+            embeddings = embeddings.reshape(1, -1)
+        elif embeddings.ndim > 2:
+            embeddings = embeddings.reshape(embeddings.shape[0], -1)
+        try:
+            norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
+        except np.AxisError:
+            embeddings = np.atleast_2d(embeddings)
+            norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
         norms[norms == 0] = 1.0
     return EmbeddingCorpus(
         segments=list(segments),
