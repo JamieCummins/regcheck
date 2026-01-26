@@ -50,6 +50,64 @@ async def test_general_preregistration_comparison(tmp_path):
     assert called["definition"] == "custom def"
     assert isinstance(res, ComparisonResult)
 
+
+def _make_scanned_pdf(path):
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    pm = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 50), 0)
+    rect = fitz.Rect(0, 0, 200, 200)
+    page.insert_image(rect, stream=pm.tobytes("png"))
+    doc.save(path)
+    doc.close()
+
+
+@pytest.mark.asyncio
+async def test_general_preregistration_comparison_pdf_scanned_fallback(tmp_path, monkeypatch):
+    prereg_pdf = tmp_path / "prereg.pdf"
+    _make_scanned_pdf(str(prereg_pdf))
+    paper = tmp_path / "paper.pdf"
+    _make_scanned_pdf(str(paper))
+
+    async def fake_grobid(path: str) -> str:
+        if "prereg" in path:
+            return '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body></body></text></TEI>'
+        return '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body>paper body</body></text></TEI>'
+
+    async def fake_dpt(path: str):
+        return {"text": "registration body"}
+
+    called = {}
+
+    def fake_run(
+        preregistration_input: str,
+        extracted_paper_sections: str,
+        client_choice: str,
+        dimension_query: str,
+        dimension_definition: str | None = None,
+        **kwargs,
+    ) -> ComparisonResult:
+        called["prereg"] = preregistration_input
+        return ComparisonResult(items=[])
+
+    monkeypatch.setenv("SCANNED_PDF_FALLBACK", "dpt2")
+
+    await general_preregistration_comparison(
+        str(prereg_pdf),
+        ".pdf",
+        str(paper),
+        ".pdf",
+        "openai",
+        "grobid",
+        selected_dimensions=[{"dimension": "general", "definition": "custom def"}],
+        pdf_parser=fake_grobid,
+        dpt_parser=fake_dpt,
+        comparison_runner=fake_run,
+    )
+
+    assert called["prereg"].startswith("registration body")
+
 @pytest.mark.asyncio
 async def test_clinical_trial_comparison(tmp_path):
     paper = tmp_path / "paper.pdf"

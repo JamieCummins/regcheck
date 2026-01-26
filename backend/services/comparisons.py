@@ -430,6 +430,7 @@ async def general_preregistration_comparison(
     selected_dimensions: list[dict[str, str]] | None = None,
     append_previous_output: bool = False,
     pdf_parser: Callable[[str], Awaitable[str]] | None = None,
+    dpt_parser: Callable[[str], Awaitable[Any]] | None = None,
     docx_reader: Callable[[str], str] | None = None,
     comparison_runner: Callable[..., ComparisonResult] | None = None,
     reasoning_effort: str | None = None,
@@ -438,7 +439,32 @@ async def general_preregistration_comparison(
     experiment_text: str | None = None,
 ) -> ComparisonResult:
     processed_count = 0
-    preregistration_input = read_file(prereg_path, prereg_ext)
+    if prereg_ext == ".pdf":
+        try:
+            preregistration_input, prereg_parser_used = await extract_pdf_text(
+                prereg_path,
+                parser_choice=parser_choice,
+                pdf_parser=pdf_parser,
+                dpt_parser=dpt_parser,
+            )
+            if task_id and redis_client and prereg_parser_used != (parser_choice or "grobid").lower():
+                await redis_client.hset(
+                    task_id,
+                    mapping={"status": f"Scanned prereg PDF detected; using {prereg_parser_used} fallback"},
+                )
+        except Exception as exc:
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id,
+                    mapping={
+                        "state": "FAILURE",
+                        "status": f"Preregistration parsing failed: {exc}",
+                        "processed_dimensions": processed_count,
+                    },
+                )
+            raise
+    else:
+        preregistration_input = read_file(prereg_path, prereg_ext)
     paper_input = read_file_as_pdf(paper_path, paper_ext)
     parser_choice_normalized = (parser_choice or "grobid").lower()
 
@@ -455,7 +481,7 @@ async def general_preregistration_comparison(
                 paper_input,
                 parser_choice=parser_choice_normalized,
                 pdf_parser=pdf_parser,
-                dpt_parser=None,
+                dpt_parser=dpt_parser,
             )
             if task_id and redis_client and used_parser != parser_choice_normalized:
                 await redis_client.hset(
