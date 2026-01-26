@@ -198,7 +198,23 @@ async def extract_pdf_text(
         return extracted, "dpt2"
 
     parser_callable = pdf_parser or pdf2grobid
-    xml_payload = await parser_callable(filename)
+    try:
+        xml_payload = await parser_callable(filename)
+    except Exception as exc:
+        if _fallback_mode() == "dpt2":
+            parser_callable = dpt_parser or pdf2dpt
+            if parser_callable is pdf2dpt and not (os.environ.get("DPT_API_KEY") or "").strip():
+                raise RuntimeError("SCANNED_PDF_FALLBACK=dpt2 requires DPT_API_KEY.") from exc
+            logger.warning(
+                "Grobid parsing failed; falling back to DPT2",
+                extra={"pdf_path": filename, "error": str(exc)},
+            )
+            payload = await parser_callable(filename)
+            extracted2 = extract_dpt_text(payload)
+            if not _has_usable_text(extracted2):
+                raise ValueError("Fallback DPT2 produced no usable text.") from exc
+            return extracted2, "dpt2_fallback"
+        raise
     extracted = extract_body_text(xml_payload)
     if _has_usable_text(extracted) and not (_is_low_text(extracted) and is_likely_scanned_pdf(filename)):
         return extracted, "grobid"
