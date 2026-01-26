@@ -28,7 +28,7 @@ from .embeddings import (
     get_embedding,
     retrieve_relevant_chunks,
 )
-from .pdf_parsers import extract_body_text, extract_dpt_text, pdf2dpt, pdf2grobid
+from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
 from .trials import extract_nct_id, extract_nested_trial
 
 logger = logging.getLogger(__name__)
@@ -451,17 +451,17 @@ async def general_preregistration_comparison(
         )
     try:
         if paper_ext == ".pdf":
-            if parser_choice_normalized == "grobid":
-                parser = pdf_parser or pdf2grobid
-                paper_text = await parser(paper_input)
-                extracted_paper_sections = extract_body_text(paper_text)
-                paper_text = ""
-            elif parser_choice_normalized == "dpt2":
-                paper_text = await pdf2dpt(paper_input)
-                extracted_paper_sections = extract_dpt_text(paper_text)
-                paper_text = ""
-            else:
-                raise ValueError(f"Unsupported parser choice: {parser_choice}")
+            extracted_paper_sections, used_parser = await extract_pdf_text(
+                paper_input,
+                parser_choice=parser_choice_normalized,
+                pdf_parser=pdf_parser,
+                dpt_parser=None,
+            )
+            if task_id and redis_client and used_parser != parser_choice_normalized:
+                await redis_client.hset(
+                    task_id,
+                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
+                )
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
@@ -728,18 +728,17 @@ async def clinical_trial_comparison(
         )
     try:
         if paper_ext == ".pdf":
-            if parser_choice_normalized == "grobid":
-                parser_callable = pdf_parser or pdf2grobid
-                paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = extract_body_text(paper_text)
-                paper_text = ""
-            elif parser_choice_normalized == "dpt2":
-                parser_callable = dpt_parser or pdf2dpt
-                paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = extract_dpt_text(paper_text)
-                paper_text = ""
-            else:
-                raise ValueError(f"Unsupported parser choice: {parser_choice}")
+            extracted_paper_sections, used_parser = await extract_pdf_text(
+                paper_input,
+                parser_choice=parser_choice_normalized,
+                pdf_parser=pdf_parser,
+                dpt_parser=dpt_parser,
+            )
+            if task_id and redis_client and used_parser != parser_choice_normalized:
+                await redis_client.hset(
+                    task_id,
+                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
+                )
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
@@ -919,18 +918,17 @@ async def animals_trial_comparison(
         )
     try:
         if paper_ext == ".pdf":
-            if parser_choice_normalized == "grobid":
-                parser_callable = pdf_parser or pdf2grobid
-                paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = extract_body_text(paper_text)
-                paper_text = ""
-            elif parser_choice_normalized == "dpt2":
-                parser_callable = dpt_parser or pdf2dpt
-                paper_text = await parser_callable(paper_input)
-                extracted_paper_sections = extract_dpt_text(paper_text)
-                paper_text = ""
-            else:
-                raise ValueError(f"Unsupported parser choice: {parser_choice}")
+            extracted_paper_sections, used_parser = await extract_pdf_text(
+                paper_input,
+                parser_choice=parser_choice_normalized,
+                pdf_parser=pdf_parser,
+                dpt_parser=dpt_parser,
+            )
+            if task_id and redis_client and used_parser != parser_choice_normalized:
+                await redis_client.hset(
+                    task_id,
+                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
+                )
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)

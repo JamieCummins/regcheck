@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency
     import nltk
@@ -162,6 +165,25 @@ def load_embeddings(path: str) -> tuple[list[str], np.ndarray]:
         data = pickle.load(handle)
     return list(data["segments"]), np.asarray(data["embeddings"], dtype=np.float32)
 
+
+def _coerce_embeddings_matrix(embeddings: np.ndarray, segment_count: int) -> np.ndarray:
+    """Ensure embeddings are a 2D float32 matrix with shape (n_segments, dim)."""
+    arr = np.asarray(embeddings, dtype=np.float32)
+    if arr.ndim == 0:
+        return arr.reshape(0, 0)
+    if arr.ndim == 1:
+        if arr.size == 0:
+            return arr.reshape(0, 0)
+        if segment_count <= 1:
+            return arr.reshape(1, -1)
+        if arr.size % segment_count == 0:
+            return arr.reshape(segment_count, -1)
+        return arr.reshape(1, -1)
+    if arr.ndim == 2:
+        return arr
+    return arr.reshape(arr.shape[0], -1)
+
+
 def retrieve_relevant_chunks(
     query_embedding: np.ndarray,
     corpus: "EmbeddingCorpus",
@@ -254,6 +276,20 @@ def build_corpus(
     else:
         segments, embeddings = openai_embed_text(text, model=model, max_chunk_tokens=max_chunk_tokens)
 
+    embeddings = _coerce_embeddings_matrix(embeddings, len(segments))
+    if embeddings.shape[0] != len(segments):
+        min_rows = min(len(segments), int(embeddings.shape[0]))
+        if min_rows == 0:
+            segments = []
+            embeddings = embeddings[:0]
+        else:
+            logger.warning(
+                "Embedding corpus row mismatch; truncating",
+                extra={"segment_count": len(segments), "embedding_rows": int(embeddings.shape[0]), "keep": min_rows},
+            )
+            segments = list(segments[:min_rows])
+            embeddings = embeddings[:min_rows]
+
     if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
         segments = segments[:max_segments]
         embeddings = embeddings[: max_segments]
@@ -263,8 +299,11 @@ def build_corpus(
     chunk_ids = [
         f"{(chunk_prefix or 'CHUNK').upper()}_{i+1:04d}" for i in range(len(segments))
     ]
-    norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
-    norms[norms == 0] = 1.0
+    if embeddings.size == 0:
+        norms = np.empty((0,), dtype=np.float32)
+    else:
+        norms = np.linalg.norm(embeddings, axis=1).astype(np.float32, copy=False)
+        norms[norms == 0] = 1.0
     return EmbeddingCorpus(
         segments=list(segments),
         embeddings=np.asarray(embeddings, dtype=np.float32),
