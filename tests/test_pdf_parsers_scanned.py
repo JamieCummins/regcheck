@@ -53,3 +53,25 @@ async def test_extract_pdf_text_scanned_pdf_falls_back_to_dpt2(tmp_path, monkeyp
     )
     assert "x" * 200 in extracted
     assert used == "dpt2_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_grobid_error_falls_back_to_dpt2(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "scan.pdf"
+    _make_scanned_pdf(str(pdf_path))
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid 500")
+
+    async def fake_dpt(_path: str):
+        return {"text": "ocr success"}
+
+    monkeypatch.setenv("SCANNED_PDF_FALLBACK", "dpt2")
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt,
+    )
+    assert extracted.startswith("ocr success")
+    assert used == "dpt2_fallback"
