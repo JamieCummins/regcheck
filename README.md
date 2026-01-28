@@ -54,6 +54,7 @@ DEEPSEEK_MODEL=deepseek-reasoner
 GROBID_URL=https://kermitt2-grobid.hf.space/api/processFulltextDocument
 DPT_API_KEY=...
 DPT_URL=https://api.va.eu-west-1.landing.ai/v1/ade/parse
+PDF_PARSER_FALLBACKS=dpt2,pymupdf   # ordered fallbacks when the primary parser fails (set blank to disable)
 
 STATIC_DIR=static            # optional override
 TEMPLATES_DIR=templates      # optional override
