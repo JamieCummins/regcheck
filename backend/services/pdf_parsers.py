@@ -86,6 +86,75 @@ def _fallback_mode() -> str:
     return (os.environ.get("SCANNED_PDF_FALLBACK") or "none").strip().lower()
 
 
+def _fallback_chain() -> list[str]:
+    """Ordered list of parser fallbacks to attempt when the primary parser fails.
+
+    Priority:
+    - If PDF_PARSER_FALLBACKS is set, use its comma-separated values.
+    - Otherwise, if SCANNED_PDF_FALLBACK is set, use that single legacy fallback.
+    - Otherwise, default to ["dpt2", "pymupdf"].
+    """
+    env_chain = os.environ.get("PDF_PARSER_FALLBACKS")
+    if env_chain is not None:
+        raw_items = [item.strip().lower() for item in env_chain.split(",") if item.strip()]
+    else:
+        legacy = _fallback_mode()
+        if legacy:
+            raw_items = [legacy]
+        else:
+            raw_items = []
+        if legacy == "none":
+            raw_items = []
+        if env_chain is None and os.environ.get("SCANNED_PDF_FALLBACK") is None:
+            raw_items = ["dpt2", "pymupdf"]
+
+    allowed = {"dpt2", "pymupdf"}
+    return [item for item in raw_items if item in allowed]
+
+
+async def _run_fallback_chain(
+    filename: str,
+    fallbacks: list[str],
+    *,
+    dpt_parser: Any | None = None,
+) -> tuple[str, str]:
+    """Try fallbacks in order; return extracted text and label when one succeeds."""
+    errors: list[str] = []
+    for fb in fallbacks:
+        if fb == "dpt2":
+            parser_callable = dpt_parser or pdf2dpt
+            try:
+                payload = await parser_callable(filename)
+                extracted = extract_dpt_text(payload)
+                if not _has_usable_text(extracted):
+                    errors.append("dpt2: no usable text")
+                    continue
+                return extracted, "dpt2_fallback"
+            except Exception as exc:  # pragma: no cover - logged for diagnostics
+                errors.append(f"dpt2 error: {exc}")
+                continue
+        elif fb == "pymupdf":
+            if fitz is None:  # pragma: no cover - optional dependency
+                errors.append("pymupdf unavailable (PyMuPDF not installed)")
+                continue
+            try:
+                from .documents import extract_text_from_pdf as _pymupdf_extract
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(f"pymupdf import failed: {exc}")
+                continue
+            try:
+                text = _pymupdf_extract(filename)
+                if not _has_usable_text(text):
+                    errors.append("pymupdf: no usable text")
+                    continue
+                return text, "pymupdf_fallback"
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(f"pymupdf error: {exc}")
+                continue
+
+    raise ValueError("Fallback parsing failed: " + "; ".join(errors))
+
+
 async def pdf2grobid(
     filename: str,
     grobid_url: str | None = None,
@@ -189,31 +258,35 @@ async def extract_pdf_text(
     if normalized not in {"grobid", "dpt2"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
+    fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
+
     if normalized == "dpt2":
         parser_callable = dpt_parser or pdf2dpt
-        payload = await parser_callable(filename)
-        extracted = extract_dpt_text(payload)
-        if not _has_usable_text(extracted):
-            raise ValueError("Parsed PDF but extracted no usable text (DPT2).")
-        return extracted, "dpt2"
+        try:
+            payload = await parser_callable(filename)
+            extracted = extract_dpt_text(payload)
+            if not _has_usable_text(extracted):
+                raise ValueError("Parsed PDF but extracted no usable text (DPT2).")
+            return extracted, "dpt2"
+        except Exception as exc:
+            if fallback_chain:
+                logger.warning(
+                    "DPT2 parsing failed; attempting fallbacks",
+                    extra={"pdf_path": filename, "error": str(exc)},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise
 
     parser_callable = pdf_parser or pdf2grobid
     try:
         xml_payload = await parser_callable(filename)
     except Exception as exc:
-        if _fallback_mode() == "dpt2":
-            parser_callable = dpt_parser or pdf2dpt
-            if parser_callable is pdf2dpt and not (os.environ.get("DPT_API_KEY") or "").strip():
-                raise RuntimeError("SCANNED_PDF_FALLBACK=dpt2 requires DPT_API_KEY.") from exc
+        if fallback_chain:
             logger.warning(
-                "Grobid parsing failed; falling back to DPT2",
+                "Grobid parsing failed; attempting fallbacks",
                 extra={"pdf_path": filename, "error": str(exc)},
             )
-            payload = await parser_callable(filename)
-            extracted2 = extract_dpt_text(payload)
-            if not _has_usable_text(extracted2):
-                raise ValueError("Fallback DPT2 produced no usable text.") from exc
-            return extracted2, "dpt2_fallback"
+            return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
         raise
     extracted = extract_body_text(xml_payload)
     if _has_usable_text(extracted) and not (_is_low_text(extracted) and is_likely_scanned_pdf(filename)):
@@ -221,21 +294,20 @@ async def extract_pdf_text(
 
     # Grobid produced little/no text. If this looks like a scanned PDF, either instruct or fall back.
     if is_likely_scanned_pdf(filename):
-        mode = _fallback_mode()
-        if mode == "dpt2":
-            parser_callable = dpt_parser or pdf2dpt
-            if parser_callable is pdf2dpt and not (os.environ.get("DPT_API_KEY") or "").strip():
-                raise RuntimeError("SCANNED_PDF_FALLBACK=dpt2 requires DPT_API_KEY.")
-            logger.info("Scanned PDF detected; falling back to DPT2", extra={"filename": filename})
-            payload = await parser_callable(filename)
-            extracted2 = extract_dpt_text(payload)
-            if not _has_usable_text(extracted2):
-                raise ValueError("Scanned PDF fallback (DPT2) produced no usable text.")
-            return extracted2, "dpt2_fallback"
+        if fallback_chain:
+            logger.info("Scanned PDF detected; attempting fallbacks", extra={"filename": filename})
+            return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
         raise ValueError(
             "PDF appears to be scanned (images with little/no selectable text). "
             "Select the DPT2 parser (OCR) or set SCANNED_PDF_FALLBACK=dpt2 with DPT_API_KEY."
         )
+
+    if fallback_chain:
+        logger.warning(
+            "Grobid extracted no usable text; attempting fallbacks",
+            extra={"filename": filename},
+        )
+        return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
 
     raise ValueError(
         "Parsed PDF but extracted no usable text. "

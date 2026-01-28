@@ -14,6 +14,14 @@ def _make_scanned_pdf(path):
     doc.close()
 
 
+def _make_text_pdf(path, text: str = "hello"):
+    doc = fitz.open()
+    page = doc.new_page(width=300, height=300)
+    page.insert_text((50, 50), text)
+    doc.save(path)
+    doc.close()
+
+
 def test_is_likely_scanned_pdf_true_for_image_only_pdf(tmp_path):
     pdf_path = tmp_path / "scan.pdf"
     _make_scanned_pdf(str(pdf_path))
@@ -75,3 +83,47 @@ async def test_extract_pdf_text_grobid_error_falls_back_to_dpt2(tmp_path, monkey
     )
     assert extracted.startswith("ocr success")
     assert used == "dpt2_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_grobid_error_then_dpt_then_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "text.pdf"
+    _make_text_pdf(str(pdf_path), "hello fallback")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid boom")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt failed")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "dpt2,pymupdf")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt_fail,
+    )
+
+    assert "hello fallback" in extracted
+    assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_dpt2_mode_falls_back_to_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "text2.pdf"
+    _make_text_pdf(str(pdf_path), "hello dpt mode")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt failed")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "dpt2,pymupdf")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="dpt2",
+        dpt_parser=fake_dpt_fail,
+    )
+
+    assert "hello dpt mode" in extracted
+    assert used == "pymupdf_fallback"
