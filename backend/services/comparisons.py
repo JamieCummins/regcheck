@@ -223,7 +223,11 @@ dimension_definitions: dict[str, str] = {
     "Eligibility: exclusion criteria": "A set of conditions that disqualify participants from participating in the study.",
     "Design: Intervention/treatment information": "Details about the intervention or treatment being tested in the study.",
     "Design: control/placebo information": "Information about the control or placebo used for comparison.",
-    "Design: Planned sample size": "The number of participants planned to be sampled for the study.",
+    "Design: Planned sample size": (
+        "The number of participants planned to be sampled for the study. "
+        "This may also be described as planned enrollment, enrollment count, target enrollment, "
+        "or estimated sample size (including estimated enrollment)."
+    ),
     "Ethics approval: number": "The unique identifier or identifiers for the ethics committee approval(s).",
     "Ethics approval: committee": "The name of the ethics committee or ethics committees that approved the study.",
     "Ethics approval: date": "The date when ethics approval was granted.",
