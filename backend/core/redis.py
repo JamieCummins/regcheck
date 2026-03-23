@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from redis import asyncio as aioredis
+from logging import Logger
 
 
 def create_redis_client(
@@ -24,3 +25,12 @@ def create_redis_client(
     if redis_url.startswith("rediss://"):
         return aioredis.from_url(redis_url, ssl_cert_reqs=None, **kwargs)
     return aioredis.from_url(redis_url, **kwargs)
+
+
+async def try_redis_ping(redis: aioredis.Redis, logger: Logger):
+    try:
+        redis.ping()
+    except Exception as e:  # pragma: no cover - best-effort warmup
+        logger.warning(
+            "Redis warmup ping failed; first request may be slower", exc_info=e
+        )

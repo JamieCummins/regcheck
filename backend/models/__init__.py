@@ -1,0 +1,5 @@
+from .user import User, UserPublicWithComparisons, UserPublic
+from .comparison import ComparisonResult, ComparisonResultPublic, ComparisonResultPublicWithDimensions, DimensionComparisonResult, DimensionComparisonResultPublic, Divergence
+
+UserPublicWithComparisons.model_rebuild()
+ComparisonResultPublicWithDimensions.model_rebuild()
