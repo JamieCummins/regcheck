@@ -1148,6 +1148,20 @@ select.survey-select option {
     text-align: center;
 }
 
+.footer-funding {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.footer-funding__logo {
+    height: 24px;
+    width: auto;
+}
+
 .footer-link {
     color: var(--rc-accent-blue-soft);
 }
