@@ -14,6 +14,7 @@ class Settings:
     """Application configuration values loaded from the environment."""
 
     redis_url: str
+    db_url: str
     session_secret: str
     task_ttl_seconds: int
     max_queue_length: int
@@ -46,6 +47,7 @@ def get_settings() -> Settings:
         or os.environ.get("REDISGREEN_URL")
         or "redis://localhost:6379/0"
     )
+    db_url = os.environ.get("DB_URL") or "sqlite:///regcheck.db"
     if os.environ.get("DYNO") and redis_url.startswith("redis://localhost"):
         raise RuntimeError("REDIS_URL/REDIS_TLS_URL must be set for production deployments.")
     session_secret_env = (os.environ.get("SESSION_SECRET") or "").strip()
@@ -71,6 +73,7 @@ def get_settings() -> Settings:
 
     settings = Settings(
         redis_url=redis_url,
+        db_url=db_url,
         session_secret=session_secret,
         task_ttl_seconds=task_ttl_seconds,
         max_queue_length=max_queue_length,
