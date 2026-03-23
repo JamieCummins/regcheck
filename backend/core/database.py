@@ -32,3 +32,16 @@ def get_session():
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def seed() -> None:
+    if _engine is None:
+        raise Exception("Uninitialized engine")
+
+    from backend.core.dummy_data import user, comparison
+
+    with Session(_engine) as session:
+        session.add(user)
+        session.add(comparison)
+
+        session.commit()

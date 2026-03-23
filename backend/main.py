@@ -16,6 +16,8 @@ from .core.logging import configure_logging
 from .core.redis import create_redis_client, try_redis_ping
 from .routes import comparisons, pages, status
 from .routes import survey
+from .routes import user
+from .routes import results
 
 
 def create_app() -> FastAPI:
@@ -53,5 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(comparisons.router)
     app.include_router(survey.router)
     app.include_router(status.router)
+    app.include_router(user.router)
+    app.include_router(results.router)
 
     return app
