@@ -11,10 +11,13 @@
     <title>RegCheck Results</title>
     <style>
         .results-page .results-table__cell--prereg,
-        .results-page .results-table__cell--paper,
-        .results-page .results-table__cell--notes {
+        .results-page .results-table__cell--paper {
             font-size: 0.82rem;
             line-height: 1.45;
+        }
+
+        .results-page .results-table {
+            table-layout: auto;
         }
 
         /*
@@ -22,9 +25,61 @@
          * Wrap long content in a block-level div and scroll that instead.
          */
         .results-table__scroll {
-            max-height: 11rem;
+            max-height: 15rem;
             overflow-y: auto;
             overflow-x: hidden;
+        }
+
+        .results-page #results-table thead th:nth-child(1),
+        .results-page #results-table tbody tr.results-table__row--main td:nth-child(1) {
+            width: 18%;
+            min-width: 10.5rem;
+        }
+
+        .results-page #results-table thead th:nth-child(2),
+        .results-page #results-table tbody tr.results-table__row--main td:nth-child(2),
+        .results-page #results-table thead th:nth-child(3),
+        .results-page #results-table tbody tr.results-table__row--main td:nth-child(3) {
+            width: 41%;
+        }
+
+        .results-page .results-table__cell--paper {
+            border-top-right-radius: 16px;
+        }
+
+        .results-page .results-table__row--main .results-table__cell {
+            border-bottom: 0 !important;
+        }
+
+        .results-page .results-table__row--main .results-table__cell--dimension {
+            border-bottom-left-radius: 0;
+        }
+
+        .results-page .results-table__row--main .results-table__cell--paper {
+            border-bottom-right-radius: 0;
+        }
+
+        .results-page .results-table__cell--deviation {
+            border-top: 1px dashed rgba(255, 255, 255, 0.2);
+            border-left: 3px solid rgba(255, 255, 255, 0.1) !important;
+            border-right: 3px solid rgba(255, 255, 255, 0.1) !important;
+            border-bottom-left-radius: 16px;
+            border-bottom-right-radius: 16px;
+            color: #e9ecff;
+            font-size: 0.84rem;
+            line-height: 1.5;
+        }
+
+        .results-page .results-table__deviation-label {
+            color: #ffffff;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .results-page .results-subtitle {
+            color: #aeb6d9 !important;
         }
 
         .results-toggle {
@@ -165,7 +220,7 @@
 
         <main class="px-3 results-main">
             <h1 class="text-center" id="results-page-tagline">Your RegCheck Report</h1>
-            <p class="small text-muted mb-1" style="max-width: 720px; margin: 0.35rem auto 0.5rem;">
+            <p class="small mb-1 results-subtitle" style="max-width: 720px; margin: 0.35rem auto 0.5rem;">
                 RegCheck reports may take a few minutes to generate—don’t worry, it’s running. Leaving this page won’t stop your report.
             </p>
                 <div class="results-meta d-flex justify-content-center">
@@ -227,7 +282,6 @@
                                     </select>
                                 </div>
                             </th>
-                            <th>Deviation Information</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -244,51 +298,6 @@
 
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
     <script>
-        document.getElementById('app-download-btn').addEventListener('click', function() {
-            var csv = [];
-            var rows = document.querySelectorAll('.table-responsive table tr');
-
-            for (var i = 0; i < rows.length; i++) {
-                var row = [], cols = rows[i].querySelectorAll('td, th');
-
-                for (var j = 0; j < cols.length; j++) {
-                    var cell = cols[j];
-                    if (cell.matches('td')) {
-                        row.push(getCellCsvText(cell)); // use active variant text for dropdown columns
-                    } else if (cell.matches('th')) {
-                        var select = cell.querySelector('select');
-                        if (select) {
-                            var labelEl = cell.querySelector('.results-column-title');
-                            var labelText = labelEl ? labelEl.innerText : "";
-                            var selectedText = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text : '';
-                            var headerValue = labelText
-                                ? (labelText + ' (' + selectedText + ')').trim().replace(/,/g, '')
-                                : (selectedText || '').replace(/,/g, '');
-                            row.push(headerValue);
-                        } else {
-                            row.push(cell.innerText.replace(/,/g, ''));
-                        }
-                    } else {
-                        row.push(cell.innerText.replace(/,/g, ''));
-                    }
-                }
-
-                csv.push(row.join(","));
-            }
-
-            // Download CSV
-            var csvFile = new Blob([csv.join("\n")], { type: 'text/csv' });
-            var downloadLink = document.createElement('a');
-            downloadLink.download = 'output.csv';
-            downloadLink.href = window.URL.createObjectURL(csvFile);
-            downloadLink.style.display = 'none';
-
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            document.body.removeChild(downloadLink);
-        });
-    </script>
-    <script>
         (function() {
         })();
     </script>
@@ -299,8 +308,7 @@
 
         // For long text columns, wrap content in a scrollable div
         const needsScroll = extraClass.includes("results-table__cell--prereg")
-            || extraClass.includes("results-table__cell--paper")
-            || extraClass.includes("results-table__cell--notes");
+            || extraClass.includes("results-table__cell--paper");
 
         if (needsScroll) {
             const wrapper = document.createElement("div");
@@ -310,6 +318,24 @@
         } else {
             cell.innerHTML = content || "";
         }
+        return cell;
+    }
+
+    function createDeviationCell(content) {
+        const cell = document.createElement("td");
+        cell.className = "results-table__cell results-table__cell--deviation";
+        cell.setAttribute("colspan", "3");
+
+        const label = document.createElement("span");
+        label.className = "results-table__deviation-label";
+        label.textContent = "Deviation:";
+
+        const details = document.createElement("span");
+        const text = (content || "").toString().trim() || "No deviation information found.";
+        details.textContent = ` ${text}`;
+
+        cell.appendChild(label);
+        cell.appendChild(details);
         return cell;
     }
 
@@ -396,6 +422,28 @@
             .join("<br><br>");
     }
 
+    function renderQuotesPlain(quotesList, limit) {
+        if (!Array.isArray(quotesList) || quotesList.length === 0) return "";
+        let sorted = [...quotesList].sort((a, b) => (b.score || 0) - (a.score || 0));
+        if (typeof limit === "number" && limit > 0) {
+            sorted = sorted.slice(0, limit);
+        }
+        sorted.sort((a, b) => (a.num || 0) - (b.num || 0));
+        return sorted
+            .map((q) => {
+                let label = "";
+                if (q.id) {
+                    const scoreStr =
+                        Number.isFinite(q.score) && q.score !== null
+                            ? `, relevance_score=${q.score.toFixed(3)}`
+                            : "";
+                    label = `[${q.id}${scoreStr}] `;
+                }
+                return `${label}${(q.text || q.raw || "").toString().trim()}`.trim();
+            })
+            .join("\n\n");
+    }
+
     function applyQuoteLimitAll() {
         const limit = window.quoteLimit;
         document.querySelectorAll(".content-variant--quotes").forEach(div => {
@@ -437,17 +485,76 @@
         cells.forEach((cell) => applyVariantToCell(cell, variant));
     }
 
-    function getCellCsvText(cell) {
-        const activeVariant = cell.querySelector(".content-variant.active");
-        if (activeVariant) {
-            return activeVariant.innerText.replace(/,/g, "");
+    function csvEscape(value) {
+        const text = (value === null || value === undefined ? "" : value).toString();
+        return `"${text.replace(/"/g, "\"\"")}"`;
+    }
+
+    function getSectionCsvText(item, section) {
+        const useSummary = (section === "paper" ? window.paperView : window.preregView) === "summary";
+        if (useSummary) {
+            return (section === "paper" ? item.paper_content_summary : item.registration_content_summary) || "";
         }
-        return (cell.innerText || "").replace(/,/g, "");
+        const quotes = (section === "paper" ? item.paper_content_quotes : item.registration_content_quotes) || "";
+        return renderQuotesPlain(parseQuotes(quotes), window.quoteLimit);
+    }
+
+    function getOrderedResultItems() {
+        const ordered = [];
+        const rows = document.querySelectorAll("#results-table tbody tr.results-table__row--main");
+        rows.forEach((row) => {
+            const key = row.getAttribute("data-key") || "";
+            const item = window.latestResultItemsByKey.get(key);
+            if (item) {
+                ordered.push(item);
+            }
+        });
+        if (ordered.length > 0) return ordered;
+        return Array.from(window.latestResultItemsByKey.values());
+    }
+
+    function downloadCsv() {
+        const preregOption = preregToggle && preregToggle.options
+            ? preregToggle.options[preregToggle.selectedIndex]
+            : null;
+        const paperOption = paperToggle && paperToggle.options
+            ? paperToggle.options[paperToggle.selectedIndex]
+            : null;
+        const preregHeader = preregOption && preregOption.text ? preregOption.text : "PREREGISTRATION";
+        const paperHeader = paperOption && paperOption.text ? paperOption.text : "PAPER";
+        const rows = [[
+            "Dimension",
+            preregHeader,
+            paperHeader,
+            "Deviation Information",
+            "Deviation Judgement",
+        ]];
+
+        getOrderedResultItems().forEach((item) => {
+            rows.push([
+                item.dimension || "",
+                getSectionCsvText(item, "prereg"),
+                getSectionCsvText(item, "paper"),
+                item.deviation_information || "",
+                item.deviation_judgement || "",
+            ]);
+        });
+
+        const csvText = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+        const csvFile = new Blob(["\uFEFF", csvText], { type: "text/csv;charset=utf-8;" });
+        const downloadLink = document.createElement("a");
+        downloadLink.download = "output.csv";
+        downloadLink.href = window.URL.createObjectURL(csvFile);
+        downloadLink.style.display = "none";
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
     }
 
     window.preregView = "quotes";
     window.paperView = "quotes";
     window.quoteLimit = 3;
+    window.latestResultItemsByKey = new Map();
 
     const preregToggle = document.getElementById("prereg-view-toggle");
     const paperToggle = document.getElementById("paper-view-toggle");
@@ -478,6 +585,11 @@
             }
             applyQuoteLimitAll();
         });
+    }
+
+    const downloadButton = document.getElementById("app-download-btn");
+    if (downloadButton) {
+        downloadButton.addEventListener("click", downloadCsv);
     }
 
     function getDeviationRowClass(deviation) {
@@ -588,7 +700,7 @@
                     const resultsTableBody = document.querySelector("#results-table tbody");
                     const existingKeys = new Set();
                     if (resultsTableBody) {
-                        for (const row of resultsTableBody.querySelectorAll("tr")) {
+                        for (const row of resultsTableBody.querySelectorAll("tr.results-table__row--main")) {
                             const key = row.getAttribute("data-key");
                             if (key) {
                                 existingKeys.add(key);
@@ -601,9 +713,10 @@
                         const key = `${rawDimension}`;
                         uniqueDimensions.add(key);
                         if (!existingKeys.has(key)) {
+                            window.latestResultItemsByKey.set(key, item || {});
                             const tr = document.createElement("tr");
                             tr.setAttribute("data-key", key);
-                            tr.classList.add("results-table__row");
+                            tr.classList.add("results-table__row", "results-table__row--main");
                             const rowClass = getDeviationRowClass(item.deviation_judgement);
                             if (rowClass) tr.classList.add(rowClass);
 
@@ -618,15 +731,19 @@
                                 summary: item.paper_content_summary || "",
                                 section: "paper"
                             });
-                            const notesCell = createResultsCell(item.deviation_information || "", "results-table__cell--notes");
 
                             tr.appendChild(dimensionCell);
                             tr.appendChild(preregCell);
                             tr.appendChild(paperCell);
-                            tr.appendChild(notesCell);
+
+                            const deviationTr = document.createElement("tr");
+                            deviationTr.classList.add("results-table__row", "results-table__row--deviation");
+                            if (rowClass) deviationTr.classList.add(rowClass);
+                            deviationTr.appendChild(createDeviationCell(item.deviation_information || ""));
 
                             if (resultsTableBody) {
                                 resultsTableBody.appendChild(tr);
+                                resultsTableBody.appendChild(deviationTr);
                                 existingKeys.add(key);
                             }
                         }
