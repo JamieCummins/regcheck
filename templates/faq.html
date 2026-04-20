@@ -36,10 +36,6 @@
     <main class="px-3">
       <div class="mx-auto text-start" style="max-width: 900px;">
         <h1>Frequently Asked Questions</h1>
-        <p class="lead">How to interpret RegCheck outputs.</p>
-
-        <h2>What does relevance score mean?</h2>
-        <p>Each quote is tagged with a <code>relevance_score</code>. This is the semantic similarity between that text chunk and the selected comparison dimension, based on embedding retrieval. Higher values mean the chunk is more topically aligned with the dimension query. It is a ranking score, not a probability of correctness.</p>
 
         <h2>What do the deviation labels mean?</h2>
         <ul>
@@ -48,14 +44,11 @@
           <li><strong>Missing information / No information found:</strong> There was not enough evidence in the provided text to make a reliable judgement.</li>
         </ul>
 
+        <h2>What is a 'relevance score'?</h2>
+        <p>Each quote is tagged with a relevance score. This is the semantic similarity between that text chunk and the selected comparison dimension, based on embedding retrieval. Higher values mean the chunk is more strongly semantically related to the dimension of comparison.</p>
+
         <h2>What is shown in direct quotes vs summary?</h2>
         <p><strong>Direct quotes</strong> displays retrieved source excerpts with evidence IDs and relevance scores. <strong>Summary</strong> displays the model’s concise synthesis of those excerpts.</p>
-
-        <h2>How does quote limit work?</h2>
-        <p>The quote-limit selector controls how many top-ranked direct quotes are shown per cell. Quotes are selected by relevance score, then displayed in document order.</p>
-
-        <h2>What is included in the CSV download?</h2>
-        <p>The CSV export includes one row per dimension and now always includes deviation details. It exports the currently selected preregistration/paper view (direct quotes or summary), plus <code>Deviation Information</code> and <code>Deviation Judgement</code>.</p>
 
         <h2>Can I share report links?</h2>
         <p>Yes. Anyone with the report link can view it. Do not share links publicly if uploads contain sensitive information.</p>

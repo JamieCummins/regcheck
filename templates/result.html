@@ -181,6 +181,37 @@
             gap: 0.35rem;
         }
 
+        .results-page .copy-link-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #dfe4ff;
+            padding: 0.16rem 0.45rem;
+            font-size: 0.7rem;
+            line-height: 1;
+        }
+
+        .results-page .copy-link-btn:hover,
+        .results-page .copy-link-btn:focus {
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+        }
+
+        .results-page .copy-link-btn__icon {
+            display: inline-flex;
+            width: 0.75rem;
+            height: 0.75rem;
+        }
+
+        .results-page .copy-link-btn__icon svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+
         .results-page #workflow-log-line {
             word-break: break-word;
             text-align: center;
@@ -229,6 +260,14 @@
                             <div class="workflow-log-header">
                                 <p class="small text-uppercase fw-semibold mb-0">Workflow log</p>
                                 <div id="workflow-spinner" class="spinner-border spinner-border-sm text-info" role="status" aria-hidden="true"></div>
+                                <button type="button" class="copy-link-btn" id="copy-report-link-btn" title="Copy report link" aria-label="Copy report link">
+                                    <span class="copy-link-btn__icon" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                            <path d="M15.5 2A5.5 5.5 0 0 0 10 7.5V9h2V7.5a3.5 3.5 0 0 1 7 0v3a3.5 3.5 0 0 1-3.5 3.5H14v2h1.5A5.5 5.5 0 0 0 21 10.5v-3A5.5 5.5 0 0 0 15.5 2Zm-7 6A5.5 5.5 0 0 0 3 13.5v3A5.5 5.5 0 0 0 8.5 22H10v-2H8.5a3.5 3.5 0 0 1-3.5-3.5v-3a3.5 3.5 0 0 1 3.5-3.5H10V8H8.5Zm1.5 5v2h4v-2h-4Z"/>
+                                        </svg>
+                                    </span>
+                                    <span id="copy-report-link-label">Copy report link</span>
+                                </button>
                             </div>
                             <p id="workflow-log-line" class="small mb-0 font-monospace text-info"></p>
                         </div>
@@ -321,14 +360,21 @@
         return cell;
     }
 
-    function createDeviationCell(content) {
+    function getDeviationLabel(deviationJudgement) {
+        const normalized = (deviationJudgement || "").toString().trim().toLowerCase();
+        if (normalized === "yes") return "Deviation";
+        if (normalized === "no") return "No Deviation";
+        return "Inconclusive";
+    }
+
+    function createDeviationCell(content, deviationJudgement) {
         const cell = document.createElement("td");
         cell.className = "results-table__cell results-table__cell--deviation";
         cell.setAttribute("colspan", "3");
 
         const label = document.createElement("span");
         label.className = "results-table__deviation-label";
-        label.textContent = "Deviation:";
+        label.textContent = `${getDeviationLabel(deviationJudgement)}:`;
 
         const details = document.createElement("span");
         const text = (content || "").toString().trim() || "No deviation information found.";
@@ -490,13 +536,13 @@
         return `"${text.replace(/"/g, "\"\"")}"`;
     }
 
-    function getSectionCsvText(item, section) {
-        const useSummary = (section === "paper" ? window.paperView : window.preregView) === "summary";
-        if (useSummary) {
-            return (section === "paper" ? item.paper_content_summary : item.registration_content_summary) || "";
-        }
+    function getSectionSummaryCsvText(item, section) {
+        return (section === "paper" ? item.paper_content_summary : item.registration_content_summary) || "";
+    }
+
+    function getSectionQuotesCsvText(item, section) {
         const quotes = (section === "paper" ? item.paper_content_quotes : item.registration_content_quotes) || "";
-        return renderQuotesPlain(parseQuotes(quotes), window.quoteLimit);
+        return renderQuotesPlain(parseQuotes(quotes), undefined);
     }
 
     function getOrderedResultItems() {
@@ -514,18 +560,12 @@
     }
 
     function downloadCsv() {
-        const preregOption = preregToggle && preregToggle.options
-            ? preregToggle.options[preregToggle.selectedIndex]
-            : null;
-        const paperOption = paperToggle && paperToggle.options
-            ? paperToggle.options[paperToggle.selectedIndex]
-            : null;
-        const preregHeader = preregOption && preregOption.text ? preregOption.text : "PREREGISTRATION";
-        const paperHeader = paperOption && paperOption.text ? paperOption.text : "PAPER";
         const rows = [[
             "Dimension",
-            preregHeader,
-            paperHeader,
+            "Preregistration Direct Quotes",
+            "Preregistration Summary",
+            "Paper Direct Quotes",
+            "Paper Summary",
             "Deviation Information",
             "Deviation Judgement",
         ]];
@@ -533,8 +573,10 @@
         getOrderedResultItems().forEach((item) => {
             rows.push([
                 item.dimension || "",
-                getSectionCsvText(item, "prereg"),
-                getSectionCsvText(item, "paper"),
+                getSectionQuotesCsvText(item, "prereg"),
+                getSectionSummaryCsvText(item, "prereg"),
+                getSectionQuotesCsvText(item, "paper"),
+                getSectionSummaryCsvText(item, "paper"),
                 item.deviation_information || "",
                 item.deviation_judgement || "",
             ]);
@@ -590,6 +632,51 @@
     const downloadButton = document.getElementById("app-download-btn");
     if (downloadButton) {
         downloadButton.addEventListener("click", downloadCsv);
+    }
+
+    async function copyReportLink() {
+        const link = window.location.href;
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(link);
+                return true;
+            } catch (error) {
+                // Fall through to legacy copy path.
+            }
+        }
+        const fallback = document.createElement("textarea");
+        fallback.value = link;
+        fallback.style.position = "fixed";
+        fallback.style.left = "-9999px";
+        document.body.appendChild(fallback);
+        fallback.focus();
+        fallback.select();
+        let copied = false;
+        try {
+            copied = document.execCommand("copy");
+        } catch (error) {
+            copied = false;
+        }
+        document.body.removeChild(fallback);
+        return copied;
+    }
+
+    const copyReportLinkButton = document.getElementById("copy-report-link-btn");
+    const copyReportLinkLabel = document.getElementById("copy-report-link-label");
+    let copyReportLinkResetHandle = null;
+    if (copyReportLinkButton) {
+        copyReportLinkButton.addEventListener("click", async () => {
+            const copied = await copyReportLink();
+            if (copyReportLinkLabel) {
+                copyReportLinkLabel.textContent = copied ? "Copied" : "Copy failed";
+                if (copyReportLinkResetHandle) {
+                    window.clearTimeout(copyReportLinkResetHandle);
+                }
+                copyReportLinkResetHandle = window.setTimeout(() => {
+                    copyReportLinkLabel.textContent = "Copy report link";
+                }, 1600);
+            }
+        });
     }
 
     function getDeviationRowClass(deviation) {
@@ -739,7 +826,9 @@
                             const deviationTr = document.createElement("tr");
                             deviationTr.classList.add("results-table__row", "results-table__row--deviation");
                             if (rowClass) deviationTr.classList.add(rowClass);
-                            deviationTr.appendChild(createDeviationCell(item.deviation_information || ""));
+                            deviationTr.appendChild(
+                                createDeviationCell(item.deviation_information || "", item.deviation_judgement || "")
+                            );
 
                             if (resultsTableBody) {
                                 resultsTableBody.appendChild(tr);
