@@ -14,11 +14,22 @@ NCT00000001,relative/path/to/paper2.docx
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Iterable
+
+
+_PRINT_LOCK = threading.Lock()
+
+
+def _locked_print(*args, **kwargs) -> None:
+    # Avoid interleaved output when running multiple subprocesses concurrently.
+    with _PRINT_LOCK:
+        print(*args, **kwargs)
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +88,12 @@ def parse_args() -> argparse.Namespace:
         help="Output format for each run.",
     )
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=10,
+        help="Number of concurrent papers to process at once. Default: 10.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without running them.",
@@ -119,6 +136,70 @@ def _load_rows(
             yield idx, trial_id, paper_path
 
 
+def _run_one_row(
+    *,
+    idx: int,
+    trial_id: str,
+    paper_path: Path,
+    output_dir: Path,
+    output_format: str,
+    client: str,
+    parser_choice: str,
+    reasoning_effort: str,
+    append_previous_output: bool,
+    dimensions_csv: Path | None,
+) -> tuple[int, Path, int]:
+    """Run one clinical comparison row. Returns (row_index, output_path, exit_code)."""
+    if not paper_path.exists():
+        _locked_print(
+            f"[error] Row {idx}: paper not found -> {paper_path}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return idx, output_dir / f"{idx:03d}_{trial_id}.{output_format}", 1
+
+    # Include paper filename in output for easier tracing of results
+    output_name = f"{idx:03d}_{paper_path.stem}__{trial_id}.{output_format}"
+    output_path = output_dir / output_name
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "backend.cli",
+        "clinical",
+        "--registration-id",
+        trial_id,
+        "--paper",
+        str(paper_path),
+        "--client",
+        client,
+        "--parser-choice",
+        parser_choice,
+        "--reasoning-effort",
+        reasoning_effort,
+        "--output-format",
+        output_format,
+        "--output",
+        str(output_path),
+    ]
+    if append_previous_output:
+        cmd.append("--append-previous-output")
+    if dimensions_csv:
+        cmd.extend(["--dimensions-csv", str(dimensions_csv)])
+
+    _locked_print(f"[run] Row {idx}: {trial_id} -> {output_path}", flush=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        _locked_print(
+            f"[error] Row {idx}: command failed with exit code {exc.returncode}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return idx, output_path, exc.returncode
+    return idx, output_path, 0
+
+
 def main() -> None:
     args = parse_args()
     csv_path = Path(args.csv).expanduser().resolve()
@@ -138,51 +219,66 @@ def main() -> None:
     if not rows:
         raise SystemExit("No valid rows found in CSV.")
 
-    for idx, trial_id, paper_path in rows:
-        if not paper_path.exists():
-            print(f"[error] Row {idx}: paper not found -> {paper_path}", file=sys.stderr)
-            continue
+    if args.dry_run:
+        for idx, trial_id, paper_path in rows:
+            # Match the actual output naming so dry-runs show the true destination.
+            output_name = f"{idx:03d}_{paper_path.stem}__{trial_id}.{args.output_format}"
+            output_path = output_dir / output_name
+            cmd = [
+                sys.executable,
+                "-m",
+                "backend.cli",
+                "clinical",
+                "--registration-id",
+                trial_id,
+                "--paper",
+                str(paper_path),
+                "--client",
+                args.client,
+                "--parser-choice",
+                args.parser_choice,
+                "--reasoning-effort",
+                args.reasoning_effort,
+                "--output-format",
+                args.output_format,
+                "--output",
+                str(output_path),
+            ]
+            if args.append_previous_output:
+                cmd.append("--append-previous-output")
+            if dimensions_csv:
+                cmd.extend(["--dimensions-csv", str(dimensions_csv)])
+            _locked_print(f"[dry-run] Row {idx}: {trial_id} -> {output_path}")
+            _locked_print(" ".join(cmd))
+        _locked_print("Done.")
+        return
 
-        output_name = f"{idx:03d}_{trial_id}.{args.output_format}"
-        output_path = output_dir / output_name
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "backend.cli",
-            "clinical",
-            "--registration-id",
-            trial_id,
-            "--paper",
-            str(paper_path),
-            "--client",
-            args.client,
-            "--parser-choice",
-            args.parser_choice,
-            "--reasoning-effort",
-            args.reasoning_effort,
-            "--output-format",
-            args.output_format,
-            "--output",
-            str(output_path),
+    jobs = max(1, int(args.jobs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = [
+            executor.submit(
+                _run_one_row,
+                idx=idx,
+                trial_id=trial_id,
+                paper_path=paper_path,
+                output_dir=output_dir,
+                output_format=args.output_format,
+                client=args.client,
+                parser_choice=args.parser_choice,
+                reasoning_effort=args.reasoning_effort,
+                append_previous_output=args.append_previous_output,
+                dimensions_csv=dimensions_csv,
+            )
+            for idx, trial_id, paper_path in rows
         ]
-        if args.append_previous_output:
-            cmd.append("--append-previous-output")
-        if dimensions_csv:
-            cmd.extend(["--dimensions-csv", str(dimensions_csv)])
+        for future in concurrent.futures.as_completed(futures):
+            # Exceptions are already printed per-row where possible, but still surface unexpected ones.
+            try:
+                future.result()
+            except Exception as exc:  # pragma: no cover - best-effort logging for batch runs
+                _locked_print(f"[error] Unexpected failure: {exc}", file=sys.stderr, flush=True)
 
-        print(f"[run] Row {idx}: {trial_id} -> {output_path}")
-        if args.dry_run:
-            print(" ".join(cmd))
-            continue
-
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as exc:
-            print(f"[error] Row {idx}: command failed with exit code {exc.returncode}", file=sys.stderr)
-            continue
-
-    print("Done.")
+    _locked_print("Done.")
 
 
 if __name__ == "__main__":
