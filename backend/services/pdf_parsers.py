@@ -295,7 +295,7 @@ async def extract_pdf_text(
     # Grobid produced little/no text. If this looks like a scanned PDF, either instruct or fall back.
     if is_likely_scanned_pdf(filename):
         if fallback_chain:
-            logger.info("Scanned PDF detected; attempting fallbacks", extra={"filename": filename})
+            logger.info("Scanned PDF detected; attempting fallbacks", extra={"pdf_path": filename})
             return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
         raise ValueError(
             "PDF appears to be scanned (images with little/no selectable text). "
@@ -305,7 +305,7 @@ async def extract_pdf_text(
     if fallback_chain:
         logger.warning(
             "Grobid extracted no usable text; attempting fallbacks",
-            extra={"filename": filename},
+            extra={"pdf_path": filename},
         )
         return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
 
