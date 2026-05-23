@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">RegCheck backend architecture centered on IDEA</title>
+  <desc id="desc">Backend-only workflow diagram showing orchestration and the IDEA pipeline: ingest, define dimensions, extract evidence, adjudicate, then assemble outputs.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-soft" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 36px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 400; fill: #475569; }
+      .section { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 700; fill: #0f172a; }
+      .box-title { font-family: Arial, Helvetica, sans-serif; font-size: 24px; font-weight: 700; fill: #0f172a; }
+      .box-text { font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: 400; fill: #334155; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 600; fill: #475569; }
+      .note { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 400; fill: #334155; }
+      .lane { stroke-width: 2; rx: 26; ry: 26; }
+      .box { stroke-width: 2.5; rx: 20; ry: 20; }
+      .arrow { stroke: #334155; stroke-width: 4.5; fill: none; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .arrow-soft { stroke: #64748b; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 10 8; marker-end: url(#arrow-soft); }
+      .loop { fill: none; stroke: #94a3b8; stroke-width: 2.5; stroke-dasharray: 12 10; rx: 18; ry: 18; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#ffffff"/>
+
+  <text x="800" y="62" text-anchor="middle" class="title">RegCheck Backend Architecture</text>
+  <text x="800" y="92" text-anchor="middle" class="subtitle">IDEA-centered pipeline: Ingest, Define dimensions, Extract evidence, Adjudicate deviations</text>
+
+  <rect x="70" y="130" width="1460" height="145" fill="#edfdf3" stroke="#86efac" class="lane"/>
+  <text x="120" y="168" class="section">Backend Orchestration</text>
+
+  <rect x="105" y="185" width="270" height="62" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="240" y="224" text-anchor="middle" class="box-title">API Job Path</text>
+
+  <rect x="430" y="185" width="300" height="62" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="580" y="224" text-anchor="middle" class="box-title">FastAPI → Redis Queue → Worker</text>
+
+  <rect x="785" y="185" width="240" height="62" fill="#dcfce7" stroke="#16a34a" class="box"/>
+  <text x="905" y="224" text-anchor="middle" class="box-title">CLI Direct Call</text>
+
+  <rect x="1080" y="185" width="190" height="62" fill="#f8fafc" stroke="#64748b" class="box"/>
+  <text x="1175" y="224" text-anchor="middle" class="box-title">Redis State</text>
+
+  <rect x="1325" y="185" width="160" height="62" fill="#f8fafc" stroke="#64748b" class="box"/>
+  <text x="1405" y="224" text-anchor="middle" class="box-title">Optional S3</text>
+
+  <path d="M375 216 H430" class="arrow"/>
+  <path d="M730 216 H1080" class="arrow"/>
+  <path d="M580 247 V300" class="arrow"/>
+  <path d="M905 247 V300" class="arrow"/>
+  <path d="M730 216 H1080" class="arrow-soft"/>
+  <path d="M1270 216 H1325" class="arrow-soft"/>
+
+  <rect x="80" y="320" width="1440" height="360" fill="#fffdf2" stroke="#fde68a" class="lane"/>
+  <text x="120" y="358" class="section">IDEA Core Pipeline</text>
+
+  <rect x="115" y="395" width="250" height="225" fill="#fef3c7" stroke="#d97706" class="box"/>
+  <text x="240" y="430" text-anchor="middle" class="box-title">I</text>
+  <text x="240" y="462" text-anchor="middle" class="box-title">Ingest Sources</text>
+  <text x="240" y="495" text-anchor="middle" class="box-text">Paper: PDF / DOCX / TXT</text>
+  <text x="240" y="522" text-anchor="middle" class="box-text">Registration: uploaded prereg,</text>
+  <text x="240" y="546" text-anchor="middle" class="box-text">ClinicalTrials.gov historical JSON,</text>
+  <text x="240" y="570" text-anchor="middle" class="box-text">or PCT CSV export</text>
+  <text x="240" y="602" text-anchor="middle" class="small">worker restores temp uploads when needed</text>
+
+  <rect x="420" y="395" width="250" height="225" fill="#fef3c7" stroke="#d97706" class="box"/>
+  <text x="545" y="430" text-anchor="middle" class="box-title">D</text>
+  <text x="545" y="462" text-anchor="middle" class="box-title">Define Dimensions</text>
+  <text x="545" y="495" text-anchor="middle" class="box-text">Selected dimensions arrive as</text>
+  <text x="545" y="519" text-anchor="middle" class="box-text">JSON or CSV, with optional</text>
+  <text x="545" y="543" text-anchor="middle" class="box-text">dimension definitions</text>
+  <text x="545" y="575" text-anchor="middle" class="box-text">clinical and animal flows can</text>
+  <text x="545" y="599" text-anchor="middle" class="box-text">fall back to default dimension sets</text>
+
+  <rect x="725" y="395" width="300" height="225" fill="#fdf2f8" stroke="#db2777" class="box"/>
+  <text x="875" y="430" text-anchor="middle" class="box-title">E</text>
+  <text x="875" y="462" text-anchor="middle" class="box-title">Extract Evidence</text>
+  <text x="875" y="495" text-anchor="middle" class="box-text">Parse paper text with GROBID, DPT-2,</text>
+  <text x="875" y="519" text-anchor="middle" class="box-text">DOCX reader, and scanned-PDF fallback</text>
+  <text x="875" y="551" text-anchor="middle" class="box-text">Optional LLM isolation for</text>
+  <text x="875" y="575" text-anchor="middle" class="box-text">multi-experiment papers</text>
+  <text x="875" y="607" text-anchor="middle" class="small">chunk, embed, and retrieve top-k evidence</text>
+
+  <rect x="1080" y="395" width="300" height="225" fill="#fdf2f8" stroke="#db2777" class="box"/>
+  <text x="1230" y="430" text-anchor="middle" class="box-title">A</text>
+  <text x="1230" y="462" text-anchor="middle" class="box-title">Adjudicate Deviations</text>
+  <text x="1230" y="495" text-anchor="middle" class="box-text">Prompt OpenAI, Groq, or DeepSeek</text>
+  <text x="1230" y="519" text-anchor="middle" class="box-text">with dimension definition plus</text>
+  <text x="1230" y="543" text-anchor="middle" class="box-text">retrieved registration and paper chunks</text>
+  <text x="1230" y="575" text-anchor="middle" class="box-text">validate JSON with Pydantic and</text>
+  <text x="1230" y="599" text-anchor="middle" class="box-text">ground quote fields in retrieved evidence</text>
+
+  <path d="M365 507 H420" class="arrow"/>
+  <path d="M670 507 H725" class="arrow"/>
+  <path d="M1025 507 H1080" class="arrow"/>
+
+  <rect x="690" y="372" width="730" height="270" class="loop"/>
+  <text x="1055" y="388" text-anchor="middle" class="small">dimension-wise loop: retrieve and adjudicate once per selected dimension</text>
+
+  <rect x="330" y="705" width="940" height="120" fill="#eef2ff" stroke="#a5b4fc" class="lane"/>
+  <text x="370" y="742" class="section">Report Assembly and Persistence</text>
+
+  <rect x="370" y="762" width="380" height="42" fill="#e0e7ff" stroke="#4f46e5" class="box"/>
+  <text x="560" y="789" text-anchor="middle" class="box-text">accumulate per-dimension comparison items into a single report JSON</text>
+
+  <rect x="790" y="762" width="200" height="42" fill="#e0e7ff" stroke="#4f46e5" class="box"/>
+  <text x="890" y="789" text-anchor="middle" class="box-text">update Redis status</text>
+
+  <rect x="1030" y="762" width="200" height="42" fill="#e0e7ff" stroke="#4f46e5" class="box"/>
+  <text x="1130" y="789" text-anchor="middle" class="box-text">or emit CLI CSV/JSON</text>
+
+  <path d="M1230 620 V762" class="arrow"/>
+
+  <rect x="90" y="705" width="200" height="120" fill="#f8fafc" stroke="#cbd5e1" class="box"/>
+  <text x="190" y="738" text-anchor="middle" class="box-title">Model Services</text>
+  <text x="190" y="768" text-anchor="middle" class="box-text">OpenAI embeddings</text>
+  <text x="190" y="792" text-anchor="middle" class="box-text">OpenAI / Groq / DeepSeek</text>
+
+  <path d="M290 765 C430 765, 650 650, 800 620" class="arrow-soft"/>
+  <path d="M290 790 C520 790, 980 650, 1160 620" class="arrow-soft"/>
+
+  <rect x="90" y="840" width="1420" height="36" fill="#f8fafc" stroke="#e2e8f0" class="box"/>
+  <text x="110" y="864" class="note">Backend emphasis: the main architectural unit is the per-dimension comparison loop, not the UI. Orchestration decides how jobs run; IDEA determines how evidence is produced and judged.</text>
+</svg>

@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">RegCheck IDEA classic flowchart</title>
+  <desc id="desc">Classic software flowchart view of the RegCheck IDEA pipeline with looped dimension adjudication.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#334155"/>
+    </marker>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .bg { fill: #ffffff; }
+      .grid { stroke: #e2e8f0; stroke-width: 1; opacity: 0.22; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 40px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 400; fill: #475569; }
+      .boxTitle { font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 700; fill: #0f172a; }
+      .boxSub { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 600; fill: #475569; letter-spacing: 0.8px; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 700; fill: #334155; }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; fill: #475569; letter-spacing: 0.7px; }
+      .main { stroke: #334155; stroke-width: 3.2; filter: url(#shadow); }
+      .aux { stroke: #475569; stroke-width: 2.4; filter: url(#shadow); }
+      .wire { fill: none; stroke: #334155; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .wireAux { fill: none; stroke: #64748b; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #94a3b8; stroke-width: 2.4; stroke-dasharray: 10 8; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" class="bg"/>
+  <g>
+    <path d="M0 120 H1600" class="grid"/>
+    <path d="M0 220 H1600" class="grid"/>
+    <path d="M0 320 H1600" class="grid"/>
+    <path d="M0 420 H1600" class="grid"/>
+    <path d="M0 520 H1600" class="grid"/>
+    <path d="M0 620 H1600" class="grid"/>
+    <path d="M0 720 H1600" class="grid"/>
+    <path d="M0 820 H1600" class="grid"/>
+    <path d="M100 0 V900" class="grid"/>
+    <path d="M250 0 V900" class="grid"/>
+    <path d="M400 0 V900" class="grid"/>
+    <path d="M550 0 V900" class="grid"/>
+    <path d="M700 0 V900" class="grid"/>
+    <path d="M850 0 V900" class="grid"/>
+    <path d="M1000 0 V900" class="grid"/>
+    <path d="M1150 0 V900" class="grid"/>
+    <path d="M1300 0 V900" class="grid"/>
+    <path d="M1450 0 V900" class="grid"/>
+  </g>
+
+  <text x="800" y="82" text-anchor="middle" class="title">RegCheck IDEA Pipeline</text>
+  <text x="800" y="113" text-anchor="middle" class="subtitle">Classic software flowchart view</text>
+
+  <rect x="80" y="370" width="150" height="72" rx="36" fill="#eef2ff" class="main"/>
+  <text x="155" y="415" text-anchor="middle" class="boxTitle" font-size="24">Start</text>
+
+  <rect x="270" y="290" width="220" height="180" rx="12" fill="#dbeafe" class="main"/>
+  <rect x="288" y="308" width="40" height="34" rx="8" fill="#60a5fa" opacity="0.95"/>
+  <text x="308" y="332" text-anchor="middle" class="small" fill="#ffffff">I</text>
+  <text x="380" y="374" text-anchor="middle" class="boxTitle">Ingest</text>
+  <text x="380" y="408" text-anchor="middle" class="boxSub">normalize inputs</text>
+
+  <rect x="540" y="290" width="220" height="180" rx="12" fill="#fef3c7" class="main"/>
+  <rect x="558" y="308" width="40" height="34" rx="8" fill="#f59e0b" opacity="0.95"/>
+  <text x="578" y="332" text-anchor="middle" class="small" fill="#ffffff">D</text>
+  <text x="650" y="374" text-anchor="middle" class="boxTitle">Define</text>
+  <text x="650" y="408" text-anchor="middle" class="boxSub">load dimensions</text>
+
+  <rect x="820" y="290" width="220" height="180" rx="12" fill="#f3e8ff" class="main"/>
+  <rect x="838" y="308" width="40" height="34" rx="8" fill="#a855f7" opacity="0.95"/>
+  <text x="858" y="332" text-anchor="middle" class="small" fill="#ffffff">E</text>
+  <text x="930" y="374" text-anchor="middle" class="boxTitle">Extract</text>
+  <text x="930" y="408" text-anchor="middle" class="boxSub">parse • chunk • retrieve</text>
+
+  <rect x="1100" y="290" width="220" height="180" rx="12" fill="#d1fae5" class="main"/>
+  <rect x="1118" y="308" width="40" height="34" rx="8" fill="#10b981" opacity="0.95"/>
+  <text x="1138" y="332" text-anchor="middle" class="small" fill="#ffffff">A</text>
+  <text x="1210" y="374" text-anchor="middle" class="boxTitle">Adjudicate</text>
+  <text x="1210" y="408" text-anchor="middle" class="boxSub">structured deviation call</text>
+
+  <polygon points="1430,320 1530,405 1430,490 1330,405" fill="#f8fafc" class="main"/>
+  <text x="1430" y="395" text-anchor="middle" class="small">More</text>
+  <text x="1430" y="418" text-anchor="middle" class="small">dims?</text>
+
+  <rect x="1280" y="640" width="240" height="72" rx="36" fill="#eef2ff" class="main"/>
+  <text x="1400" y="676" text-anchor="middle" class="boxTitle" font-size="25">Report</text>
+  <text x="1400" y="700" text-anchor="middle" class="boxSub">JSON / CSV</text>
+
+  <polygon points="250,210 405,210 380,260 225,260" fill="#f8fafc" class="aux"/>
+  <text x="315" y="241" text-anchor="middle" class="small">Paper PDF / DOCX</text>
+
+  <polygon points="210,540 435,540 410,590 185,590" fill="#f8fafc" class="aux"/>
+  <text x="310" y="571" text-anchor="middle" class="small">Registry / Prereg / PCT CSV</text>
+
+  <polygon points="535,180 740,180 715,230 510,230" fill="#f8fafc" class="aux"/>
+  <text x="625" y="211" text-anchor="middle" class="small">Dimensions JSON / CSV</text>
+
+  <polygon points="815,180 1040,180 1015,230 790,230" fill="#f8fafc" class="aux"/>
+  <text x="915" y="211" text-anchor="middle" class="small">Parsers: GROBID / DPT-2 / DOCX</text>
+
+  <ellipse cx="930" cy="575" rx="120" ry="34" fill="#f8fafc" class="aux"/>
+  <path d="M810 575 v34 c0 18 54 32 120 32s120-14 120-32v-34" fill="#f8fafc" class="aux"/>
+  <text x="930" y="580" text-anchor="middle" class="small">Embeddings / Retrieval Index</text>
+
+  <polygon points="1095,180 1320,180 1295,230 1070,230" fill="#f8fafc" class="aux"/>
+  <text x="1195" y="211" text-anchor="middle" class="small">LLM Engine: OpenAI / Groq / DeepSeek</text>
+
+  <ellipse cx="1210" cy="575" rx="120" ry="34" fill="#f8fafc" class="aux"/>
+  <path d="M1090 575 v34 c0 18 54 32 120 32s120-14 120-32v-34" fill="#f8fafc" class="aux"/>
+  <text x="1210" y="580" text-anchor="middle" class="small">Validated Dimension Result</text>
+
+  <path d="M230 406 H270" class="wire"/>
+  <path d="M490 380 H540" class="wire"/>
+  <path d="M760 380 H820" class="wire"/>
+  <path d="M1040 380 H1100" class="wire"/>
+  <path d="M1320 380 H1338" class="wire"/>
+  <path d="M1430 490 V640" class="wire"/>
+
+  <path d="M315 260 V290" class="wireAux"/>
+  <path d="M310 540 V470" class="wireAux"/>
+  <path d="M625 230 V290" class="wireAux"/>
+  <path d="M915 230 V290" class="wireAux"/>
+  <path d="M930 541 V470" class="wireAux"/>
+  <path d="M1195 230 V290" class="wireAux"/>
+  <path d="M1210 541 V470" class="wireAux"/>
+
+  <rect x="785" y="250" width="570" height="255" rx="20" fill="none" class="loop"/>
+  <text x="1070" y="268" text-anchor="middle" class="label">FOR EACH DIMENSION</text>
+
+  <path d="M1430 320 V140 H930 V290" class="wireAux"/>
+  <text x="1460" y="226" class="label">Yes</text>
+  <text x="1447" y="570" class="label">No</text>
+
+  <text x="800" y="820" text-anchor="middle" class="subtitle">IDEA = Ingest → Define → Extract → Adjudicate</text>
+</svg>

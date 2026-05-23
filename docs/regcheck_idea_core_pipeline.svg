@@ -1,0 +1,234 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">RegCheck IDEA core pipeline</title>
+  <desc id="desc">Slide-style diagram of the core RegCheck backend pipeline: Ingest, Define, Extract, Adjudicate.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="55%" stop-color="#f3f4f6"/>
+      <stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#cbd5e1" stroke-width="1" opacity="0.34"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.16"/>
+    </filter>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <filter id="glowBlue" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="spine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="33%" stop-color="#f59e0b"/>
+      <stop offset="66%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <linearGradient id="ingestGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#bfdbfe"/>
+    </linearGradient>
+    <linearGradient id="defineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef3c7"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+    <linearGradient id="extractGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f5d0fe"/>
+      <stop offset="100%" stop-color="#ddd6fe"/>
+    </linearGradient>
+    <linearGradient id="adjudicateGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d1fae5"/>
+      <stop offset="100%" stop-color="#a7f3d0"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.70"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.15"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L12,6 L0,12 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 42px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 400; fill: #475569; letter-spacing: 0.4px; }
+      .stageLetter { font-family: Arial, Helvetica, sans-serif; font-size: 44px; font-weight: 800; fill: #0f172a; }
+      .stageTitle { font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: 700; fill: #0f172a; }
+      .stageSub { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 600; fill: #475569; letter-spacing: 1.2px; text-transform: uppercase; }
+      .micro { font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 700; fill: #334155; }
+      .smallCap { font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; fill: #475569; letter-spacing: 0.8px; text-transform: uppercase; }
+      .nodeShadow { filter: url(#shadow); }
+      .soft { filter: url(#softShadow); }
+      .pill { stroke: #cbd5e1; stroke-width: 1.5; }
+      .wire { fill: none; stroke: #94a3b8; stroke-width: 2; stroke-linecap: round; opacity: 0.8; }
+      .spine { fill: none; stroke: #94a3b8; stroke-width: 12; stroke-linecap: round; filter: url(#glowBlue); }
+      .arrow { fill: none; stroke: #334155; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #94a3b8; stroke-width: 2.5; stroke-dasharray: 12 10; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#ffffff"/>
+  <rect width="1600" height="900" fill="url(#grid)" opacity="0.22"/>
+
+  <circle cx="188" cy="154" r="120" fill="#dbeafe" opacity="0.28"/>
+  <circle cx="1440" cy="154" r="110" fill="#ddd6fe" opacity="0.24"/>
+  <circle cx="1410" cy="738" r="160" fill="#dcfce7" opacity="0.24"/>
+  <circle cx="200" cy="740" r="140" fill="#fef3c7" opacity="0.26"/>
+
+  <text x="800" y="86" text-anchor="middle" class="title">RegCheck IDEA Core Pipeline</text>
+  <text x="800" y="116" text-anchor="middle" class="subtitle">Ingest · Define · Extract · Adjudicate</text>
+
+  <path d="M245 450 C365 450, 395 450, 515 450 S755 450, 875 450 S1115 450, 1350 450" class="spine"/>
+  <path d="M1240 450 H1380" class="arrow"/>
+
+  <path d="M830 292 C1040 258, 1180 300, 1270 372" class="loop"/>
+  <path d="M1270 528 C1180 600, 1040 642, 830 608" class="loop"/>
+  <text x="1050" y="286" text-anchor="middle" class="smallCap">Per Dimension</text>
+
+  <g class="nodeShadow">
+    <rect x="150" y="330" width="230" height="240" rx="32" fill="#94a3b8" opacity="0.18"/>
+    <rect x="140" y="318" width="230" height="240" rx="32" fill="#dbeafe" stroke="#60a5fa" stroke-width="2.5"/>
+    <rect x="156" y="334" width="198" height="48" rx="18" fill="url(#glass)" opacity="0.85"/>
+    <circle cx="255" cy="436" r="60" fill="#ffffff" opacity="0.45"/>
+    <text x="255" y="426" text-anchor="middle" class="stageLetter">I</text>
+    <text x="255" y="470" text-anchor="middle" class="stageTitle">Ingest</text>
+    <text x="255" y="502" text-anchor="middle" class="stageSub">Sources In</text>
+  </g>
+
+  <g class="nodeShadow">
+    <rect x="450" y="330" width="230" height="240" rx="32" fill="#94a3b8" opacity="0.18"/>
+    <rect x="440" y="318" width="230" height="240" rx="32" fill="#fef3c7" stroke="#f59e0b" stroke-width="2.5"/>
+    <rect x="456" y="334" width="198" height="48" rx="18" fill="url(#glass)" opacity="0.85"/>
+    <circle cx="555" cy="436" r="60" fill="#ffffff" opacity="0.42"/>
+    <text x="555" y="426" text-anchor="middle" class="stageLetter">D</text>
+    <text x="555" y="470" text-anchor="middle" class="stageTitle">Define</text>
+    <text x="555" y="502" text-anchor="middle" class="stageSub">Dimensions</text>
+  </g>
+
+  <g class="nodeShadow">
+    <rect x="750" y="330" width="230" height="240" rx="32" fill="#94a3b8" opacity="0.18"/>
+    <rect x="740" y="318" width="230" height="240" rx="32" fill="#f3e8ff" stroke="#a855f7" stroke-width="2.5"/>
+    <rect x="756" y="334" width="198" height="48" rx="18" fill="url(#glass)" opacity="0.85"/>
+    <circle cx="855" cy="436" r="60" fill="#ffffff" opacity="0.42"/>
+    <text x="855" y="426" text-anchor="middle" class="stageLetter">E</text>
+    <text x="855" y="470" text-anchor="middle" class="stageTitle">Extract</text>
+    <text x="855" y="502" text-anchor="middle" class="stageSub">Text + Evidence</text>
+  </g>
+
+  <g class="nodeShadow">
+    <rect x="1050" y="330" width="230" height="240" rx="32" fill="#94a3b8" opacity="0.18"/>
+    <rect x="1040" y="318" width="230" height="240" rx="32" fill="#d1fae5" stroke="#10b981" stroke-width="2.5"/>
+    <rect x="1056" y="334" width="198" height="48" rx="18" fill="url(#glass)" opacity="0.85"/>
+    <circle cx="1155" cy="436" r="60" fill="#ffffff" opacity="0.42"/>
+    <text x="1155" y="426" text-anchor="middle" class="stageLetter">A</text>
+    <text x="1155" y="470" text-anchor="middle" class="stageTitle">Adjudicate</text>
+    <text x="1155" y="502" text-anchor="middle" class="stageSub">Deviation Call</text>
+  </g>
+
+  <g class="soft">
+    <rect x="58" y="262" width="116" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="116" y="287" text-anchor="middle" class="micro">PDF</text>
+    <path d="M174 282 C214 292, 228 320, 230 347" class="wire"/>
+
+    <rect x="54" y="332" width="132" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="120" y="357" text-anchor="middle" class="micro">Registry JSON</text>
+    <path d="M186 352 C214 360, 224 374, 234 390" class="wire"/>
+
+    <rect x="58" y="402" width="116" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="116" y="427" text-anchor="middle" class="micro">PCT CSV</text>
+    <path d="M174 422 C206 426, 222 428, 235 433" class="wire"/>
+
+    <rect x="50" y="472" width="140" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="120" y="497" text-anchor="middle" class="micro">Upload Store</text>
+    <path d="M190 492 C208 486, 222 478, 236 470" class="wire"/>
+  </g>
+
+  <g class="soft">
+    <rect x="470" y="250" width="170" height="42" rx="21" fill="#ffffff" class="pill"/>
+    <text x="555" y="276" text-anchor="middle" class="micro">Dimensions</text>
+    <path d="M555 292 C555 304, 555 316, 555 328" class="wire"/>
+
+    <rect x="682" y="382" width="118" height="42" rx="21" fill="#ffffff" class="pill"/>
+    <text x="741" y="408" text-anchor="middle" class="micro">Defaults</text>
+    <path d="M682 404 C660 404, 640 404, 623 404" class="wire"/>
+
+    <rect x="468" y="586" width="172" height="42" rx="21" fill="#ffffff" class="pill"/>
+    <text x="554" y="612" text-anchor="middle" class="micro">Definitions</text>
+    <path d="M554 586 C554 574, 554 566, 554 556" class="wire"/>
+
+    <rect x="306" y="382" width="132" height="42" rx="21" fill="#ffffff" class="pill"/>
+    <text x="372" y="408" text-anchor="middle" class="micro">History</text>
+    <path d="M438 404 C452 404, 470 404, 486 404" class="wire"/>
+  </g>
+
+  <g class="soft">
+    <rect x="708" y="242" width="124" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="770" y="267" text-anchor="middle" class="micro">GROBID</text>
+    <path d="M770 282 C786 300, 802 320, 816 346" class="wire"/>
+
+    <rect x="878" y="242" width="110" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="933" y="267" text-anchor="middle" class="micro">DPT-2</text>
+    <path d="M933 282 C918 300, 902 320, 890 346" class="wire"/>
+
+    <rect x="988" y="388" width="122" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1049" y="413" text-anchor="middle" class="micro">Retrieve</text>
+    <path d="M988 408 C968 408, 950 408, 934 408" class="wire"/>
+
+    <rect x="818" y="590" width="110" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="873" y="615" text-anchor="middle" class="micro">Embed</text>
+    <path d="M873 590 C868 578, 864 568, 860 556" class="wire"/>
+
+    <rect x="672" y="518" width="118" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="731" y="543" text-anchor="middle" class="micro">Chunk</text>
+    <path d="M790 538 C808 534, 820 528, 832 516" class="wire"/>
+
+    <rect x="654" y="450" width="152" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="730" y="475" text-anchor="middle" class="micro">Experiment</text>
+    <path d="M806 470 C816 466, 826 462, 836 458" class="wire"/>
+  </g>
+
+  <g class="soft">
+    <rect x="1064" y="242" width="118" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1123" y="267" text-anchor="middle" class="micro">OpenAI</text>
+    <path d="M1123 282 C1134 302, 1142 322, 1148 346" class="wire"/>
+
+    <rect x="1196" y="242" width="100" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1246" y="267" text-anchor="middle" class="micro">Groq</text>
+    <path d="M1246 282 C1232 300, 1218 322, 1206 346" class="wire"/>
+
+    <rect x="1288" y="390" width="116" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1346" y="415" text-anchor="middle" class="micro">DeepSeek</text>
+    <path d="M1288 410 C1278 410, 1268 410, 1258 410" class="wire"/>
+
+    <rect x="1288" y="472" width="110" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1343" y="497" text-anchor="middle" class="micro">Schema</text>
+    <path d="M1288 492 C1276 488, 1266 484, 1256 480" class="wire"/>
+
+    <rect x="1210" y="592" width="108" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1264" y="617" text-anchor="middle" class="micro">Quotes</text>
+    <path d="M1264 592 C1248 578, 1234 566, 1222 554" class="wire"/>
+
+    <rect x="1084" y="592" width="108" height="40" rx="20" fill="#ffffff" class="pill"/>
+    <text x="1138" y="617" text-anchor="middle" class="micro">Report</text>
+    <path d="M1138 592 C1142 580, 1146 568, 1150 556" class="wire"/>
+  </g>
+
+  <g class="soft">
+    <rect x="1388" y="418" width="130" height="64" rx="24" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="1453" y="444" text-anchor="middle" class="smallCap">Output</text>
+    <text x="1453" y="468" text-anchor="middle" class="stageTitle" font-size="22">JSON</text>
+  </g>
+
+  <g opacity="0.88">
+    <circle cx="255" cy="650" r="8" fill="#60a5fa"/>
+    <circle cx="555" cy="650" r="8" fill="#f59e0b"/>
+    <circle cx="855" cy="650" r="8" fill="#a855f7"/>
+    <circle cx="1155" cy="650" r="8" fill="#10b981"/>
+    <path d="M255 650 H555 H855 H1155" fill="none" stroke="#cbd5e1" stroke-width="3" stroke-dasharray="4 10"/>
+  </g>
+
+  <text x="800" y="735" text-anchor="middle" class="smallCap">Dimension-Wise RAG Loop</text>
+</svg>
