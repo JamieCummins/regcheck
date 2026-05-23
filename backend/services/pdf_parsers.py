@@ -160,7 +160,7 @@ async def pdf2grobid(
     grobid_url: str | None = None,
 ) -> str:
     grobid_url = (grobid_url or os.environ.get("GROBID_URL") or "").strip() or (
-        "https://kermitt2-grobid.hf.space/api/processFulltextDocument"
+        "https://lfoppiano-grobid.hf.space/api/processFulltextDocument"
     )
     timeout = httpx.Timeout(60.0, read=60.0)
     async with httpx.AsyncClient(timeout=timeout) as client:

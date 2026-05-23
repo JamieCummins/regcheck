@@ -1,0 +1,59 @@
+flowchart LR
+  classDef entry fill:#E8F1FF,stroke:#2563EB,color:#0F172A,stroke-width:1.5px;
+  classDef web fill:#EAFBF1,stroke:#16A34A,color:#0F172A,stroke-width:1.5px;
+  classDef engine fill:#FFF5DB,stroke:#D97706,color:#0F172A,stroke-width:1.5px;
+  classDef model fill:#FCE7F3,stroke:#DB2777,color:#0F172A,stroke-width:1.5px;
+  classDef output fill:#EEF2FF,stroke:#4F46E5,color:#0F172A,stroke-width:1.5px;
+  classDef store fill:#E5E7EB,stroke:#475569,color:#0F172A,stroke-width:1.5px;
+
+  subgraph A["Entry Points"]
+    Browser["Browser UI<br/>upload files, choose dimensions,<br/>parser, and LLM provider"]
+    CLI["CLI<br/>batch comparisons with<br/>CSV-defined dimensions"]
+  end
+
+  subgraph B["Web Orchestration"]
+    FastAPI["FastAPI + Jinja<br/>routes: /compare, /task_status, /result"]
+    Redis["Redis<br/>job queue + progress/result state"]
+    Worker["Background worker<br/>restores uploads and dispatches jobs"]
+    S3["Optional S3<br/>temporary upload handoff"]
+  end
+
+  subgraph C["Comparison Services"]
+    Services["Comparison services<br/>general / clinical / animals"]
+    Reg["Registration text assembly<br/>uploaded prereg OR historical ClinicalTrials.gov version OR PCT CSV"]
+    Parse["Paper text extraction<br/>GROBID / DPT-2 / DOCX / scanned-PDF fallback"]
+    Experiment["Optional experiment isolation<br/>LLM narrows multi-experiment papers"]
+  end
+
+  subgraph D["RAG Comparison Engine"]
+    Embed["Chunk documents and build corpora<br/>OpenAI embeddings"]
+    Retrieve["For each selected dimension:<br/>embed query + retrieve top-k registration and paper chunks"]
+    Judge["Structured comparison call<br/>OpenAI / Groq / DeepSeek"]
+  end
+
+  subgraph E["Outputs"]
+    Report["Report JSON<br/>quotes, summaries, deviation judgement"]
+    Results["Results UI<br/>browser polls task status and renders report"]
+    Export["CLI export<br/>CSV or JSON"]
+    Survey["Optional survey response<br/>stored separately"]
+  end
+
+  Browser --> FastAPI
+  FastAPI -->|enqueue job| Redis
+  FastAPI -. temporary upload handoff .-> S3
+  Redis -->|dequeue| Worker
+  S3 -. restore upload .-> Worker
+  Worker --> Services
+  CLI -->|direct call| Services
+  Services --> Reg
+  Services --> Parse
+  Parse --> Experiment
+  Parse --> Embed
+  Reg --> Embed
+  Experiment --> Embed
+  Embed --> Retrieve
+  Retrieve -->|dimension loop| Judge
+  Judge --> Report
+  Report --> Export
+  Redis -->|status + final result| Results
+  Results -. optional feedback .-> Survey

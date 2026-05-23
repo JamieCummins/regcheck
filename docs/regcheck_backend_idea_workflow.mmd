@@ -1,0 +1,23 @@
+flowchart LR
+  classDef orchestration fill:#EAFBF1,stroke:#16A34A,color:#0F172A,stroke-width:1.5px;
+  classDef idea fill:#FFF7CC,stroke:#D97706,color:#0F172A,stroke-width:1.5px;
+  classDef rag fill:#FCE7F3,stroke:#DB2777,color:#0F172A,stroke-width:1.5px;
+  classDef output fill:#EEF2FF,stroke:#4F46E5,color:#0F172A,stroke-width:1.5px;
+  classDef store fill:#E5E7EB,stroke:#475569,color:#0F172A,stroke-width:1.5px;
+
+  API["API or CLI trigger"]:::orchestration --> Queue["Async orchestration<br/>FastAPI -> Redis queue -> worker<br/>or direct CLI call"]:::orchestration
+
+  Queue --> I["I. Ingest study sources<br/>paper PDF/DOCX/TXT<br/>prereg PDF/DOCX/TXT or ClinicalTrials.gov or PCT CSV<br/>optional S3/local upload restoration"]:::idea
+  I --> D["D. Define dimensions<br/>JSON/CSV-selected dimensions or defaults<br/>dimension definitions + optional prior outputs"]:::idea
+  D -->|for each dimension| E["E. Extract and retrieve evidence<br/>GROBID/DPT-2/DOCX parsing<br/>optional experiment isolation<br/>chunking + embeddings + top-k retrieval"]:::rag
+  E --> A["A. Adjudicate deviations<br/>OpenAI/Groq/DeepSeek structured comparison<br/>Pydantic validation + grounded quote fields"]:::rag
+  A --> R["Assemble report and persist state<br/>per-dimension JSON result<br/>Redis task status or CLI CSV/JSON"]:::output
+
+  Redis[("Redis state + queue")]:::store
+  S3["Optional S3 handoff"]:::store
+  Models["LLM + embedding providers"]:::store
+
+  Queue -. uses .-> Redis
+  I -. restore uploads .-> S3
+  E -. embeddings .-> Models
+  A -. adjudication .-> Models
