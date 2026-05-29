@@ -22,6 +22,7 @@ from .documents import (
     read_file,
     read_file_as_pdf,
 )
+from .dimensions import default_dimensions_for
 from .embeddings import (
     EmbeddingCorpus,
     build_corpus,
@@ -718,19 +719,6 @@ async def clinical_trial_comparison(
         f"{dimension}\n\n" + "\n".join(f"{sub}\n{text}" for sub, text in subcomponents.items())
         for dimension, subcomponents in nested_trial.items()
     )
-    default_dimensions = [
-        "Eligibility: inclusion criteria",
-        "Eligibility: exclusion criteria",
-        "Design: Intervention/treatment information",
-        "Design: control/placebo information",
-        "Design: Planned sample size",
-        "Ethics approval: number",
-        "Ethics approval: committee",
-        "Ethics approval: date",
-        "Recruitment: Date recruitment started",
-        "Outcomes: primary",
-        "Outcomes: secondary",
-    ]
     dimensions_to_compare: list[dict[str, str]] = []
     if selected_dimensions:
         for item in selected_dimensions:
@@ -744,10 +732,7 @@ async def clinical_trial_comparison(
                 {"dimension": dimension_name, "definition": dimension_definition}
             )
     else:
-        for name in default_dimensions:
-            dimensions_to_compare.append(
-                {"dimension": name, "definition": dimension_definitions.get(name, "")}
-            )
+        dimensions_to_compare = default_dimensions_for("clinical_trials")
     processed_count = 0
     paper_input = read_file_as_pdf(paper_path, paper_ext)
     parser_choice_normalized = (parser_choice or "grobid").lower()
