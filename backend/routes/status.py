@@ -55,14 +55,11 @@ def _coerce_int(value):
         return None
 
 
-@router.get("/task_status/{task_id}")
-async def task_status(request: Request, task_id: str):
-    redis_client = request.app.state.redis
-    data = await _safe_hgetall(redis_client, task_id)
+def task_status_payload_from_data(data: dict) -> dict | None:
     if not data:
-        return JSONResponse({"state": "UNKNOWN", "status": "Task not found or temporarily unavailable"})
+        return None
 
-    result_json = data.get("result_json")
+    result_json = _decode(data.get("result_json"))
     parsed_result = None
     if result_json:
         try:
@@ -81,14 +78,29 @@ async def task_status(request: Request, task_id: str):
     state = _decode(data.get("state"))
     status_text = _decode(data.get("status")) or "Pending..."
 
+    return {
+        "state": state,
+        "status": status_text,
+        "result": parsed_result,
+        "total_dimensions": total_dimensions,
+        "processed_dimensions": processed_dimensions,
+    }
+
+
+async def get_task_status_payload(redis_client, task_id: str) -> dict | None:
+    data = await _safe_hgetall(redis_client, task_id)
+    return task_status_payload_from_data(data)
+
+
+@router.get("/task_status/{task_id}")
+async def task_status(request: Request, task_id: str):
+    redis_client = request.app.state.redis
+    payload = await get_task_status_payload(redis_client, task_id)
+    if payload is None:
+        return JSONResponse({"state": "UNKNOWN", "status": "Task not found or temporarily unavailable"})
+
     return JSONResponse(
-        {
-            "state": state,
-            "status": status_text,
-            "result": parsed_result,
-            "total_dimensions": total_dimensions,
-            "processed_dimensions": processed_dimensions,
-        }
+        payload
     )
 
 

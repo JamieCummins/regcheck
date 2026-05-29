@@ -15,6 +15,7 @@ class Settings:
 
     redis_url: str
     session_secret: str
+    api_token: str | None
     task_ttl_seconds: int
     max_queue_length: int
     static_dir: str
@@ -52,6 +53,7 @@ def get_settings() -> Settings:
     if (os.environ.get("DYNO") or require_session_secret) and not session_secret_env:
         raise RuntimeError("SESSION_SECRET must be set for production deployments.")
     session_secret = session_secret_env or secrets.token_urlsafe(32)
+    api_token = (os.environ.get("REGCHECK_API_TOKEN") or "").strip() or None
 
     def _int_env(name: str, default: int, minimum: int = 1) -> int:
         raw = os.environ.get(name)
@@ -72,6 +74,7 @@ def get_settings() -> Settings:
     settings = Settings(
         redis_url=redis_url,
         session_secret=session_secret,
+        api_token=api_token,
         task_ttl_seconds=task_ttl_seconds,
         max_queue_length=max_queue_length,
         static_dir=static_dir,

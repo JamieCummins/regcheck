@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ..services.dimensions import default_dimension_sets
+
 router = APIRouter()
 
 
@@ -15,7 +17,13 @@ async def index(request: Request):
 @router.get("/compare", response_class=HTMLResponse, name="compare")
 async def compare(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("general_preregistration.html", {"request": request})
+    return templates.TemplateResponse(
+        "general_preregistration.html",
+        {
+            "request": request,
+            "default_dimension_sets": default_dimension_sets(),
+        },
+    )
 
 
 @router.get("/clinical_trials", response_class=HTMLResponse, name="clinical_trials")

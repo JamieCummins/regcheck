@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .core.config import get_settings
 from .core.logging import configure_logging
 from .core.redis import create_redis_client
-from .routes import comparisons, pages, status
+from .routes import api, comparisons, pages, status
 from .routes import survey
 
 
@@ -42,5 +42,6 @@ def create_app() -> FastAPI:
     app.include_router(comparisons.router)
     app.include_router(survey.router)
     app.include_router(status.router)
+    app.include_router(api.router)
 
     return app

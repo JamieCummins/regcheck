@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -36,6 +37,13 @@ ComparisonType = Literal[
     "general_preregistration",
     "animals_trials",
 ]
+
+
+@dataclass(slots=True)
+class QueuedComparison:
+    task_id: str
+    state: str
+    status: str
 
 
 async def _store_upload(
@@ -188,7 +196,7 @@ async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2
         raise last_error
 
 
-async def _queue_comparison(
+async def _enqueue_comparison(
     request: Request,
     *,
     comparison_type: ComparisonType,
@@ -196,7 +204,7 @@ async def _queue_comparison(
     client: str,
     reasoning_effort: str | None,
     append_previous_output: str | None,
-    dimensions_data: str,
+    selected_dimensions: list[dict[str, str]],
     registration_id: str | None = None,
     preregistration: UploadFile | None = None,
     paper: UploadFile | None = None,
@@ -204,7 +212,7 @@ async def _queue_comparison(
     multiple_experiments: str | None = None,
     experiment_number: str | None = None,
     experiment_text: str | None = None,
-) -> RedirectResponse:
+) -> QueuedComparison:
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
     redis_client = request.app.state.redis
@@ -221,7 +229,6 @@ async def _queue_comparison(
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning("Failed to compute queue depth; proceeding without backpressure", exc_info=exc)
 
-    selected_dimensions = _parse_dimensions(dimensions_data)
     dimension_names = [item["dimension"] for item in selected_dimensions]
 
     append_previous = _bool_from_yes(append_previous_output)
@@ -387,7 +394,44 @@ async def _queue_comparison(
         )
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
-    return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
+    return QueuedComparison(task_id=task_id, state="queued", status="Task queued")
+
+
+async def _queue_comparison(
+    request: Request,
+    *,
+    comparison_type: ComparisonType,
+    parser_choice: str,
+    client: str,
+    reasoning_effort: str | None,
+    append_previous_output: str | None,
+    dimensions_data: str,
+    registration_id: str | None = None,
+    preregistration: UploadFile | None = None,
+    paper: UploadFile | None = None,
+    registration_csv: UploadFile | None = None,
+    multiple_experiments: str | None = None,
+    experiment_number: str | None = None,
+    experiment_text: str | None = None,
+) -> RedirectResponse:
+    selected_dimensions = _parse_dimensions(dimensions_data)
+    queued = await _enqueue_comparison(
+        request,
+        comparison_type=comparison_type,
+        parser_choice=parser_choice,
+        client=client,
+        reasoning_effort=reasoning_effort,
+        append_previous_output=append_previous_output,
+        selected_dimensions=selected_dimensions,
+        registration_id=registration_id,
+        preregistration=preregistration,
+        paper=paper,
+        registration_csv=registration_csv,
+        multiple_experiments=multiple_experiments,
+        experiment_number=experiment_number,
+        experiment_text=experiment_text,
+    )
+    return RedirectResponse(url=f"/survey/{queued.task_id}", status_code=302)
 
 
 @router.post("/compare", name="compare_post")
