@@ -20,6 +20,7 @@
                     <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="appDropdown">
                         <li><a class="dropdown-item {{ 'active' if nav_active == 'demo' else '' }}" href="{{ url_for('demo') }}">Demo</a></li>
                         <li><a class="dropdown-item" href="{{ url_for('compare') }}">Registration-Paper Comparison </a></li>
+                        <li><a class="dropdown-item" href="{{ url_for('batch') }}">Batch Clinical Comparison</a></li>
                         <li><a class="dropdown-item locked-option" href="#">Code-Paper Comparison <img class="locked-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/White_lock.svg/1024px-White_lock.svg.png" alt=""></a></li>
                         <li><a class="dropdown-item locked-option" href="#">Evaluate Registration Quality <img class="locked-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/White_lock.svg/1024px-White_lock.svg.png" alt=""></a></li>
                     </ul>
