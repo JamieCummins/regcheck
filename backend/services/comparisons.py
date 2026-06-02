@@ -41,6 +41,8 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MAX_SEGMENTS = 1200
 DEFAULT_MAX_CONCURRENT_TASKS = 8
 
@@ -80,6 +82,14 @@ def _deepseek_model() -> str:
 
 def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def _ollama_model() -> str:
+    return _env_str("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+
+
+def _ollama_base_url() -> str:
+    return _env_str("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
 
 
 def _max_embedding_segments() -> int:
@@ -217,6 +227,10 @@ def get_deepseek_client() -> OpenAI:
             "Missing DEEPSEEK_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+
+
+def get_ollama_client() -> OpenAI:
+    return OpenAI(api_key="ollama", base_url=_ollama_base_url())
 
 
 dimension_definitions: dict[str, str] = {
@@ -414,6 +428,12 @@ async def extract_experiment_specific_paper_text(
                 temperature=0,
             )
             return _message_content_to_text(response.choices[0].message)
+        if client_choice == "ollama":
+            return _openai_chat_text(
+                get_ollama_client(),
+                model=_ollama_model(),
+                messages=messages,
+            )
         raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
     content = await asyncio.to_thread(_invoke_llm)
@@ -1484,6 +1504,12 @@ def run_comparison(
                 temperature=0,
             )
         result_json = _message_content_to_text(response.choices[0].message)
+    elif client_choice == "ollama":
+        result_json = _openai_chat_json(
+            get_ollama_client(),
+            model=_ollama_model(),
+            messages=messages,
+        )
     else:
         raise ValueError("Invalid client selection")
 
