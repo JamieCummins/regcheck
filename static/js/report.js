@@ -8,6 +8,7 @@
         taskId: app.dataset.taskId || "",
         items: [],
         manifest: null,
+        manifestUnavailable: false,
         activeIndex: 0,
         activeEvidence: null,
         currentSourceId: null,
@@ -122,8 +123,13 @@
     async function loadManifest() {
         try {
             const response = await fetch(`/report/${state.taskId}/manifest`);
-            if (!response.ok) return;
+            if (!response.ok) {
+                state.manifest = null;
+                state.manifestUnavailable = true;
+                return;
+            }
             state.manifest = await response.json();
+            state.manifestUnavailable = false;
             renderSourceTabs();
         } catch (_error) {
             state.manifest = state.manifest || null;
@@ -134,6 +140,9 @@
         renderDimensionList();
         renderDimensionDetail();
         renderSourceTabs();
+        if (state.manifestUnavailable) {
+            renderSourceViewer();
+        }
     }
 
     function renderDimensionList() {
@@ -247,6 +256,9 @@
         if (!els.sourceTabs) return;
         const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
         els.sourceTabs.innerHTML = "";
+        if (state.manifestUnavailable) {
+            return;
+        }
         Object.values(sources).forEach((source) => {
             const button = document.createElement("button");
             button.type = "button";
@@ -282,8 +294,21 @@
         if (els.viewer) els.viewer.classList.add("is-open");
     }
 
+    function renderUnavailableSourceState() {
+        els.sourceTitle.textContent = "Sources Unavailable";
+        els.sourceCanvas.innerHTML = `<div class="source-placeholder">Source artifacts unavailable for this report</div>`;
+        els.pageLabel.textContent = "-";
+        els.prevPage.disabled = true;
+        els.nextPage.disabled = true;
+        els.rawLink.classList.add("d-none");
+    }
+
     async function renderSourceViewer() {
         if (!els.sourceCanvas || !els.sourceTitle) return;
+        if (state.manifestUnavailable) {
+            renderUnavailableSourceState();
+            return;
+        }
         const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
         const source = sources[state.currentSourceId] || null;
         if (!source) {
@@ -291,6 +316,8 @@
             els.sourceCanvas.innerHTML = `<div class="source-placeholder">No source selected</div>`;
             els.pageLabel.textContent = "-";
             els.rawLink.classList.add("d-none");
+            els.prevPage.disabled = true;
+            els.nextPage.disabled = true;
             return;
         }
         els.sourceTitle.textContent = source.label || source.id;
@@ -448,7 +475,12 @@
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
-            await loadManifest();
+            if (data.evidence_available) {
+                await loadManifest();
+            } else {
+                state.manifest = null;
+                state.manifestUnavailable = data.state === "SUCCESS";
+            }
             render();
             if (data.state !== "SUCCESS" && data.state !== "FAILURE") {
                 state.pollHandle = window.setTimeout(pollTaskStatus, 3000);
