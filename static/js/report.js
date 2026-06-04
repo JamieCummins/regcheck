@@ -475,11 +475,13 @@
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
-            if (data.evidence_available) {
+            if (data.evidence_available === true) {
                 await loadManifest();
-            } else {
+            } else if (data.evidence_available === false) {
                 state.manifest = null;
                 state.manifestUnavailable = data.state === "SUCCESS";
+            } else {
+                await loadManifest();
             }
             render();
             if (data.state !== "SUCCESS" && data.state !== "FAILURE") {

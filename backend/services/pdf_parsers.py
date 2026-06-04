@@ -91,8 +91,12 @@ def _fallback_chain() -> list[str]:
 
     Priority:
     - If PDF_PARSER_FALLBACKS is set, use its comma-separated values.
-    - Otherwise, if SCANNED_PDF_FALLBACK is set, use that single legacy fallback.
+    - Otherwise, if SCANNED_PDF_FALLBACK is set, use that legacy fallback.
     - Otherwise, default to ["dpt2", "pymupdf"].
+
+    Any configured chain that tries DPT2 also tries PyMuPDF afterward. This keeps
+    legacy Heroku configs such as SCANNED_PDF_FALLBACK=dpt2 from failing the
+    whole report when DPT2 rejects the request but selectable PDF text is present.
     """
     env_chain = os.environ.get("PDF_PARSER_FALLBACKS")
     if env_chain is not None:
@@ -109,7 +113,13 @@ def _fallback_chain() -> list[str]:
             raw_items = ["dpt2", "pymupdf"]
 
     allowed = {"dpt2", "pymupdf"}
-    return [item for item in raw_items if item in allowed]
+    chain: list[str] = []
+    for item in raw_items:
+        if item in allowed and item not in chain:
+            chain.append(item)
+    if "dpt2" in chain and "pymupdf" not in chain:
+        chain.append("pymupdf")
+    return chain
 
 
 async def _run_fallback_chain(

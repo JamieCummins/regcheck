@@ -110,6 +110,55 @@ async def test_extract_pdf_text_grobid_error_then_dpt_then_pymupdf(tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_extract_pdf_text_legacy_dpt2_falls_through_to_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "legacy-text.pdf"
+    _make_text_pdf(str(pdf_path), "hello legacy fallback")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid boom")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt 403")
+
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.setenv("SCANNED_PDF_FALLBACK", "dpt2")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt_fail,
+    )
+
+    assert "hello legacy fallback" in extracted
+    assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_single_dpt2_chain_falls_through_to_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "explicit-text.pdf"
+    _make_text_pdf(str(pdf_path), "hello explicit fallback")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid boom")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt 403")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "dpt2")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt_fail,
+    )
+
+    assert "hello explicit fallback" in extracted
+    assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
 async def test_extract_pdf_text_dpt2_mode_falls_back_to_pymupdf(tmp_path, monkeypatch):
     pdf_path = tmp_path / "text2.pdf"
     _make_text_pdf(str(pdf_path), "hello dpt mode")
