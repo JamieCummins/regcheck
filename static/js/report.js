@@ -4,6 +4,17 @@
     const app = document.getElementById("report-app");
     if (!app) return;
 
+    const EVIDENCE_LIMIT_KEY = "regcheck.report.evidenceLimit";
+    const DEFAULT_EVIDENCE_LIMIT = 3;
+    const EVIDENCE_LIMIT_OPTIONS = [3, 5, 10, "all"];
+
+    function loadEvidenceLimit() {
+        const stored = window.localStorage ? window.localStorage.getItem(EVIDENCE_LIMIT_KEY) : null;
+        if (stored === "all") return "all";
+        const parsed = parseInt(stored || "", 10);
+        return EVIDENCE_LIMIT_OPTIONS.includes(parsed) ? parsed : DEFAULT_EVIDENCE_LIMIT;
+    }
+
     const state = {
         taskId: app.dataset.taskId || "",
         items: [],
@@ -15,6 +26,7 @@
         activeEvidence: null,
         currentSourceId: null,
         currentPage: 1,
+        evidenceLimit: loadEvidenceLimit(),
         renderDataCache: new Map(),
         lastWorkflowStatus: null,
         pollHandle: null,
@@ -38,7 +50,7 @@
         spinner: document.getElementById("workflow-spinner"),
         statusNote: document.getElementById("processing-status-note"),
         copyLink: document.getElementById("copy-report-link-btn"),
-        csv: document.getElementById("app-download-btn"),
+        csv: document.getElementById("download-report-csv-btn"),
     };
 
     function escapeHtml(value) {
@@ -90,11 +102,25 @@
             .filter((item) => item.text);
     }
 
-    function sortedQuotes(quotes) {
-        return [...quotes]
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .slice(0, 10)
-            .sort((a, b) => (a.num || 0) - (b.num || 0));
+    function sortedQuotes(quotes, limit = "all") {
+        const sorted = [...quotes].sort((a, b) => {
+            const scoreDiff = (b.score || 0) - (a.score || 0);
+            if (scoreDiff !== 0) return scoreDiff;
+            return (a.num || 0) - (b.num || 0);
+        });
+        if (limit === "all") return sorted;
+        return sorted.slice(0, limit);
+    }
+
+    function evidenceLimitLabel(limit) {
+        return limit === "all" ? "All chunks" : `Top ${limit}`;
+    }
+
+    function persistEvidenceLimit(limit) {
+        state.evidenceLimit = limit;
+        if (window.localStorage) {
+            window.localStorage.setItem(EVIDENCE_LIMIT_KEY, String(limit));
+        }
     }
 
     function appendWorkflowLog(statusText) {
@@ -205,7 +231,19 @@
                 </div>
             </div>
             <div class="evidence-section">
-                <p class="section-title">Evidence</p>
+                <div class="evidence-section__header">
+                    <div>
+                        <p class="section-title">Evidence</p>
+                        <p class="evidence-limit-note">Showing ${escapeHtml(evidenceLimitLabel(state.evidenceLimit).toLowerCase())} by similarity. CSV export includes all chunks.</p>
+                    </div>
+                    <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
+                        ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
+                            <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}">
+                                ${escapeHtml(option === "all" ? "All" : String(option))}
+                            </button>
+                        `).join("")}
+                    </div>
+                </div>
                 <div class="evidence-grid">
                     <div>
                         <p class="section-title">Registration</p>
@@ -218,6 +256,15 @@
                 </div>
             </div>
         `;
+        els.detail.querySelectorAll("[data-evidence-limit]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const raw = button.dataset.evidenceLimit;
+                const next = raw === "all" ? "all" : parseInt(raw, 10);
+                if (!EVIDENCE_LIMIT_OPTIONS.includes(next)) return;
+                persistEvidenceLimit(next);
+                renderDimensionDetail();
+            });
+        });
         renderEvidenceList("registration", parseQuotes(item.registration_content_quotes || ""));
         renderEvidenceList("paper", parseQuotes(item.paper_content_quotes || ""));
     }
@@ -226,7 +273,7 @@
         const container = document.getElementById(`${section}-evidence-list`);
         if (!container) return;
         container.innerHTML = "";
-        const list = sortedQuotes(quotes);
+        const list = sortedQuotes(quotes, state.evidenceLimit);
         if (!list.length) {
             container.innerHTML = `<div class="source-placeholder">No evidence found</div>`;
             return;
@@ -240,7 +287,7 @@
             button.innerHTML = `
                 <span class="evidence-card__head">
                     <span>${escapeHtml(quote.id || "Evidence")}</span>
-                    <span>${quote.score ? quote.score.toFixed(3) : ""}</span>
+                    <span class="evidence-card__score">${quote.score ? quote.score.toFixed(3) : ""}</span>
                 </span>
                 <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
             `;
@@ -426,7 +473,7 @@
     }
 
     function quotesPlain(quotes) {
-        return sortedQuotes(parseQuotes(quotes || ""))
+        return sortedQuotes(parseQuotes(quotes || ""), "all")
             .map((quote) => {
                 const score = quote.score ? `, relevance_score=${quote.score.toFixed(3)}` : "";
                 return `[${quote.id}${score}] ${(quote.text || quote.raw || "").trim()}`;
@@ -474,7 +521,7 @@
             els.copyLink.textContent = "Copy Failed";
         }
         window.setTimeout(() => {
-            els.copyLink.textContent = "Copy Link";
+            els.copyLink.textContent = "Copy link";
         }, 1400);
     }
 

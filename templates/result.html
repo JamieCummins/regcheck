@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260604' %}
+    {% set static_version = '20260605-dark' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -21,8 +21,8 @@
                     <h1 id="results-page-tagline">RegCheck Report</h1>
                 </div>
                 <div class="report-actions">
-                    <button type="button" class="report-action-btn" id="copy-report-link-btn">Copy Link</button>
-                    <button type="button" class="report-action-btn" id="app-download-btn">CSV</button>
+                    <button type="button" class="report-action-btn report-action-btn--secondary" id="copy-report-link-btn">Copy link</button>
+                    <button type="button" class="report-action-btn report-action-btn--primary" id="download-report-csv-btn">Download CSV</button>
                 </div>
             </div>
             <div class="report-status" aria-live="polite">
