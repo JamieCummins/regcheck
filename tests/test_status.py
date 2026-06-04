@@ -44,6 +44,24 @@ def test_task_status_marks_success_without_manifest_as_missing():
     assert payload["evidence_status"] == "missing"
 
 
+def test_task_status_overrides_stale_pending_evidence_for_success():
+    redis = FakeRedis()
+    redis.hashes["task-1"] = {
+        "state": "SUCCESS",
+        "status": "Report complete",
+        "result_json": json.dumps({"items": []}),
+        "evidence_status": "pending",
+    }
+
+    response = _client(redis).get("/task_status/task-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["evidence_available"] is False
+    assert payload["evidence_status"] == "missing"
+    assert "Evidence artifacts were not found" in payload["evidence_error"]
+
+
 def test_task_status_marks_existing_manifest_as_ready():
     redis = FakeRedis()
     redis.hashes["task-1"] = {

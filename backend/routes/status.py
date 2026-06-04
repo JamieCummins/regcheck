@@ -101,9 +101,17 @@ async def task_status(request: Request, task_id: str):
     evidence_status = _status_field(data, "evidence_status")
     evidence_error = _status_field(data, "evidence_error")
     if evidence_available:
-        evidence_status = evidence_status or "ready"
+        evidence_status = "ready"
+        evidence_error = None
     elif state == "SUCCESS":
-        evidence_status = evidence_status or "missing"
+        if evidence_status in {None, "", "pending", "preparing"}:
+            evidence_status = "missing"
+        if not evidence_error:
+            evidence_error = (
+                "Evidence artifacts were not found for this completed report. "
+                "The worker may not be running the current evidence-enabled release, "
+                "or artifact storage failed before the manifest was saved."
+            )
 
     return JSONResponse(
         {
