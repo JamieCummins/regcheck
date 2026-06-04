@@ -9,6 +9,8 @@
         items: [],
         manifest: null,
         manifestUnavailable: false,
+        evidenceStatus: null,
+        evidenceError: null,
         activeIndex: 0,
         activeEvidence: null,
         currentSourceId: null,
@@ -296,7 +298,18 @@
 
     function renderUnavailableSourceState() {
         els.sourceTitle.textContent = "Sources Unavailable";
-        els.sourceCanvas.innerHTML = `<div class="source-placeholder">Source artifacts unavailable for this report</div>`;
+        const status = state.evidenceStatus ? `<p>Status: ${escapeHtml(state.evidenceStatus)}</p>` : "";
+        const error = state.evidenceError ? `<p>${escapeHtml(state.evidenceError)}</p>` : "";
+        const fallback = status || error
+            ? ""
+            : "<p>Evidence artifacts were not created for this report.</p>";
+        els.sourceCanvas.innerHTML = `
+            <div class="source-placeholder">
+                ${fallback}
+                ${status}
+                ${error}
+            </div>
+        `;
         els.pageLabel.textContent = "-";
         els.prevPage.disabled = true;
         els.nextPage.disabled = true;
@@ -469,6 +482,8 @@
         try {
             const response = await fetch(`/task_status/${state.taskId}`);
             const data = await response.json();
+            state.evidenceStatus = data.evidence_status || null;
+            state.evidenceError = data.evidence_error || null;
             appendWorkflowLog(data.status || data.state || "");
             updateStatus(data.state);
             if (data.result && Array.isArray(data.result.items)) {
