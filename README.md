@@ -89,6 +89,10 @@ Then open http://localhost:8000 for the UI. FastAPI routes:
 - `POST /animals_trials` (requires a `pct_id` and CSV upload until API integration is available)
 - `GET /task_status/{task_id}`
 - `GET /result/{task_id}`
+- `GET /report/{task_id}/manifest`
+- `GET /report/{task_id}/sources/{source_id}/render-data`
+- `GET /report/{task_id}/sources/{source_id}/raw`
+- `GET /report/{task_id}/sources/{source_id}/pages/{page_number}.png`
 
 ## CLI: backend-only comparisons
 The CLI reads dimensions from a CSV (`dimension,definition` columns). Example file: `test_materials/dimensions_example.csv`.
@@ -147,7 +151,7 @@ pytest
 - Default comparison concurrency is now 6 per worker process; tune `MAX_CONCURRENT_COMPARISON_TASKS` and dyno sizing based on memory headroom and provider rate limits.
 - Web flow uses Redis for progress tracking; the CLI calls comparison services directly and works without Redis.
 - On Heroku, use a separate `worker` dyno to process comparisons from the Redis queue; the web dyno enqueues jobs.
-- For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes.
+- For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes. Report evidence artifacts are stored separately and expire with `TASK_TTL_SECONDS`; the worker periodically removes expired S3 report artifacts.
 - Supported LLM providers: `openai`, `groq`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 

@@ -46,6 +46,33 @@ def s3_upload_fileobj(
         client.upload_fileobj(fileobj, cfg.bucket, key)
 
 
+def s3_put_bytes(
+    cfg: S3Config,
+    *,
+    key: str,
+    data: bytes,
+    content_type: str | None = None,
+) -> None:
+    client = _s3_client(cfg.region)
+    kwargs = {}
+    if content_type:
+        kwargs["ContentType"] = content_type
+    client.put_object(Bucket=cfg.bucket, Key=key, Body=data, **kwargs)
+
+
+def s3_get_bytes(cfg: S3Config, *, key: str) -> bytes:
+    client = _s3_client(cfg.region)
+    response = client.get_object(Bucket=cfg.bucket, Key=key)
+    body = response["Body"]
+    try:
+        return body.read()
+    finally:
+        try:
+            body.close()
+        except Exception:
+            pass
+
+
 def s3_download_to_path(cfg: S3Config, *, key: str, path: str) -> None:
     client = _s3_client(cfg.region)
     target = Path(path)
@@ -69,4 +96,3 @@ def guess_content_type(path: str) -> Optional[str]:
     if suffix == ".csv":
         return "text/csv"
     return None
-
