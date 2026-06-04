@@ -100,9 +100,15 @@ async def task_status(request: Request, task_id: str):
     evidence_available = await _safe_exists(redis_client, manifest_key(task_id))
     evidence_status = _status_field(data, "evidence_status")
     evidence_error = _status_field(data, "evidence_error")
-    if evidence_available:
+    evidence_storage = _status_field(data, "evidence_storage")
+    evidence_source_count = _coerce_int(data.get("evidence_source_count"))
+    evidence_chunk_count = _coerce_int(data.get("evidence_chunk_count"))
+    evidence_artifact_count = _coerce_int(data.get("evidence_artifact_count"))
+    evidence_artifact_bytes = _coerce_int(data.get("evidence_artifact_bytes"))
+    if evidence_available and evidence_status != "error":
         evidence_status = "ready"
         evidence_error = None
+        evidence_storage = evidence_storage or "redis"
     elif state == "SUCCESS":
         if evidence_status in {None, "", "pending", "preparing"}:
             evidence_status = "missing"
@@ -123,6 +129,11 @@ async def task_status(request: Request, task_id: str):
             "evidence_available": evidence_available,
             "evidence_status": evidence_status,
             "evidence_error": evidence_error,
+            "evidence_storage": evidence_storage,
+            "evidence_source_count": evidence_source_count,
+            "evidence_chunk_count": evidence_chunk_count,
+            "evidence_artifact_count": evidence_artifact_count,
+            "evidence_artifact_bytes": evidence_artifact_bytes,
         }
     )
 
