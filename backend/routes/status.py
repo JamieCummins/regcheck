@@ -10,6 +10,8 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from ..services.report_artifacts import manifest_key
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,13 @@ async def _safe_hgetall(redis_client, key: str, *, retries: int = 2) -> dict:
             await asyncio.sleep(0.2 * (attempt + 1))
     logger.error("Redis hgetall exhausted retries", extra={"key": key}, exc_info=last_error)
     return {}
+
+
+async def _safe_exists(redis_client, key: str) -> bool:
+    try:
+        return bool(await redis_client.exists(key))
+    except (RedisConnectionError, RedisTimeoutError, OSError, RedisError):
+        return False
 
 
 def _decode(value):
@@ -80,6 +89,7 @@ async def task_status(request: Request, task_id: str):
     processed_dimensions = _coerce_int(data.get("processed_dimensions"))
     state = _decode(data.get("state"))
     status_text = _decode(data.get("status")) or "Pending..."
+    evidence_available = await _safe_exists(redis_client, manifest_key(task_id))
 
     return JSONResponse(
         {
@@ -88,6 +98,7 @@ async def task_status(request: Request, task_id: str):
             "result": parsed_result,
             "total_dimensions": total_dimensions,
             "processed_dimensions": processed_dimensions,
+            "evidence_available": evidence_available,
         }
     )
 
