@@ -78,8 +78,8 @@ async def _store_artifact_bytes(
                     "source_id": source_id,
                     "artifact_kind": artifact_kind,
                     "s3_key": s3_key,
+                    "error": str(exc),
                 },
-                exc_info=exc,
             )
 
     await _redis_set_bytes(redis_client, redis_key, data, ttl_seconds)

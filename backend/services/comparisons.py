@@ -72,6 +72,63 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _is_provider_auth_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 401:
+        return True
+    exc_name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return (
+        "authentication" in exc_name
+        or "unauthorized" in text
+        or "invalid_api_key" in text
+        or "invalid api key" in text
+    )
+
+
+def _raise_provider_auth_error(provider: str, env_var: str, exc: Exception) -> None:
+    raise RuntimeError(
+        f"{provider} authentication failed. Check Heroku config var {env_var} "
+        f"or choose a different model provider."
+    ) from exc
+
+
+def _is_response_format_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "response_format" in text or "json_object" in text or "json mode" in text
+
+
+def _groq_chat_completion(*, model: str, messages: list[dict[str, str]], use_json_mode: bool):
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0,
+    }
+    if use_json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    try:
+        return groq_client.chat.completions.create(**kwargs)
+    except Exception as exc:
+        if _is_provider_auth_error(exc):
+            _raise_provider_auth_error("Groq", "GROQ_API_KEY", exc)
+        if not use_json_mode or not _is_response_format_error(exc):
+            raise
+        logger.info(
+            "Groq JSON response_format unsupported; retrying without response_format",
+            extra={"model": model, "error": str(exc)},
+        )
+        try:
+            return groq_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0,
+            )
+        except Exception as retry_exc:
+            if _is_provider_auth_error(retry_exc):
+                _raise_provider_auth_error("Groq", "GROQ_API_KEY", retry_exc)
+            raise
+
+
 def _openai_model() -> str:
     return _env_str("OPENAI_COMPARISON_MODEL", _env_str("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
 
@@ -544,10 +601,10 @@ async def extract_experiment_specific_paper_text(
             raw_content = _message_content_to_text(response.choices[0].message)
             return _strip_deepseek_reasoning(raw_content)
         if client_choice == "groq":
-            response = groq_client.chat.completions.create(
+            response = _groq_chat_completion(
                 model=_groq_model(),
                 messages=messages,
-                temperature=0,
+                use_json_mode=False,
             )
             return _message_content_to_text(response.choices[0].message)
         raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
@@ -1855,21 +1912,11 @@ def run_comparison(
         result_json = _strip_deepseek_reasoning(raw_content)
     elif client_choice == "groq":
         groq_model = _groq_model()
-        try:
-            response = groq_client.chat.completions.create(
-                model=groq_model,
-                messages=messages,
-                temperature=0,
-                # Encourage strict JSON object outputs (if supported by provider)
-                response_format={"type": "json_object"},
-            )
-        except Exception as e:
-            logger.info("Groq call without response_format fallback due to: %s", e)
-            response = groq_client.chat.completions.create(
-                model=groq_model,
-                messages=messages,
-                temperature=0,
-            )
+        response = _groq_chat_completion(
+            model=groq_model,
+            messages=messages,
+            use_json_mode=True,
+        )
         result_json = _message_content_to_text(response.choices[0].message)
     else:
         raise ValueError("Invalid client selection")
