@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
 import json
-import logging
 import time
 from copy import deepcopy
 from typing import Any
 
-from ..core.storage import get_s3_config, s3_delete_key, s3_get_bytes, s3_put_bytes
+from ..core.storage import get_s3_config, s3_delete_key, s3_get_bytes
 
 MANIFEST_KEY_TEMPLATE = "report:{task_id}:manifest"
 SOURCE_RAW_KEY_TEMPLATE = "report:{task_id}:source:{source_id}:raw"
 SOURCE_RENDER_KEY_TEMPLATE = "report:{task_id}:source:{source_id}:render"
 S3_CLEANUP_ZSET = "report:s3_artifact_cleanup"
-logger = logging.getLogger(__name__)
 
 
 def manifest_key(task_id: str) -> str:
@@ -29,61 +28,94 @@ def _render_key(task_id: str, source_id: str) -> str:
     return SOURCE_RENDER_KEY_TEMPLATE.format(task_id=task_id, source_id=source_id)
 
 
-def _s3_key(task_id: str, source_id: str, filename: str) -> str:
-    return f"regcheck/report_artifacts/{task_id}/{source_id}/{filename}"
-
-
-async def _redis_set_bytes(redis_client, key: str, data: bytes, ttl_seconds: int) -> None:
-    await redis_client.set(key, gzip.compress(data), ex=ttl_seconds)
+async def _redis_set_bytes(redis_client, key: str, data: bytes, ttl_seconds: int) -> int:
+    compressed = gzip.compress(data)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    await redis_client.set(key, encoded, ex=ttl_seconds)
+    return len(compressed)
 
 
 async def _redis_get_bytes(redis_client, key: str) -> bytes | None:
     value = await redis_client.get(key)
     if value is None:
         return None
-    return gzip.decompress(value)
+    if isinstance(value, str):
+        value = base64.b64decode(value.encode("ascii"))
+    try:
+        return gzip.decompress(value)
+    except OSError:
+        return gzip.decompress(base64.b64decode(value))
 
 
 async def _store_artifact_bytes(
     redis_client,
     *,
-    task_id: str,
-    source_id: str,
     redis_key: str,
-    s3_key: str,
     data: bytes,
-    content_type: str | None,
     ttl_seconds: int,
-    artifact_kind: str,
-) -> dict[str, str]:
-    cfg = get_s3_config()
-    if cfg is not None:
+) -> dict[str, Any]:
+    """Persist report evidence artifacts in Redis.
+
+    S3 may be configured for upload handoff between web and worker dynos, but
+    completed report evidence artifacts live in Redis so the status and viewer
+    paths share one storage backend.
+    """
+    compressed_bytes = await _redis_set_bytes(redis_client, redis_key, data, ttl_seconds)
+    return {"storage": "redis", "key": redis_key, "compressed_bytes": compressed_bytes}
+
+
+def _iter_manifest_artifacts(manifest: dict[str, Any]):
+    sources = manifest.get("sources") or {}
+    for source_id, source in sources.items():
+        if not isinstance(source, dict):
+            continue
+        artifacts = source.get("_artifacts") or {}
+        if not isinstance(artifacts, dict):
+            continue
+        for artifact_name, artifact in artifacts.items():
+            if isinstance(artifact, dict):
+                yield str(source_id), str(artifact_name), artifact
+
+
+def manifest_artifact_stats(manifest: dict[str, Any]) -> dict[str, int]:
+    artifact_count = 0
+    artifact_bytes = 0
+    for _source_id, _artifact_name, artifact in _iter_manifest_artifacts(manifest):
+        artifact_count += 1
         try:
-            def _put() -> None:
-                s3_put_bytes(
-                    cfg,
-                    key=s3_key,
-                    data=data,
-                    content_type=content_type,
-                )
+            artifact_bytes += int(artifact.get("compressed_bytes") or 0)
+        except (TypeError, ValueError):
+            pass
+    return {
+        "source_count": len(manifest.get("sources") or {}),
+        "chunk_count": len(manifest.get("chunks") or {}),
+        "artifact_count": artifact_count,
+        "artifact_bytes": artifact_bytes,
+    }
 
-            await asyncio.to_thread(_put)
-            await redis_client.zadd(S3_CLEANUP_ZSET, {s3_key: time.time() + ttl_seconds})
-            return {"storage": "s3", "key": s3_key}
-        except Exception as exc:
-            logger.warning(
-                "S3 report artifact write failed; falling back to Redis",
-                extra={
-                    "task_id": task_id,
-                    "source_id": source_id,
-                    "artifact_kind": artifact_kind,
-                    "s3_key": s3_key,
-                    "error": str(exc),
-                },
+
+async def verify_manifest_artifacts(
+    redis_client,
+    *,
+    task_id: str,
+    manifest: dict[str, Any],
+) -> dict[str, int]:
+    if not await redis_client.exists(manifest_key(task_id)):
+        raise RuntimeError("manifest key was not visible after save")
+
+    for source_id, artifact_name, artifact in _iter_manifest_artifacts(manifest):
+        storage = artifact.get("storage")
+        key = artifact.get("key")
+        if storage != "redis":
+            raise RuntimeError(
+                f"{source_id}.{artifact_name} uses unsupported report artifact storage: {storage or 'missing'}"
             )
+        if not key:
+            raise RuntimeError(f"{source_id}.{artifact_name} is missing a Redis artifact key")
+        if not await redis_client.exists(key):
+            raise RuntimeError(f"{source_id}.{artifact_name} Redis artifact key was not visible after save")
 
-    await _redis_set_bytes(redis_client, redis_key, data, ttl_seconds)
-    return {"storage": "redis", "key": redis_key}
+    return manifest_artifact_stats(manifest)
 
 
 async def store_source_artifacts(
@@ -107,28 +139,18 @@ async def store_source_artifacts(
     render_bytes = json.dumps(render_data, ensure_ascii=False).encode("utf-8")
     artifacts["render"] = await _store_artifact_bytes(
         redis_client,
-        task_id=task_id,
-        source_id=source_id,
         redis_key=_render_key(task_id, source_id),
-        s3_key=_s3_key(task_id, source_id, "render-data.json"),
         data=render_bytes,
-        content_type="application/json",
         ttl_seconds=ttl_seconds,
-        artifact_kind="render",
     )
 
     if raw_bytes is not None:
         filename = str(source.get("raw_filename") or f"{source_id}.bin")
         raw_artifact = await _store_artifact_bytes(
             redis_client,
-            task_id=task_id,
-            source_id=source_id,
             redis_key=_raw_key(task_id, source_id),
-            s3_key=_s3_key(task_id, source_id, filename),
             data=raw_bytes,
-            content_type=raw_content_type,
             ttl_seconds=ttl_seconds,
-            artifact_kind="raw",
         )
         artifacts["raw"] = {
             **raw_artifact,

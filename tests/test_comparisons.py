@@ -14,6 +14,35 @@ from backend.services.comparisons import (  # noqa: E402
     general_preregistration_comparison,
 )
 
+
+class FakeRedis:
+    def __init__(self, ttl_value=3600):
+        self.values = {}
+        self.hashes = {}
+        self.expiries = {}
+        self.ttl_value = ttl_value
+
+    async def set(self, key, value, ex=None):
+        self.values[key] = value
+        self.expiries[key] = ex
+
+    async def get(self, key):
+        return self.values.get(key)
+
+    async def exists(self, key):
+        return 1 if key in self.values else 0
+
+    async def hset(self, key, mapping):
+        self.hashes.setdefault(key, {}).update(mapping)
+
+    async def ttl(self, key):
+        return self.ttl_value
+
+    async def expire(self, key, seconds):
+        self.expiries[key] = seconds
+        self.ttl_value = seconds
+        return True
+
 @pytest.mark.asyncio
 async def test_general_preregistration_comparison(tmp_path):
     prereg = tmp_path / "prereg.txt"
@@ -206,3 +235,70 @@ def test_groq_response_format_error_retries_without_json_mode(monkeypatch):
     assert result is response
     assert "response_format" in calls[0]
     assert "response_format" not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_store_evidence_manifest_sets_ready_diagnostics():
+    redis = FakeRedis()
+
+    manifest = await comparisons._store_evidence_manifest(
+        redis_client=redis,
+        task_id="task-1",
+        comparison_type="general_preregistration",
+        source_payloads=[
+            {
+                "source": {"id": "registration", "label": "Registration", "kind": "text"},
+                "raw_bytes": b"raw",
+                "raw_content_type": "text/plain",
+                "render_data": {"kind": "text", "text": "raw"},
+                "chunks": {"PREREG_0001": {"id": "PREREG_0001"}},
+            }
+        ],
+        ttl_seconds=3600,
+    )
+
+    fields = redis.hashes["task-1"]
+    assert fields["evidence_status"] == "ready"
+    assert fields["evidence_error"] == ""
+    assert fields["evidence_storage"] == "redis"
+    assert fields["evidence_source_count"] == 1
+    assert fields["evidence_chunk_count"] == 1
+    assert fields["evidence_artifact_count"] == 2
+    assert fields["evidence_artifact_bytes"] > 0
+    assert manifest["sources"]["registration"]["_artifacts"]["raw"]["storage"] == "redis"
+
+
+@pytest.mark.asyncio
+async def test_evidence_success_fields_returns_error_when_artifact_is_missing():
+    redis = FakeRedis()
+    manifest = await comparisons._store_evidence_manifest(
+        redis_client=redis,
+        task_id="task-1",
+        comparison_type="general_preregistration",
+        source_payloads=[
+            {
+                "source": {"id": "registration", "label": "Registration", "kind": "text"},
+                "raw_bytes": b"raw",
+                "raw_content_type": "text/plain",
+                "render_data": {"kind": "text", "text": "raw"},
+            }
+        ],
+        ttl_seconds=3600,
+    )
+    del redis.values[manifest["sources"]["registration"]["_artifacts"]["raw"]["key"]]
+
+    fields = await comparisons._evidence_success_fields(redis, "task-1", manifest)
+
+    assert fields["evidence_status"] == "error"
+    assert "Redis artifact key" in fields["evidence_error"]
+
+
+@pytest.mark.asyncio
+async def test_current_task_ttl_sets_task_expiry_when_missing(monkeypatch):
+    monkeypatch.setenv("TASK_TTL_SECONDS", "1234")
+    redis = FakeRedis(ttl_value=-1)
+
+    ttl = await comparisons._current_task_ttl(redis, "task-1")
+
+    assert ttl == 1234
+    assert redis.expiries["task-1"] == 1234

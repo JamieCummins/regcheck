@@ -68,6 +68,11 @@ def test_task_status_marks_existing_manifest_as_ready():
         "state": "SUCCESS",
         "status": "Report complete",
         "result_json": json.dumps({"items": []}),
+        "evidence_storage": "redis",
+        "evidence_source_count": "2",
+        "evidence_chunk_count": "40",
+        "evidence_artifact_count": "4",
+        "evidence_artifact_bytes": "12345",
     }
     redis.values[manifest_key("task-1")] = "{}"
 
@@ -77,3 +82,28 @@ def test_task_status_marks_existing_manifest_as_ready():
     payload = response.json()
     assert payload["evidence_available"] is True
     assert payload["evidence_status"] == "ready"
+    assert payload["evidence_storage"] == "redis"
+    assert payload["evidence_source_count"] == 2
+    assert payload["evidence_chunk_count"] == 40
+    assert payload["evidence_artifact_count"] == 4
+    assert payload["evidence_artifact_bytes"] == 12345
+
+
+def test_task_status_preserves_evidence_error_even_when_manifest_exists():
+    redis = FakeRedis()
+    redis.hashes["task-1"] = {
+        "state": "SUCCESS",
+        "status": "Report complete",
+        "result_json": json.dumps({"items": []}),
+        "evidence_status": "error",
+        "evidence_error": "Could not verify evidence manifest in Redis: missing artifact",
+    }
+    redis.values[manifest_key("task-1")] = "{}"
+
+    response = _client(redis).get("/task_status/task-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["evidence_available"] is True
+    assert payload["evidence_status"] == "error"
+    assert "missing artifact" in payload["evidence_error"]

@@ -35,7 +35,11 @@ from .evidence import (
     build_text_evidence_source,
 )
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
-from .report_artifacts import manifest_key, store_manifest, store_source_artifacts
+from .report_artifacts import (
+    store_manifest,
+    store_source_artifacts,
+    verify_manifest_artifacts,
+)
 from .trials import extract_nct_id, extract_nested_trial_with_metadata
 
 logger = logging.getLogger(__name__)
@@ -455,15 +459,21 @@ async def _store_evidence_manifest(
         ttl_seconds=ttl_seconds,
     )
     try:
-        if not await redis_client.exists(manifest_key(task_id)):
-            raise RuntimeError("manifest key was not visible after save")
+        stats = await verify_manifest_artifacts(
+            redis_client,
+            task_id=task_id,
+            manifest=manifest,
+        )
         await redis_client.hset(
             task_id,
             mapping={
                 "evidence_status": "ready",
                 "evidence_error": "",
-                "evidence_source_count": len(manifest["sources"]),
-                "evidence_chunk_count": len(manifest["chunks"]),
+                "evidence_storage": "redis",
+                "evidence_source_count": stats["source_count"],
+                "evidence_chunk_count": stats["chunk_count"],
+                "evidence_artifact_count": stats["artifact_count"],
+                "evidence_artifact_bytes": stats["artifact_bytes"],
             },
         )
     except Exception as exc:
@@ -488,15 +498,20 @@ async def _persist_evidence_manifest(
 
 
 async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> int:
+    fallback_ttl = max(60, _env_int("TASK_TTL_SECONDS", 3 * 24 * 60 * 60))
     if not redis_client or not task_id:
-        return 86400
+        return fallback_ttl
     try:
         ttl = await redis_client.ttl(task_id)
     except Exception:
         ttl = None
     if isinstance(ttl, int) and ttl > 0:
         return ttl
-    return 86400
+    try:
+        await redis_client.expire(task_id, fallback_ttl)
+    except Exception:
+        pass
+    return fallback_ttl
 
 
 async def _evidence_success_fields(
@@ -515,20 +530,25 @@ async def _evidence_success_fields(
             ),
         }
     try:
-        if await redis_client.exists(manifest_key(task_id)):
-            return {"evidence_status": "ready", "evidence_error": ""}
+        stats = await verify_manifest_artifacts(
+            redis_client,
+            task_id=task_id,
+            manifest=evidence_manifest,
+        )
+        return {
+            "evidence_status": "ready",
+            "evidence_error": "",
+            "evidence_storage": "redis",
+            "evidence_source_count": stats["source_count"],
+            "evidence_chunk_count": stats["chunk_count"],
+            "evidence_artifact_count": stats["artifact_count"],
+            "evidence_artifact_bytes": stats["artifact_bytes"],
+        }
     except Exception as exc:
         return {
-            "evidence_status": "unknown",
+            "evidence_status": "error",
             "evidence_error": f"Could not verify evidence manifest in Redis: {exc}",
         }
-    return {
-        "evidence_status": "missing",
-        "evidence_error": (
-            "Evidence manifest was built in memory but was not found in Redis at completion. "
-            "Check Redis/S3 artifact storage configuration and worker logs."
-        ),
-    }
 
 
 

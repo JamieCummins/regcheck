@@ -60,10 +60,11 @@ STATIC_DIR=static            # optional override
 TEMPLATES_DIR=templates      # optional override
 UPLOAD_DIR=uploads           # optional override
 
-# Optional: S3-backed upload storage (recommended for multi-dyno deployments)
+# Optional: S3-backed upload handoff (recommended for multi-dyno deployments)
 S3_BUCKET=your-bucket-name
 AWS_REGION=us-east-1
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or other AWS auth) must be set for the runtime.
+# S3 is used only for web-to-worker upload handoff. Completed report evidence artifacts are stored in Redis.
 
 # Optional: resource caps for scaling
 MAX_CONCURRENT_COMPARISON_TASKS=6                # per worker process
@@ -151,7 +152,7 @@ pytest
 - Default comparison concurrency is now 6 per worker process; tune `MAX_CONCURRENT_COMPARISON_TASKS` and dyno sizing based on memory headroom and provider rate limits.
 - Web flow uses Redis for progress tracking; the CLI calls comparison services directly and works without Redis.
 - On Heroku, use a separate `worker` dyno to process comparisons from the Redis queue; the web dyno enqueues jobs.
-- For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes. Report evidence artifacts are stored separately and expire with `TASK_TTL_SECONDS`; the worker periodically removes expired S3 report artifacts.
+- For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes. S3 permissions only need to cover the `regcheck/uploads/...` handoff keys. Completed report evidence artifacts are stored in Redis, share the task TTL (`TASK_TTL_SECONDS`), and are not written to S3.
 - Supported LLM providers: `openai`, `groq`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 
