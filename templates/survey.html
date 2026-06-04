@@ -1,7 +1,7 @@
 <!doctype html>
-<html lang="en" class="h-100" data-bs-theme="auto">
+<html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260119' %}
+    {% set static_version = '20260605-dark' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -12,10 +12,7 @@
     <title>Quick Survey — RegCheck</title>
     <style>
         .survey-page {
-            background: radial-gradient(circle at 12% 16%, rgba(99, 109, 255, 0.18), transparent 26%),
-                        radial-gradient(circle at 88% 12%, rgba(255, 153, 102, 0.16), transparent 30%),
-                        radial-gradient(circle at 82% 72%, rgba(103, 255, 195, 0.12), transparent 34%),
-                        #0a0f1f;
+            background: #101312;
         }
 
         .survey-main {
@@ -27,10 +24,10 @@
         }
 
         .survey-card {
-            background: rgba(18, 23, 45, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 1.2rem;
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+            background: #1d2420;
+            border: 1px solid rgba(216, 226, 218, 0.14);
+            border-radius: 0.5rem;
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
             padding: clamp(1.4rem, 1.6vw + 0.8rem, 2.2rem);
             width: 100%;
             max-width: 880px;
@@ -43,11 +40,7 @@
         }
 
         .survey-card::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(120deg, rgba(255, 255, 255, 0.03), transparent 45%);
-            pointer-events: none;
+            content: none;
         }
 
         .survey-header-row {
@@ -67,14 +60,18 @@
         .survey-title {
             font-size: clamp(1.65rem, 1vw + 1.35rem, 2rem);
             margin: 0;
-            color: #f8f9ff;
-            letter-spacing: 0.01em;
+            color: #eef4ef;
+            letter-spacing: 0;
         }
 
         .survey-lede {
-            color: #d1d6e8;
+            color: #a3b0a8;
             margin: 0.1rem 0 0;
             line-height: 1.5;
+        }
+
+        .survey-page .text-muted {
+            color: #a3b0a8 !important;
         }
 
         .survey-steps {
@@ -95,7 +92,7 @@
         }
 
         .question-progress {
-            color: #9fb0d7;
+            color: #a3b0a8;
             font-size: 0.9rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -113,7 +110,7 @@
             font-weight: 700;
             letter-spacing: 0.01em;
             margin: 0;
-            color: #f8f9fa;
+            color: #eef4ef;
         }
 
         .survey-control {
@@ -125,15 +122,15 @@
         .survey-input,
         .survey-select,
         .survey-textarea {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            color: #f1f3f8;
-            border-radius: 0.75rem;
+            background: #121714;
+            border: 1px solid rgba(216, 226, 218, 0.14);
+            color: #eef4ef;
+            border-radius: 0.5rem;
             padding: 0.85rem 1rem;
             font-size: 0.95rem;
             width: 100%;
             transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            box-shadow: none;
             min-height: 3.4rem;
         }
 
@@ -142,32 +139,32 @@
             -webkit-appearance: none;
             -moz-appearance: none;
             padding-right: 2.5rem;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23f5f7ff' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23eef4ef' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
             background-position: right 0.75rem center;
             background-size: 0.6rem;
             cursor: pointer;
-            color: #f5f7ff;
-            background-color: rgba(255, 255, 255, 0.04);
+            color: #eef4ef;
+            background-color: #121714;
         }
 
         .survey-select option {
-            color: #f5f7ff;
-            background-color: #0a0f1f;
+            color: #eef4ef;
+            background-color: #171d1a;
         }
 
         .survey-input::placeholder,
         .survey-textarea::placeholder {
-            color: rgba(241, 243, 248, 0.55);
+            color: #87958d;
         }
 
         .survey-input:focus,
         .survey-select:focus,
         .survey-textarea:focus {
-            border-color: rgba(104, 181, 255, 0.6);
-            box-shadow: 0 0 0 0.18rem rgba(104, 181, 255, 0.18);
+            border-color: rgba(84, 199, 181, 0.62);
+            box-shadow: 0 0 0 0.18rem rgba(84, 199, 181, 0.18);
             outline: none;
-            background: rgba(255, 255, 255, 0.06);
+            background: #121714;
         }
 
         .survey-textarea {
@@ -193,7 +190,7 @@
         .link-button {
             background: transparent;
             border: none;
-            color: #8ae4ff;
+            color: #54c7b5;
             font-weight: 700;
             letter-spacing: 0.02em;
             cursor: pointer;
@@ -202,7 +199,7 @@
 
         .link-button:focus,
         .link-button:hover {
-            color: #b4f1ff;
+            color: #7dd8ca;
             text-decoration: underline;
             outline: none;
         }
@@ -213,40 +210,61 @@
             gap: 0.45rem;
             padding: 0.5rem 0.85rem;
             border-radius: 999px;
-            background: rgba(44, 196, 240, 0.12);
-            border: 1px solid rgba(44, 196, 240, 0.25);
+            color: #b7f3c9;
+            background: rgba(76, 175, 116, 0.18);
+            border: 1px solid rgba(183, 243, 201, 0.26);
             font-size: 0.9rem;
             align-self: flex-start;
+        }
+
+        .survey-page .pulse-pill.text-success {
+            color: #b7f3c9 !important;
+        }
+
+        .survey-page .pulse-pill.text-danger {
+            color: #ffadb2 !important;
         }
 
         .pill-dot {
             width: 0.65rem;
             height: 0.65rem;
-            background: #2cc4f0;
+            background: #54c7b5;
             border-radius: 50%;
-            box-shadow: 0 0 0 0 rgba(44, 196, 240, 0.6);
+            box-shadow: 0 0 0 0 rgba(84, 199, 181, 0.6);
             animation: pulse 1.8s infinite;
         }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(44, 196, 240, 0.55); }
-            70% { box-shadow: 0 0 0 14px rgba(44, 196, 240, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(44, 196, 240, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(84, 199, 181, 0.55); }
+            70% { box-shadow: 0 0 0 14px rgba(84, 199, 181, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(84, 199, 181, 0); }
         }
 
         .progress-note {
-            color: #d1d5df;
+            color: #a3b0a8;
             font-size: 0.95rem;
         }
 
         .result-link {
-            color: #9ae6ff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 2.7rem;
+            padding: 0.7rem 1.1rem;
+            color: #081312;
+            background: #54c7b5;
+            border: 1px solid #54c7b5;
+            border-radius: 0.5rem;
+            font-weight: 700;
             text-decoration: none;
         }
 
-        .result-link:hover {
-            color: #b6f3ff;
-            text-decoration: underline;
+        .result-link:hover,
+        .result-link:focus {
+            color: #081312;
+            background: #7dd8ca;
+            border-color: #7dd8ca;
+            text-decoration: none;
         }
     </style>
 </head>
@@ -306,7 +324,7 @@
                         {% endfor %}
                     </div>
                     <div class="survey-actions">
-                        <a class="result-link small survey-actions__link" href="{{ result_url }}" target="_blank" rel="noopener noreferrer">Go to results</a>
+                        <a class="result-link survey-actions__link" href="{{ result_url }}" target="_blank" rel="noopener noreferrer">Go to results</a>
                     </div>
                     <div class="d-none" id="survey-hidden-inputs">
                         {% for question in questions %}

@@ -1,7 +1,7 @@
 <!doctype html>
-<html lang="en" class="h-100" data-bs-theme="auto">
+<html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260119' %}
+    {% set static_version = '20260605-dark' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
     <style>
         .form-step {
+            display: none;
             opacity: 0;
             pointer-events: none;
             transform: translateY(20px);
@@ -26,6 +27,7 @@
         }
 
         .form-step.active {
+            display: flex;
             opacity: 1;
             pointer-events: auto;
             transform: translateY(0);
@@ -51,6 +53,19 @@
         .form-step.active > * {
             flex: 0 0 auto;
             width: 100%;
+        }
+
+        .step-center {
+            min-width: 0;
+            text-align: center;
+        }
+
+        .step-progress {
+            margin: 0.2rem 0 0;
+            color: var(--rc-muted);
+            font-size: 0.76rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
         }
 
         .form-step-wrapper {
@@ -90,11 +105,14 @@
             .form-step.active {
                 align-items: stretch;
                 padding: 0.5rem 0 1rem;
+                max-height: calc(100dvh - 12rem);
+                overflow: auto;
             }
 
             .form-step-wrapper {
                 width: 100%;
                 gap: 0.75rem;
+                overflow: hidden;
             }
 
             .helper-copy {
@@ -112,14 +130,16 @@
             }
 
             .step-controls {
-                grid-template-columns: 1fr;
+                grid-template-columns: auto 1fr auto;
                 gap: 0.5rem;
             }
 
             .step-controls__left,
             .step-controls__right {
                 justify-self: stretch;
-                width: 100%;
+                width: auto;
+                min-width: 4.75rem;
+                max-width: 6.5rem;
                 font-size: 0.95rem;
                 padding: 0.55rem 0.75rem;
             }
@@ -128,6 +148,19 @@
                 text-align: center;
                 font-size: clamp(1rem, 2.5vw + 0.6rem, 1.25rem);
                 line-height: 1.25;
+            }
+
+            .step-progress {
+                font-size: 0.68rem;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .form-step:not(.active) {
+                display: none !important;
+                height: 0 !important;
+                max-height: 0 !important;
+                min-height: 0 !important;
             }
         }
 
@@ -151,14 +184,14 @@
         .quick-mode .btn-outline-light:focus,
         #step-back.btn-outline-light:hover,
         #step-back.btn-outline-light:focus {
-            color: #0a1023;
-            background: rgba(255, 255, 255, 0.18);
-            border-color: rgba(255, 255, 255, 0.35);
+            color: #081312;
+            background: #7dd8ca;
+            border-color: #7dd8ca;
         }
 
         .quick-mode .helper-copy {
             text-align: center;
-            color: #c4c9e8;
+            color: #a3b0a8;
             margin: 0;
             font-size: 0.9rem;
         }
@@ -455,7 +488,10 @@
           <div class="form-step-wrapper">
             <div class="step-controls">
                   <button type="button" class="btn btn-outline-light btn-sm step-controls__left" id="step-back">Back</button>
-                  <h2 class="step-header__title" id="step-title"></h2>
+                  <div class="step-center">
+                      <h2 class="step-header__title" id="step-title"></h2>
+                      <p class="step-progress" id="step-progress"></p>
+                  </div>
                   <button type="button" class="btn btn-primary btn-sm step-controls__right" id="step-forward">Next</button>
               </div>
               <div class="form-step active" data-step="1">
@@ -725,6 +761,7 @@
         var tableBody = document.querySelector('#dimensions-table tbody');
         var form = document.querySelector('form');
         var stepTitle = document.getElementById('step-title');
+        var stepProgress = document.getElementById('step-progress');
 
         var steps = Array.from(document.querySelectorAll('.form-step'));
         var currentStep = 1;
@@ -983,6 +1020,11 @@
             });
             var heading = activeStep ? activeStep.querySelector('.form-step-heading') : null;
             stepTitle.textContent = heading ? heading.textContent.trim() : '';
+            if (stepProgress) {
+                var sequence = getActiveSequence();
+                var index = sequence.indexOf(step);
+                stepProgress.textContent = index >= 0 ? 'Step ' + (index + 1) + ' of ' + sequence.length : '';
+            }
         }
 
         function getActiveSequence() {
