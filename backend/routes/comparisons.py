@@ -323,6 +323,8 @@ async def _queue_comparison(
         "processed_dimensions": 0,
         "dimensions": json.dumps(dimension_names),
         "comparison_type": comparison_type,
+        "evidence_status": "pending",
+        "evidence_error": "",
     }
     try:
         await _safe_hset(redis_client, task_id, initial_payload)

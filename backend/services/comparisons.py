@@ -35,7 +35,7 @@ from .evidence import (
     build_text_evidence_source,
 )
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
-from .report_artifacts import store_manifest, store_source_artifacts
+from .report_artifacts import manifest_key, store_manifest, store_source_artifacts
 from .trials import extract_nct_id, extract_nested_trial_with_metadata
 
 logger = logging.getLogger(__name__)
@@ -397,6 +397,20 @@ async def _store_evidence_manifest(
         manifest=manifest,
         ttl_seconds=ttl_seconds,
     )
+    try:
+        if not await redis_client.exists(manifest_key(task_id)):
+            raise RuntimeError("manifest key was not visible after save")
+        await redis_client.hset(
+            task_id,
+            mapping={
+                "evidence_status": "ready",
+                "evidence_error": "",
+                "evidence_source_count": len(manifest["sources"]),
+                "evidence_chunk_count": len(manifest["chunks"]),
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Evidence manifest save verification failed: {exc}") from exc
     return manifest
 
 
@@ -426,6 +440,38 @@ async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> in
     if isinstance(ttl, int) and ttl > 0:
         return ttl
     return 86400
+
+
+async def _evidence_success_fields(
+    redis_client: Any | None,
+    task_id: str | None,
+    evidence_manifest: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not redis_client or not task_id:
+        return {}
+    if evidence_manifest is None:
+        return {
+            "evidence_status": "missing",
+            "evidence_error": (
+                "Evidence manifest was not created by the worker. On Heroku, "
+                "ensure the worker dyno is running the same release as the web dyno and rerun the comparison."
+            ),
+        }
+    try:
+        if await redis_client.exists(manifest_key(task_id)):
+            return {"evidence_status": "ready", "evidence_error": ""}
+    except Exception as exc:
+        return {
+            "evidence_status": "unknown",
+            "evidence_error": f"Could not verify evidence manifest in Redis: {exc}",
+        }
+    return {
+        "evidence_status": "missing",
+        "evidence_error": (
+            "Evidence manifest was built in memory but was not found in Redis at completion. "
+            "Check Redis/S3 artifact storage configuration and worker logs."
+        ),
+    }
 
 
 
@@ -684,7 +730,11 @@ async def general_preregistration_comparison(
     if task_id and redis_client:
         await redis_client.hset(
             task_id,
-            mapping={"status": "Preparing evidence viewer sources"},
+            mapping={
+                "status": "Preparing evidence viewer sources",
+                "evidence_status": "preparing",
+                "evidence_error": "",
+            },
         )
         prereg_payload = build_file_evidence_source(
             source_id="registration",
@@ -855,6 +905,7 @@ async def general_preregistration_comparison(
         raise
 
     if task_id and redis_client:
+        evidence_fields = await _evidence_success_fields(redis_client, task_id, evidence_manifest)
         await redis_client.hset(
             task_id,
             mapping={
@@ -864,6 +915,7 @@ async def general_preregistration_comparison(
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
                 "status": "Report complete",
+                **evidence_fields,
             },
         )
     return result_obj
@@ -993,7 +1045,11 @@ async def clinical_trial_comparison(
     if task_id and redis_client:
         await redis_client.hset(
             task_id,
-            mapping={"status": "Preparing evidence viewer sources"},
+            mapping={
+                "status": "Preparing evidence viewer sources",
+                "evidence_status": "preparing",
+                "evidence_error": "",
+            },
         )
         registration_payload = build_json_evidence_source(
             source_id="registration",
@@ -1102,6 +1158,7 @@ async def clinical_trial_comparison(
         raise
 
     if redis_client and task_id:
+        evidence_fields = await _evidence_success_fields(redis_client, task_id, evidence_manifest)
         await redis_client.hset(
             task_id,
             mapping={
@@ -1111,6 +1168,7 @@ async def clinical_trial_comparison(
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
                 "status": "Report complete",
+                **evidence_fields,
             },
         )
     return result_obj
@@ -1238,7 +1296,11 @@ async def animals_trial_comparison(
     if task_id and redis_client:
         await redis_client.hset(
             task_id,
-            mapping={"status": "Preparing evidence viewer sources"},
+            mapping={
+                "status": "Preparing evidence viewer sources",
+                "evidence_status": "preparing",
+                "evidence_error": "",
+            },
         )
         registration_payload = build_text_evidence_source(
             source_id="registration",
@@ -1351,6 +1413,7 @@ async def animals_trial_comparison(
         raise
 
     if redis_client and task_id:
+        evidence_fields = await _evidence_success_fields(redis_client, task_id, evidence_manifest)
         await redis_client.hset(
             task_id,
             mapping={
@@ -1360,6 +1423,7 @@ async def animals_trial_comparison(
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
                 "status": "Report complete",
+                **evidence_fields,
             },
         )
     return result_obj

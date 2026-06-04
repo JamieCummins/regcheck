@@ -64,6 +64,14 @@ def _coerce_int(value):
         return None
 
 
+def _status_field(data: dict, name: str) -> str | None:
+    value = _decode(data.get(name))
+    if value is None:
+        return None
+    value = str(value)
+    return value if value else None
+
+
 @router.get("/task_status/{task_id}")
 async def task_status(request: Request, task_id: str):
     redis_client = request.app.state.redis
@@ -90,6 +98,12 @@ async def task_status(request: Request, task_id: str):
     state = _decode(data.get("state"))
     status_text = _decode(data.get("status")) or "Pending..."
     evidence_available = await _safe_exists(redis_client, manifest_key(task_id))
+    evidence_status = _status_field(data, "evidence_status")
+    evidence_error = _status_field(data, "evidence_error")
+    if evidence_available:
+        evidence_status = evidence_status or "ready"
+    elif state == "SUCCESS":
+        evidence_status = evidence_status or "missing"
 
     return JSONResponse(
         {
@@ -99,6 +113,8 @@ async def task_status(request: Request, task_id: str):
             "total_dimensions": total_dimensions,
             "processed_dimensions": processed_dimensions,
             "evidence_available": evidence_available,
+            "evidence_status": evidence_status,
+            "evidence_error": evidence_error,
         }
     )
 
