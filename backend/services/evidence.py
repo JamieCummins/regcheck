@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,102 @@ def _chunk_id(prefix: str, index: int) -> str:
 def _content_type_for_path(path: str) -> str:
     guessed, _encoding = mimetypes.guess_type(path)
     return guessed or "application/octet-stream"
+
+
+def _build_text_pdf_render(text: str, *, title: str) -> bytes | None:
+    if fitz is None or not (text or "").strip():
+        return None
+    doc = fitz.open()
+    try:
+        page_width = 612
+        page_height = 792
+        margin = 54
+        line_rect = fitz.Rect(margin, margin, page_width - margin, page_height - margin)
+        remaining = text.strip()
+        font_size = 10.5
+        line_height = font_size * 1.35
+
+        while remaining:
+            page = doc.new_page(width=page_width, height=page_height)
+            page.insert_text(
+                (margin, 28),
+                title[:120],
+                fontsize=9,
+                color=(0.28, 0.31, 0.42),
+            )
+            overflow = page.insert_textbox(
+                line_rect,
+                remaining,
+                fontsize=font_size,
+                fontname="helv",
+                lineheight=line_height / font_size,
+                color=(0, 0, 0),
+            )
+            if isinstance(overflow, (int, float)) and overflow < 0:
+                # insert_textbox does not expose consumed text. Approximate a page
+                # slice and keep it on paragraph boundaries when possible.
+                max_chars = 2800
+                split_at = remaining.rfind("\n\n", 0, max_chars)
+                if split_at < 400:
+                    split_at = remaining.rfind(" ", 0, max_chars)
+                if split_at < 400:
+                    split_at = min(max_chars, len(remaining))
+                page.clean_contents()
+                page.insert_text(
+                    (margin, 28),
+                    title[:120],
+                    fontsize=9,
+                    color=(0.28, 0.31, 0.42),
+                )
+                page.insert_textbox(
+                    line_rect,
+                    remaining[:split_at].strip(),
+                    fontsize=font_size,
+                    fontname="helv",
+                    lineheight=line_height / font_size,
+                    color=(0, 0, 0),
+                )
+                remaining = remaining[split_at:].strip()
+            else:
+                remaining = ""
+        return doc.tobytes()
+    finally:
+        doc.close()
+
+
+def _build_rendered_text_pdf_evidence_source(
+    *,
+    source_id: str,
+    label: str,
+    text: str,
+    chunk_prefix: str,
+    metadata: dict[str, Any] | None,
+    max_chunk_tokens: int,
+    embedding_model: str,
+) -> dict[str, Any] | None:
+    pdf_bytes = _build_text_pdf_render(text, title=label)
+    if pdf_bytes is None:
+        return None
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as handle:
+        handle.write(pdf_bytes)
+        handle.flush()
+        payload = build_pdf_evidence_source(
+            source_id=source_id,
+            label=f"{label} Text Render",
+            pdf_path=handle.name,
+            chunk_prefix=chunk_prefix,
+            fallback_text=text,
+            metadata={
+                "rendered_from_text": True,
+                **(metadata or {}),
+            },
+            max_chunk_tokens=max_chunk_tokens,
+            embedding_model=embedding_model,
+        )
+    payload["source"]["raw_filename"] = f"{source_id}-text-render.pdf"
+    payload["raw_bytes"] = pdf_bytes
+    payload["raw_content_type"] = "application/pdf"
+    return payload
 
 
 def _plain_text_render_data(text: str, *, kind: str = "text", metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -395,6 +492,23 @@ def build_file_evidence_source(
             max_chunk_tokens=max_chunk_tokens,
             embedding_model=embedding_model,
         )
+
+    if ext in {".docx", ".txt"}:
+        rendered_pdf = _build_rendered_text_pdf_evidence_source(
+            source_id=source_id,
+            label=label,
+            text=text,
+            chunk_prefix=chunk_prefix,
+            metadata={
+                "original_extension": ext,
+                "original_filename": Path(file_path).name,
+                **(metadata or {}),
+            },
+            max_chunk_tokens=max_chunk_tokens,
+            embedding_model=embedding_model,
+        )
+        if rendered_pdf is not None:
+            return rendered_pdf
 
     path = Path(file_path)
     raw_bytes = path.read_bytes() if path.exists() else None
