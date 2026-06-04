@@ -25,11 +25,18 @@ from .documents import (
 from .embeddings import (
     EmbeddingCorpus,
     build_corpus,
+    build_corpus_from_segments,
     get_embedding,
     retrieve_relevant_chunks,
 )
+from .evidence import (
+    build_file_evidence_source,
+    build_json_evidence_source,
+    build_text_evidence_source,
+)
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
-from .trials import extract_nct_id, extract_nested_trial
+from .report_artifacts import store_manifest, store_source_artifacts
+from .trials import extract_nct_id, extract_nested_trial_with_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +344,90 @@ def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k:
     return min(total_segments, bounded)
 
 
+def _corpus_cache_key(role: str, text: str) -> str:
+    return f"{role}:{hashlib.sha256((text or '').encode('utf-8')).hexdigest()}"
+
+
+def _add_evidence_corpus_to_cache(
+    corpus_cache: dict[str, EmbeddingCorpus],
+    *,
+    role: str,
+    chunk_prefix: str,
+    source_payload: dict[str, Any],
+) -> None:
+    corpus_cache[_corpus_cache_key(role, source_payload.get("text", ""))] = build_corpus_from_segments(
+        source_payload.get("segments") or [],
+        model=_embedding_model(),
+        chunk_prefix=chunk_prefix,
+        max_segments=_max_embedding_segments(),
+        metadata=source_payload.get("metadata") or [],
+    )
+
+
+async def _store_evidence_manifest(
+    *,
+    redis_client: Any,
+    task_id: str,
+    comparison_type: str,
+    source_payloads: list[dict[str, Any]],
+    ttl_seconds: int,
+) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "version": 1,
+        "task_id": task_id,
+        "comparison_type": comparison_type,
+        "sources": {},
+        "chunks": {},
+    }
+    for payload in source_payloads:
+        source = await store_source_artifacts(
+            redis_client,
+            task_id=task_id,
+            source=payload["source"],
+            raw_bytes=payload.get("raw_bytes"),
+            raw_content_type=payload.get("raw_content_type"),
+            render_data=payload.get("render_data") or {},
+            ttl_seconds=ttl_seconds,
+        )
+        manifest["sources"][source["id"]] = source
+        manifest["chunks"].update(payload.get("chunks") or {})
+    await store_manifest(
+        redis_client,
+        task_id=task_id,
+        manifest=manifest,
+        ttl_seconds=ttl_seconds,
+    )
+    return manifest
+
+
+async def _persist_evidence_manifest(
+    redis_client: Any | None,
+    task_id: str | None,
+    evidence_manifest: dict[str, Any] | None,
+    ttl_seconds: int,
+) -> None:
+    if not redis_client or not task_id or evidence_manifest is None:
+        return
+    await store_manifest(
+        redis_client,
+        task_id=task_id,
+        manifest=evidence_manifest,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> int:
+    if not redis_client or not task_id:
+        return 86400
+    try:
+        ttl = await redis_client.ttl(task_id)
+    except Exception:
+        ttl = None
+    if isinstance(ttl, int) and ttl > 0:
+        return ttl
+    return 86400
+
+
 
 async def extract_experiment_specific_paper_text(
     full_paper_text: str,
@@ -588,6 +679,85 @@ async def general_preregistration_comparison(
 
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    evidence_manifest: dict[str, Any] | None = None
+    evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
+    if task_id and redis_client:
+        await redis_client.hset(
+            task_id,
+            mapping={"status": "Preparing evidence viewer sources"},
+        )
+        prereg_payload = build_file_evidence_source(
+            source_id="registration",
+            label="Preregistration",
+            file_path=prereg_path,
+            file_ext=prereg_ext,
+            text=preregistration_input,
+            chunk_prefix="PREREG",
+            metadata={"role": "registration", "comparison_type": "general_preregistration"},
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
+        if has_multiple_experiments and experiment_label:
+            raw_bytes = None
+            raw_content_type = None
+            raw_filename = None
+            try:
+                paper_raw_path = Path(paper_path)
+                raw_bytes = paper_raw_path.read_bytes()
+                raw_content_type = "application/pdf" if paper_ext == ".pdf" else None
+                raw_filename = paper_raw_path.name
+            except Exception:
+                pass
+            paper_payload = build_text_evidence_source(
+                source_id="paper",
+                label="Paper Evidence Text",
+                text=extracted_paper_sections,
+                chunk_prefix="PAPER",
+                kind="text",
+                metadata={
+                    "role": "paper",
+                    "comparison_type": "general_preregistration",
+                    "fallback_reason": "Experiment-specific text was isolated before embedding",
+                },
+                raw_bytes=raw_bytes,
+                raw_content_type=raw_content_type,
+                raw_filename=raw_filename,
+                max_chunk_tokens=_embedding_max_chunk_tokens(),
+                embedding_model=_embedding_model(),
+            )
+        else:
+            paper_payload = build_file_evidence_source(
+                source_id="paper",
+                label="Paper",
+                file_path=paper_input,
+                file_ext=paper_ext,
+                text=extracted_paper_sections,
+                chunk_prefix="PAPER",
+                metadata={"role": "paper", "comparison_type": "general_preregistration"},
+                max_chunk_tokens=_embedding_max_chunk_tokens(),
+                embedding_model=_embedding_model(),
+            )
+        preregistration_input = prereg_payload.get("text") or preregistration_input
+        extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="prereg",
+            chunk_prefix="PREREG",
+            source_payload=prereg_payload,
+        )
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="paper",
+            chunk_prefix="PAPER",
+            source_payload=paper_payload,
+        )
+        evidence_manifest = await _store_evidence_manifest(
+            redis_client=redis_client,
+            task_id=task_id,
+            comparison_type="general_preregistration",
+            source_payloads=[prereg_payload, paper_payload],
+            ttl_seconds=evidence_ttl_seconds,
+        )
     logger.info(
         "general_preregistration_comparison start",
         extra={
@@ -649,9 +819,16 @@ async def general_preregistration_comparison(
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="preregistration",
+                evidence_manifest=evidence_manifest,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
+            await _persist_evidence_manifest(
+                redis_client,
+                task_id,
+                evidence_manifest,
+                evidence_ttl_seconds,
+            )
             if task_id and redis_client:
                 await redis_client.hset(
                     task_id,
@@ -712,8 +889,12 @@ async def clinical_trial_comparison(
 ) -> ComparisonResult:
     logger.info("Started clinical trial comparison", extra={"task_id": task_id})
     extract_nct = nct_extractor or extract_nct_id
-    fetch_trial = trial_fetcher or extract_nested_trial
-    nested_trial = fetch_trial(extract_nct(registration_id))
+    nct_id = extract_nct(registration_id)
+    trial_metadata: dict[str, Any] = {}
+    if trial_fetcher is None:
+        nested_trial, trial_metadata = extract_nested_trial_with_metadata(nct_id)
+    else:
+        nested_trial = trial_fetcher(nct_id)
     prereg_text = "\n\n".join(
         f"{dimension}\n\n" + "\n".join(f"{sub}\n{text}" for sub, text in subcomponents.items())
         for dimension, subcomponents in nested_trial.items()
@@ -807,6 +988,54 @@ async def clinical_trial_comparison(
         )
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    evidence_manifest: dict[str, Any] | None = None
+    evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
+    if task_id and redis_client:
+        await redis_client.hset(
+            task_id,
+            mapping={"status": "Preparing evidence viewer sources"},
+        )
+        registration_payload = build_json_evidence_source(
+            source_id="registration",
+            label="ClinicalTrials.gov Registration",
+            data=nested_trial,
+            chunk_prefix="PREREG",
+            metadata={"role": "registration", "comparison_type": "clinical_trials", **trial_metadata},
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
+        paper_payload = build_file_evidence_source(
+            source_id="paper",
+            label="Paper",
+            file_path=paper_input,
+            file_ext=paper_ext,
+            text=extracted_paper_sections,
+            chunk_prefix="PAPER",
+            metadata={"role": "paper", "comparison_type": "clinical_trials"},
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
+        prereg_text = registration_payload.get("text") or prereg_text
+        extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="prereg",
+            chunk_prefix="PREREG",
+            source_payload=registration_payload,
+        )
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="paper",
+            chunk_prefix="PAPER",
+            source_payload=paper_payload,
+        )
+        evidence_manifest = await _store_evidence_manifest(
+            redis_client=redis_client,
+            task_id=task_id,
+            comparison_type="clinical_trials",
+            source_payloads=[registration_payload, paper_payload],
+            ttl_seconds=evidence_ttl_seconds,
+        )
     try:
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
             dimension = dimension_info.get("dimension", "").strip()
@@ -837,9 +1066,16 @@ async def clinical_trial_comparison(
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="clinical_trial",
+                evidence_manifest=evidence_manifest,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
+            await _persist_evidence_manifest(
+                redis_client,
+                task_id,
+                evidence_manifest,
+                evidence_ttl_seconds,
+            )
             if redis_client and task_id:
                 await redis_client.hset(
                     task_id,
@@ -997,6 +1233,58 @@ async def animals_trial_comparison(
 
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    evidence_manifest: dict[str, Any] | None = None
+    evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
+    if task_id and redis_client:
+        await redis_client.hset(
+            task_id,
+            mapping={"status": "Preparing evidence viewer sources"},
+        )
+        registration_payload = build_text_evidence_source(
+            source_id="registration",
+            label="PCT Registration",
+            text=prereg_text,
+            chunk_prefix="PREREG",
+            kind="text",
+            metadata={"role": "registration", "comparison_type": "animals_trials", "registration_id": registration_id},
+            raw_bytes=prereg_text.encode("utf-8"),
+            raw_content_type="text/plain; charset=utf-8",
+            raw_filename=f"{registration_id or 'registration'}.txt",
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
+        paper_payload = build_file_evidence_source(
+            source_id="paper",
+            label="Paper",
+            file_path=paper_input,
+            file_ext=paper_ext,
+            text=extracted_paper_sections,
+            chunk_prefix="PAPER",
+            metadata={"role": "paper", "comparison_type": "animals_trials"},
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
+        prereg_text = registration_payload.get("text") or prereg_text
+        extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="prereg",
+            chunk_prefix="PREREG",
+            source_payload=registration_payload,
+        )
+        _add_evidence_corpus_to_cache(
+            corpus_cache,
+            role="paper",
+            chunk_prefix="PAPER",
+            source_payload=paper_payload,
+        )
+        evidence_manifest = await _store_evidence_manifest(
+            redis_client=redis_client,
+            task_id=task_id,
+            comparison_type="animals_trials",
+            source_payloads=[registration_payload, paper_payload],
+            ttl_seconds=evidence_ttl_seconds,
+        )
     try:
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
             dimension = dimension_info.get("dimension", "").strip()
@@ -1027,9 +1315,16 @@ async def animals_trial_comparison(
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="clinical_trial",
+                evidence_manifest=evidence_manifest,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
+            await _persist_evidence_manifest(
+                redis_client,
+                task_id,
+                evidence_manifest,
+                evidence_ttl_seconds,
+            )
             if redis_client and task_id:
                 await redis_client.hset(
                     task_id,
@@ -1251,6 +1546,7 @@ def run_comparison(
     previous_dimension_responses: list[ComparisonItem] | None = None,
     reasoning_effort: str | None = None,
     comparison_context: ComparisonContext = "clinical_trial",
+    evidence_manifest: dict[str, Any] | None = None,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -1341,6 +1637,18 @@ def run_comparison(
 
     prereg_top_rows = _sort_by_numeric_id(prereg_top_rows)
     paper_top_rows = _sort_by_numeric_id(paper_top_rows)
+
+    if evidence_manifest is not None:
+        chunks = evidence_manifest.setdefault("chunks", {})
+        for cid, _text, sim in prereg_top_rows + paper_top_rows:
+            chunk_info = chunks.get(cid)
+            if not isinstance(chunk_info, dict):
+                continue
+            score_map = chunk_info.setdefault("relevance_scores_by_dimension", {})
+            score_map[dimension_query] = float(sim)
+            current_max = chunk_info.get("max_relevance_score")
+            if not isinstance(current_max, (int, float)) or sim > current_max:
+                chunk_info["max_relevance_score"] = float(sim)
 
     prereg_top = [f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in prereg_top_rows]
     paper_top = [f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in paper_top_rows]

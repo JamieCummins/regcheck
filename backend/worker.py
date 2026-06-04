@@ -6,6 +6,7 @@ import gzip
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from backend.services.comparisons import (
     general_preregistration_comparison,
     run_with_concurrency_limit,
 )
+from backend.services.report_artifacts import cleanup_expired_s3_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +207,14 @@ async def worker_loop() -> None:
         logger.warning("Failed to recover stalled jobs", exc_info=exc)
 
     while True:
+        now = time.time()
+        last_cleanup = getattr(worker_loop, "_last_report_cleanup", 0.0)
+        if now - last_cleanup >= 60:
+            setattr(worker_loop, "_last_report_cleanup", now)
+            try:
+                await cleanup_expired_s3_artifacts(redis_client)
+            except Exception as exc:  # pragma: no cover - best-effort cleanup
+                logger.warning("Report artifact cleanup failed", exc_info=exc)
         try:
             raw_job = await redis_client.brpoplpush("comparison:queue", "comparison:processing", timeout=5)
         except Exception as exc:  # pragma: no cover - defensive
