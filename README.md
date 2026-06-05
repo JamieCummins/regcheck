@@ -90,6 +90,34 @@ Then open http://localhost:8000 for the UI. FastAPI routes:
 - `GET /task_status/{task_id}`
 - `GET /result/{task_id}`
 
+## Server-to-server API
+Set `REGCHECK_API_TOKEN` and pass it as a bearer token or `X-API-Key`.
+The multipart endpoint accepts `.txt`, `.docx`, and `.pdf` paper uploads.
+
+Multipart upload:
+```bash
+curl -X POST "$REGCHECK_URL/api/v1/comparisons" \
+  -H "Authorization: Bearer $REGCHECK_API_TOKEN" \
+  -F "registration_file=@/path/to/preregistration.txt" \
+  -F "paper=@/path/to/paper.txt"
+```
+
+Direct text submission:
+```bash
+curl -X POST "$REGCHECK_URL/api/v1/comparisons/text" \
+  -H "Authorization: Bearer $REGCHECK_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "registration_text": "Full preregistration text...",
+    "paper_text": "Full paper text..."
+  }'
+```
+
+`POST /api/v1/comparisons` also accepts the same JSON body. For clinical trial
+comparisons, use `registration_id` instead of `registration_text`. Both creation
+endpoints return `202` with a `task_id` and `status_url`; poll
+`GET /api/v1/comparisons/{task_id}` until `state` is `success` or `failure`.
+
 ## CLI: backend-only comparisons
 The CLI reads dimensions from a CSV (`dimension,definition` columns). Example file: `test_materials/dimensions_example.csv`.
 

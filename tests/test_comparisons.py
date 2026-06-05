@@ -51,6 +51,43 @@ async def test_general_preregistration_comparison(tmp_path):
     assert isinstance(res, ComparisonResult)
 
 
+@pytest.mark.asyncio
+async def test_general_preregistration_comparison_accepts_txt_paper(tmp_path):
+    prereg = tmp_path / "prereg.txt"
+    prereg.write_text("registered plan")
+    paper = tmp_path / "paper.txt"
+    paper.write_text("paper body")
+
+    called = {}
+
+    def fake_run(
+        preregistration_input: str,
+        extracted_paper_sections: str,
+        client_choice: str,
+        dimension_query: str,
+        dimension_definition: str | None = None,
+        **kwargs,
+    ) -> ComparisonResult:
+        called["prereg"] = preregistration_input
+        called["paper"] = extracted_paper_sections
+        return ComparisonResult(items=[])
+
+    res = await general_preregistration_comparison(
+        str(prereg),
+        ".txt",
+        str(paper),
+        ".txt",
+        "openai",
+        "grobid",
+        selected_dimensions=[{"dimension": "general", "definition": "custom def"}],
+        comparison_runner=fake_run,
+    )
+
+    assert called["prereg"] == "registered plan"
+    assert called["paper"] == "paper body"
+    assert isinstance(res, ComparisonResult)
+
+
 def _make_scanned_pdf(path):
     import fitz
 
@@ -148,4 +185,44 @@ async def test_clinical_trial_comparison(tmp_path):
     )
     assert calls == [dim["dimension"] for dim in selected_dims]
     assert definitions == [dim["definition"] for dim in selected_dims]
+    assert isinstance(result, ComparisonResult)
+
+
+@pytest.mark.asyncio
+async def test_clinical_trial_comparison_accepts_txt_paper(tmp_path):
+    paper = tmp_path / "paper.txt"
+    paper.write_text("paper body")
+
+    calls = []
+    papers = []
+
+    def fake_run(
+        preregistration_input: str,
+        extracted_paper_sections: str,
+        client_choice: str,
+        dimension_query: str,
+        dimension_definition: str | None = None,
+        **kwargs,
+    ) -> ComparisonResult:
+        calls.append(dimension_query)
+        papers.append(extracted_paper_sections)
+        return ComparisonResult(items=[])
+
+    selected_dims = [
+        {"dimension": "Design: Planned sample size", "definition": "Custom definition"},
+    ]
+
+    result = await clinical_trial_comparison(
+        "NCT123",
+        str(paper),
+        ".txt",
+        "openai",
+        selected_dimensions=selected_dims,
+        nct_extractor=lambda t: "NCT0000",
+        trial_fetcher=lambda n: {"Design": {"sub": "val"}},
+        comparison_runner=fake_run,
+    )
+
+    assert calls == [dim["dimension"] for dim in selected_dims]
+    assert papers == ["paper body"]
     assert isinstance(result, ComparisonResult)

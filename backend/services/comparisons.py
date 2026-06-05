@@ -20,7 +20,6 @@ from pydantic import BaseModel, ValidationError, field_validator
 from .documents import (
     extract_text_from_docx,
     read_file,
-    read_file_as_pdf,
 )
 from .dimensions import default_dimensions_for
 from .embeddings import (
@@ -105,6 +104,61 @@ async def run_with_concurrency_limit(func: Callable[[], Awaitable[T]]) -> T:
     """Run a coroutine factory under a shared semaphore to cap concurrent comparisons."""
     async with _comparison_semaphore:
         return await func()
+
+
+async def _extract_paper_sections(
+    paper_path: str,
+    paper_ext: str,
+    parser_choice: str,
+    *,
+    task_id: str | None = None,
+    redis_client: Any | None = None,
+    processed_count: int = 0,
+    pdf_parser: Callable[[str], Awaitable[str]] | None = None,
+    dpt_parser: Callable[[str], Awaitable[Any]] | None = None,
+    docx_reader: Callable[[str], str] | None = None,
+) -> str:
+    paper_ext = (paper_ext or "").lower()
+    parser_choice_normalized = (parser_choice or "grobid").lower()
+    status = (
+        "Reading text paper"
+        if paper_ext == ".txt"
+        else f"Parsing paper with {parser_choice_normalized}"
+    )
+    if task_id and redis_client:
+        await redis_client.hset(task_id, mapping={"status": status})
+
+    try:
+        if paper_ext == ".pdf":
+            extracted_paper_sections, used_parser = await extract_pdf_text(
+                paper_path,
+                parser_choice=parser_choice_normalized,
+                pdf_parser=pdf_parser,
+                dpt_parser=dpt_parser,
+            )
+            if task_id and redis_client and used_parser != parser_choice_normalized:
+                await redis_client.hset(
+                    task_id,
+                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
+                )
+            return extracted_paper_sections
+        if paper_ext == ".docx":
+            reader = docx_reader or extract_text_from_docx
+            return reader(paper_path)
+        if paper_ext == ".txt":
+            return read_file(paper_path, paper_ext)
+        raise ValueError("Unsupported paper file type; upload a .txt, .docx, or .pdf file.")
+    except Exception as exc:
+        if task_id and redis_client:
+            await redis_client.hset(
+                task_id,
+                mapping={
+                    "state": "FAILURE",
+                    "status": f"Parsing failed: {exc}",
+                    "processed_dimensions": processed_count,
+                },
+            )
+        raise
 
 
 def _normalize_reasoning_effort_value(value: str | None) -> str | None:
@@ -470,45 +524,19 @@ async def general_preregistration_comparison(
             raise
     else:
         preregistration_input = read_file(prereg_path, prereg_ext)
-    paper_input = read_file_as_pdf(paper_path, paper_ext)
     parser_choice_normalized = (parser_choice or "grobid").lower()
 
-    if task_id and redis_client:
-        await redis_client.hset(
-            task_id,
-            mapping={
-                "status": f"Parsing paper with {parser_choice_normalized}",
-            },
-        )
-    try:
-        if paper_ext == ".pdf":
-            extracted_paper_sections, used_parser = await extract_pdf_text(
-                paper_input,
-                parser_choice=parser_choice_normalized,
-                pdf_parser=pdf_parser,
-                dpt_parser=dpt_parser,
-            )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
-        elif paper_ext == ".docx":
-            reader = docx_reader or extract_text_from_docx
-            extracted_paper_sections = reader(paper_input)
-        else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
-    except Exception as exc:
-        if task_id and redis_client:
-            await redis_client.hset(
-                task_id,
-                mapping={
-                    "state": "FAILURE",
-                    "status": f"Parsing failed: {exc}",
-                    "processed_dimensions": processed_count,
-                },
-            )
-        raise
+    extracted_paper_sections = await _extract_paper_sections(
+        paper_path,
+        paper_ext,
+        parser_choice_normalized,
+        task_id=task_id,
+        redis_client=redis_client,
+        processed_count=processed_count,
+        pdf_parser=pdf_parser,
+        dpt_parser=dpt_parser,
+        docx_reader=docx_reader,
+    )
 
     result_obj = ComparisonResult(items=[])
     dimensions_to_compare: list[dict[str, str]] = []
@@ -734,42 +762,18 @@ async def clinical_trial_comparison(
     else:
         dimensions_to_compare = default_dimensions_for("clinical_trials")
     processed_count = 0
-    paper_input = read_file_as_pdf(paper_path, paper_ext)
     parser_choice_normalized = (parser_choice or "grobid").lower()
-    if redis_client and task_id:
-        await redis_client.hset(
-            task_id,
-            mapping={"status": f"Parsing paper with {parser_choice_normalized}"},
-        )
-    try:
-        if paper_ext == ".pdf":
-            extracted_paper_sections, used_parser = await extract_pdf_text(
-                paper_input,
-                parser_choice=parser_choice_normalized,
-                pdf_parser=pdf_parser,
-                dpt_parser=dpt_parser,
-            )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
-        elif paper_ext == ".docx":
-            reader = docx_reader or extract_text_from_docx
-            extracted_paper_sections = reader(paper_input)
-        else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
-    except Exception as exc:
-        if redis_client and task_id:
-            await redis_client.hset(
-                task_id,
-                mapping={
-                    "state": "FAILURE",
-                    "status": f"Parsing failed: {exc}",
-                    "processed_dimensions": processed_count,
-                },
-            )
-        raise
+    extracted_paper_sections = await _extract_paper_sections(
+        paper_path,
+        paper_ext,
+        parser_choice_normalized,
+        task_id=task_id,
+        redis_client=redis_client,
+        processed_count=processed_count,
+        pdf_parser=pdf_parser,
+        dpt_parser=dpt_parser,
+        docx_reader=docx_reader,
+    )
 
     result_obj = ComparisonResult(items=[])
     dimension_names = [
@@ -924,42 +928,18 @@ async def animals_trial_comparison(
                 {"dimension": name, "definition": dimension_definitions.get(name, "")}
             )
     processed_count = 0
-    paper_input = read_file_as_pdf(paper_path, paper_ext)
     parser_choice_normalized = (parser_choice or "grobid").lower()
-    if redis_client and task_id:
-        await redis_client.hset(
-            task_id,
-            mapping={"status": f"Parsing paper with {parser_choice_normalized}"},
-        )
-    try:
-        if paper_ext == ".pdf":
-            extracted_paper_sections, used_parser = await extract_pdf_text(
-                paper_input,
-                parser_choice=parser_choice_normalized,
-                pdf_parser=pdf_parser,
-                dpt_parser=dpt_parser,
-            )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
-        elif paper_ext == ".docx":
-            reader = docx_reader or extract_text_from_docx
-            extracted_paper_sections = reader(paper_input)
-        else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
-    except Exception as exc:
-        if redis_client and task_id:
-            await redis_client.hset(
-                task_id,
-                mapping={
-                    "state": "FAILURE",
-                    "status": f"Parsing failed: {exc}",
-                    "processed_dimensions": processed_count,
-                },
-            )
-        raise
+    extracted_paper_sections = await _extract_paper_sections(
+        paper_path,
+        paper_ext,
+        parser_choice_normalized,
+        task_id=task_id,
+        redis_client=redis_client,
+        processed_count=processed_count,
+        pdf_parser=pdf_parser,
+        dpt_parser=dpt_parser,
+        docx_reader=docx_reader,
+    )
 
     result_obj = ComparisonResult(items=[])
     dimension_names = [
