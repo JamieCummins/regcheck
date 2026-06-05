@@ -6,11 +6,11 @@ Status: beta (under active development).
 
 ## About this fork
 
-This fork extends upstream RegCheck with two additions:
+This fork extends upstream RegCheck with three additions:
 
 1. **Local inference via Ollama:** run comparisons entirely offline against a locally hosted LLM, with no OpenAI/Groq/DeepSeek API key required. `ollama` is selectable as a provider in the CLI, the single-comparison web forms, and the batch flow. See [Using Ollama](#using-ollama-local-inference).
 2. **Text embedding via Ollama or TF-IDF:** create embeddings with no OpenAI API key required, automatically using Ollama or TF-IDF depending on available resources.
-2. **Batch clinical comparison in the web GUI:** upload many paper PDFs at once; the app auto-extracts each NCT ID, fetches the registration from ClinicalTrials.gov, runs every comparison with live progress, and lets you download all results as a single ZIP. See [Batch clinical comparison](#batch-clinical-comparison-web-gui).
+3. **Batch clinical comparison in the web GUI:** upload many paper PDFs at once; the app auto-extracts each NCT ID, fetches the registration from ClinicalTrials.gov, runs every comparison with live progress, and lets you download all results as a single ZIP. See [Batch clinical comparison](#batch-clinical-comparison-web-gui).
 
 > These features were first prototyped in a separate draft repo (`regcheck-0.2.0-beta`), where batch processing was a standalone CLI script (`batch_clinical.py`). In this repo the batch feature is integrated into the web GUI as FastAPI routes with live progress tracking, and Ollama support is wired through the shared comparison service so it works across the CLI and web flows alike.
 
@@ -65,6 +65,7 @@ DEEPSEEK_MODEL=deepseek-reasoner
 # Ollama (local inference; no API key required)
 OLLAMA_MODEL=llama3.2                             # any model available in your Ollama instance
 OLLAMA_BASE_URL=http://localhost:11434/v1         # default; the /v1 suffix is required
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text-v2-moe    # default; any embedding-capable model in your Ollama instance
 
 # Optional parser overrides
 GROBID_URL=https://lfoppiano-grobid.hf.space/api/processFulltextDocument
@@ -94,14 +95,16 @@ Heroku deployments must set `SESSION_SECRET` (the app will refuse to boot on dyn
 
 ## Using Ollama (local inference)
 
-Ollama runs comparisons entirely on your machine — no API key, and no data leaves the host. It is exposed as the `ollama` provider everywhere a provider can be chosen: the CLI (`--client ollama`), the web comparison forms, and the batch flow.
+Ollama runs comparisons entirely on your machine, which requires no API key, and no data leaves the host (unless you use one of Ollama's cloud models). It is exposed as the `ollama` provider everywhere a provider can be chosen: the CLI (`--client ollama`), the web comparison forms, and the batch flow.
+The embedding of text can also be done locally with Ollama, which is more reliable than the TF-IDF approach and still works without an API key. Set `OLLAMA_EMBEDDING_MODEL` to a suitable embedding-capable model in your Ollama instance.
 
-**1. Install Ollama** — see [ollama.com/download](https://ollama.com/download) (`brew install ollama` on macOS, `curl -fsSL https://ollama.com/install.sh | sh` on Linux, installer on Windows).
+**1. Install Ollama:** See [ollama.com/download](https://ollama.com/download) (`brew install ollama` on macOS, `curl -fsSL https://ollama.com/install.sh | sh` on Linux, installer on Windows).
 
-**2. Pull a model.** Choose one that follows structured JSON instructions well; larger models are more reliable:
+**2. Pull a model:** For the comparisons, choose a model that follows structured JSON instructions well. For the embeddings, choose a specialized model (such as `nomic-embed-text-v2-moe` or `embeddinggemma`).
 ```bash
 ollama pull llama3.2        # default; small and fast
 ollama pull gpt-oss         # stronger JSON compliance
+ollama pull nomic-embed-text-v2-moe   # specialized model for text embedding with multilingual support
 ```
 
 **3. Start the server** (macOS/Linux; on Windows the tray app starts it automatically):
@@ -113,8 +116,9 @@ ollama serve   # http://localhost:11434
 ```
 OLLAMA_MODEL=llama3.2
 OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text-v2-moe
 ```
-> `OLLAMA_BASE_URL` must include the `/v1` suffix — the OpenAI-compatible endpoint lives at `/v1/chat/completions`. Without it you get 404 errors.
+> `OLLAMA_BASE_URL` must include the `/v1` suffix — the OpenAI-compatible endpoint lives at `/v1/chat/completions`. Without it, you get 404 errors.
 
 **5. Select Ollama.** In the web UI pick **Ollama (local)** from the provider dropdown; from the CLI pass `--client ollama`.
 

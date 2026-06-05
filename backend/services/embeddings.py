@@ -177,7 +177,7 @@ def openai_embed_text(
 
 def ollama_embed_segments(
     segments: Sequence[str],
-    model: str = "nomic-embed-text",
+    model: str = "nomic-embed-text-v2-moe",
     base_url: str | None = None,
 ) -> np.ndarray:
     from openai import OpenAI
@@ -194,13 +194,12 @@ def ollama_embed_segments(
 
 def ollama_embed_text(
     text: str,
-    model: str = "nomic-embed-text",
+    model: str = "nomic-embed-text-v2-moe",
     base_url: str | None = None,
     *,
     max_chunk_tokens: int = 300,
 ) -> tuple[list[str], np.ndarray]:
-    # Use the standard tiktoken tokenizer for chunk sizing; Ollama models have
-    # comparable context windows so the 300-token default is safe.
+    # Use the standard tiktoken tokenizer for chunk sizing
     segments = extract_chunks_tokens(text, max_chunk_tokens=max_chunk_tokens, encoding_name="text-embedding-3-large")
     embeddings = ollama_embed_segments(segments, model=model, base_url=base_url)
     return list(segments), embeddings
