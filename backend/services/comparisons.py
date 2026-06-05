@@ -25,9 +25,12 @@ from .documents import (
 from .dimensions import default_dimensions_for
 from .embeddings import (
     EmbeddingCorpus,
+    _ollama_embedding_available,
+    _ollama_embedding_model,
     _openai_key_available,
     build_corpus,
     get_embedding,
+    ollama_embed_segments,
     retrieve_relevant_chunks,
     tfidf_embed_query,
 )
@@ -1325,6 +1328,17 @@ def run_comparison(
 
     if _openai_key_available():
         query_embedding = get_embedding(augmented_query, model=embedding_model)
+        prereg_candidates = retrieve_relevant_chunks(
+            query_embedding, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            query_embedding, paper_corpus, top_k=paper_candidate_k
+        )
+    elif _ollama_embedding_available():
+        query_embedding = ollama_embed_segments(
+            [augmented_query],
+            model=_ollama_embedding_model(),
+        )[0]
         prereg_candidates = retrieve_relevant_chunks(
             query_embedding, prereg_corpus, top_k=prereg_candidate_k
         )

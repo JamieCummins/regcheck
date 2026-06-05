@@ -175,6 +175,37 @@ def openai_embed_text(
     return list(segments), embeddings
 
 
+def ollama_embed_segments(
+    segments: Sequence[str],
+    model: str = "nomic-embed-text",
+    base_url: str | None = None,
+) -> np.ndarray:
+    from openai import OpenAI
+
+    client = OpenAI(api_key="ollama", base_url=base_url or _ollama_base_url())
+    max_batch = 2048
+    embeddings: list[list[float]] = []
+    for start in range(0, len(segments), max_batch):
+        batch = segments[start : start + max_batch]
+        response = client.embeddings.create(input=list(batch), model=model)
+        embeddings.extend(d.embedding for d in response.data)
+    return np.asarray(embeddings, dtype=np.float32)
+
+
+def ollama_embed_text(
+    text: str,
+    model: str = "nomic-embed-text",
+    base_url: str | None = None,
+    *,
+    max_chunk_tokens: int = 300,
+) -> tuple[list[str], np.ndarray]:
+    # Use the standard tiktoken tokenizer for chunk sizing; Ollama models have
+    # comparable context windows so the 300-token default is safe.
+    segments = extract_chunks_tokens(text, max_chunk_tokens=max_chunk_tokens, encoding_name="text-embedding-3-large")
+    embeddings = ollama_embed_segments(segments, model=model, base_url=base_url)
+    return list(segments), embeddings
+
+
 def save_embeddings(segments: Sequence[str], embeddings: np.ndarray, path: str) -> None:
     with open(path, "wb") as handle:
         pickle.dump(
@@ -290,6 +321,19 @@ class EmbeddingCorpus:
 def _openai_key_available() -> bool:
     return bool(os.environ.get("OPENAI_API_KEY", "").strip())
 
+
+def _ollama_embedding_available() -> bool:
+    return bool(os.environ.get("OLLAMA_EMBEDDING_MODEL", "").strip())
+
+
+def _ollama_embedding_model() -> str:
+    return os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text").strip()
+
+
+def _ollama_base_url() -> str:
+    return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip()
+
+
 def build_corpus(
     text: str,
     model: str = "text-embedding-3-large",
@@ -310,8 +354,20 @@ def build_corpus(
             segments, embeddings = openai_embed_text(text, model=model, max_chunk_tokens=max_chunk_tokens)
             if embeddings_path:
                 save_embeddings(segments, embeddings, embeddings_path)
+    elif _ollama_embedding_available():
+        # Ollama path — dense embeddings via local model, no API key required
+        if embeddings_path and os.path.exists(embeddings_path):
+            segments, embeddings = load_embeddings(embeddings_path)
+        else:
+            segments, embeddings = ollama_embed_text(
+                text,
+                model=_ollama_embedding_model(),
+                max_chunk_tokens=max_chunk_tokens,
+            )
+            if embeddings_path:
+                save_embeddings(segments, embeddings, embeddings_path)
     else:
-        # TF-IDF fallback
+        # TF-IDF fallback — no external service required
         segments, embeddings, vectorizer = tfidf_embed_text(text)
 
     embeddings = _coerce_embeddings_matrix(embeddings, len(segments))

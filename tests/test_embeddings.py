@@ -142,3 +142,86 @@ def test_tfidf_corpus_does_not_write_disk_cache(monkeypatch, tmp_path):
     path = tmp_path / "should_not_exist.pkl"
     build_corpus("Some real text for the corpus.", embeddings_path=str(path))
     assert not path.exists(), "TF-IDF mode must not write to disk cache"
+
+
+# ---------------------------------------------------------------------------
+# Ollama embedding path tests (mocked — no Ollama server required)
+# ---------------------------------------------------------------------------
+
+def _make_ollama_mock(dim: int = 8):
+    """Return a callable that replaces ollama_embed_segments with a deterministic stub."""
+    def fake_ollama_embed_segments(segments, model="nomic-embed-text", base_url="http://localhost:11434/v1"):
+        rng = np.random.default_rng(42)
+        return rng.random((len(segments), dim), dtype=np.float32)
+    return fake_ollama_embed_segments
+
+
+def test_ollama_corpus_uses_ollama_when_available(monkeypatch):
+    import backend.services.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod, "_openai_key_available", lambda: False)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_available", lambda: True)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_model", lambda: "nomic-embed-text")
+    monkeypatch.setattr(emb_mod, "_ollama_base_url", lambda: "http://localhost:11434/v1")
+    monkeypatch.setattr(emb_mod, "ollama_embed_segments", _make_ollama_mock(dim=8))
+
+    corpus = build_corpus("Participants were randomised to treatment or control.")
+    assert corpus.embeddings.ndim == 2
+    assert corpus.embeddings.shape[1] == 8
+    assert corpus.vectorizer is None  # dense path — no TF-IDF vectorizer
+
+
+def test_ollama_corpus_writes_disk_cache(monkeypatch, tmp_path):
+    import backend.services.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod, "_openai_key_available", lambda: False)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_available", lambda: True)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_model", lambda: "nomic-embed-text")
+    monkeypatch.setattr(emb_mod, "_ollama_base_url", lambda: "http://localhost:11434/v1")
+    monkeypatch.setattr(emb_mod, "ollama_embed_segments", _make_ollama_mock(dim=8))
+
+    path = tmp_path / "ollama_cache.pkl"
+    build_corpus("Some text to embed.", embeddings_path=str(path))
+    assert path.exists(), "Ollama path must write embeddings to disk cache"
+
+
+def test_ollama_corpus_loads_from_disk_cache(monkeypatch, tmp_path):
+    import backend.services.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod, "_openai_key_available", lambda: False)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_available", lambda: True)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_model", lambda: "nomic-embed-text")
+    monkeypatch.setattr(emb_mod, "_ollama_base_url", lambda: "http://localhost:11434/v1")
+
+    # Pre-save known embeddings to disk
+    path = tmp_path / "cached.pkl"
+    known_embeddings = np.eye(3, dtype=np.float32)
+    save_embeddings(["a", "b", "c"], known_embeddings, str(path))
+
+    # ollama_embed_segments must NOT be called when cache hit
+    called = {"count": 0}
+    def should_not_be_called(*a, **kw):
+        called["count"] += 1
+        return np.zeros((1, 3), dtype=np.float32)
+    monkeypatch.setattr(emb_mod, "ollama_embed_segments", should_not_be_called)
+
+    corpus = build_corpus("anything", embeddings_path=str(path))
+    assert called["count"] == 0, "ollama_embed_segments called despite cache hit"
+    assert corpus.segments == ["a", "b", "c"]
+    assert corpus.embeddings.shape == (3, 3)
+
+
+def test_ollama_takes_priority_over_tfidf(monkeypatch):
+    import backend.services.embeddings as emb_mod
+    monkeypatch.setattr(emb_mod, "_openai_key_available", lambda: False)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_available", lambda: True)
+    monkeypatch.setattr(emb_mod, "_ollama_embedding_model", lambda: "nomic-embed-text")
+    monkeypatch.setattr(emb_mod, "_ollama_base_url", lambda: "http://localhost:11434/v1")
+    monkeypatch.setattr(emb_mod, "ollama_embed_segments", _make_ollama_mock(dim=8))
+
+    tfidf_called = {"count": 0}
+    original_tfidf = emb_mod.tfidf_embed_text
+    def counting_tfidf(*a, **kw):
+        tfidf_called["count"] += 1
+        return original_tfidf(*a, **kw)
+    monkeypatch.setattr(emb_mod, "tfidf_embed_text", counting_tfidf)
+
+    build_corpus("Some text for the test.")
+    assert tfidf_called["count"] == 0, "tfidf_embed_text must not be called when Ollama is available"

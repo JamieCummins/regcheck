@@ -8,8 +8,9 @@ Status: beta (under active development).
 
 This fork extends upstream RegCheck with two additions:
 
-1. **Local inference via Ollama** — run comparisons entirely offline against a locally hosted LLM, with no OpenAI/Groq/DeepSeek API key required. `ollama` is selectable as a provider in the CLI, the single-comparison web forms, and the batch flow. See [Using Ollama](#using-ollama-local-inference).
-2. **Batch clinical comparison in the web GUI** — upload many paper PDFs at once; the app auto-extracts each NCT ID, fetches the registration from ClinicalTrials.gov, runs every comparison with live progress, and lets you download all results as a single ZIP. See [Batch clinical comparison](#batch-clinical-comparison-web-gui).
+1. **Local inference via Ollama:** run comparisons entirely offline against a locally hosted LLM, with no OpenAI/Groq/DeepSeek API key required. `ollama` is selectable as a provider in the CLI, the single-comparison web forms, and the batch flow. See [Using Ollama](#using-ollama-local-inference).
+2. **Text embedding via Ollama or TF-IDF:** create embeddings with no OpenAI API key required, automatically using Ollama or TF-IDF depending on available resources.
+2. **Batch clinical comparison in the web GUI:** upload many paper PDFs at once; the app auto-extracts each NCT ID, fetches the registration from ClinicalTrials.gov, runs every comparison with live progress, and lets you download all results as a single ZIP. See [Batch clinical comparison](#batch-clinical-comparison-web-gui).
 
 > These features were first prototyped in a separate draft repo (`regcheck-0.2.0-beta`), where batch processing was a standalone CLI script (`batch_clinical.py`). In this repo the batch feature is integrated into the web GUI as FastAPI routes with live progress tracking, and Ollama support is wired through the shared comparison service so it works across the CLI and web flows alike.
 
