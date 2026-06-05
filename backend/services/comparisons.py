@@ -25,9 +25,11 @@ from .documents import (
 from .dimensions import default_dimensions_for
 from .embeddings import (
     EmbeddingCorpus,
+    _openai_key_available,
     build_corpus,
     get_embedding,
     retrieve_relevant_chunks,
+    tfidf_embed_query,
 )
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
 from .trials import extract_nct_id, extract_nested_trial
@@ -1313,8 +1315,6 @@ def run_comparison(
     prereg_top_k = top_k if top_k is not None else _compute_top_k(len(prereg_corpus.segments))
     paper_top_k = top_k if top_k is not None else _compute_top_k(len(paper_corpus.segments))
 
-    query_embedding = get_embedding(augmented_query, model=embedding_model)
-
     candidate_factor = 3
     prereg_candidate_k = min(
         len(prereg_corpus.segments), max(prereg_top_k * candidate_factor, prereg_top_k + 5)
@@ -1323,12 +1323,23 @@ def run_comparison(
         len(paper_corpus.segments), max(paper_top_k * candidate_factor, paper_top_k + 5)
     )
 
-    prereg_candidates = retrieve_relevant_chunks(
-        query_embedding, prereg_corpus, top_k=prereg_candidate_k
-    )
-    paper_candidates = retrieve_relevant_chunks(
-        query_embedding, paper_corpus, top_k=paper_candidate_k
-    )
+    if _openai_key_available():
+        query_embedding = get_embedding(augmented_query, model=embedding_model)
+        prereg_candidates = retrieve_relevant_chunks(
+            query_embedding, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            query_embedding, paper_corpus, top_k=paper_candidate_k
+        )
+    else:
+        prereg_query_emb = tfidf_embed_query(augmented_query, prereg_corpus.vectorizer)
+        paper_query_emb = tfidf_embed_query(augmented_query, paper_corpus.vectorizer)
+        prereg_candidates = retrieve_relevant_chunks(
+            prereg_query_emb, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            paper_query_emb, paper_corpus, top_k=paper_candidate_k
+        )
 
     prereg_top_rows = prereg_candidates[:prereg_top_k]
     paper_top_rows = paper_candidates[:paper_top_k]
