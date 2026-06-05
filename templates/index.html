@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
   <head>
-    {% set static_version = '20260605-dark' %}
+    {% set static_version = '20260605-blue' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {% include '_partials/head_assets.html' %}
@@ -19,7 +19,7 @@
 
   </head>
   {% set nav_active = 'home' %}
-  <body class="d-flex text-center text-bg-dark page-shell home-page">
+  <body class="d-flex text-center text-bg-dark page-shell">
     <svg xmlns="http://www.w3.org/2000/svg" class="d-none">
       <symbol id="check2" viewBox="0 0 16 16">
         <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
@@ -43,53 +43,15 @@
   </header>
   {% include '_partials/mobile_notice.html' %}
 
-  <main class="home-main px-3">
-    <section class="home-hero" aria-labelledby="home-title">
-      <div>
-        <p class="home-kicker">Registration-paper comparison</p>
-        <h1 class="home-title" id="home-title">Find reported deviations faster.</h1>
-        <p class="home-lede">Run a structured comparison between a preregistration, protocol, or trial record and the final paper.</p>
-        <div class="home-actions">
-          <button class="btn btn-primary" type="button" id="try-now-btn">Start a report</button>
-          <a class="btn btn-secondary" href="{{ url_for('demo') }}">View demo</a>
-        </div>
-      </div>
-      <div class="home-preview" aria-label="Report preview">
-        <div class="home-preview__header">
-          <p class="home-preview__title">Report preview</p>
-          <span class="home-preview__status">Ready</span>
-        </div>
-        <div class="home-preview__row">
-          <strong>Sample size</strong>
-          <span>Planned and reported counts align.</span>
-          <span class="home-preview__pill home-preview__pill--ok">No deviation</span>
-        </div>
-        <div class="home-preview__row">
-          <strong>Exclusions</strong>
-          <span>Paper adds a latency criterion not found in the registration.</span>
-          <span class="home-preview__pill home-preview__pill--flag">Deviation</span>
-        </div>
-        <div class="home-preview__row">
-          <strong>Models</strong>
-          <span>Evidence chunks are linked back to the source text.</span>
-          <span class="home-preview__pill home-preview__pill--ok">Traceable</span>
-        </div>
-      </div>
-    </section>
-    <section class="home-options" aria-label="Report paths">
-      <article class="home-option">
-        <h3>Preregistration</h3>
-        <p>Upload a registration and the matching paper.</p>
-      </article>
-      <article class="home-option">
-        <h3>Clinical trial</h3>
-        <p>Use a ClinicalTrials.gov ID with the final paper.</p>
-      </article>
-      <article class="home-option">
-        <h3>Custom dimensions</h3>
-        <p>Edit the comparison dimensions before the run.</p>
-      </article>
-    </section>
+  <main class="px-3">
+    <img class="body-logo" src="{{ url_for('static', path='assets/logo_unibe.png') }}?v={{ static_version }}" alt="University of Bern logo">
+    <h2>Compare study plans with final papers.</h2>
+    <p class="lead">RegCheck uses NLP and generative LLMs to extract and compare text from registrations and papers.<br>This helps researchers to quickly identify if and how executed studies deviated from the initial plan.</p>
+    <p class="lead">
+      <button class="btn btn-primary" type="button" id="try-now-btn">
+        Try it now
+      </button>
+    </p>
   </main>
 
   {% include '_partials/footer.html' %}
