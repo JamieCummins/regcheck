@@ -71,6 +71,10 @@ def _paper_file():
     return ("paper.pdf", b"%PDF-1.4\npaper", "application/pdf")
 
 
+def _paper_txt_file():
+    return ("paper.txt", b"paper text", "text/plain")
+
+
 def _registration_file():
     return ("registration.pdf", b"%PDF-1.4\nregistration", "application/pdf")
 
@@ -244,6 +248,24 @@ def test_create_file_comparison_queues_general_defaults(tmp_path, monkeypatch):
     assert job["append_previous_output"] is True
 
 
+def test_create_file_comparison_accepts_txt_paper(tmp_path, monkeypatch):
+    client, redis = _make_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/v1/comparisons",
+        files=[
+            ("paper", _paper_txt_file()),
+            ("registration_file", _registration_file()),
+        ],
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 202
+    job = _queued_job(redis)
+    assert job["comparison_type"] == "general_preregistration"
+    assert job["paper_ext"] == ".txt"
+
+
 def test_create_comparison_uses_supplied_dimensions(tmp_path, monkeypatch):
     client, redis = _make_client(tmp_path, monkeypatch)
     dimensions = [
@@ -266,6 +288,72 @@ def test_create_comparison_uses_supplied_dimensions(tmp_path, monkeypatch):
     job = _queued_job(redis)
     assert job["selected_dimensions"] == dimensions
     assert job["append_previous_output"] is False
+
+
+def test_create_comparison_accepts_json_text_inputs(tmp_path, monkeypatch):
+    client, redis = _make_client(tmp_path, monkeypatch)
+    dimensions = [
+        {"dimension": "Primary Outcome(s)", "definition": "Primary endpoint definition."},
+    ]
+
+    response = client.post(
+        "/api/v1/comparisons",
+        json={
+            "registration_text": "registered plan",
+            "paper_text": "paper text",
+            "dimensions": dimensions,
+            "append_previous_output": False,
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status_url"] == f"/api/v1/comparisons/{payload['task_id']}"
+
+    job = _queued_job(redis)
+    assert job["comparison_type"] == "general_preregistration"
+    assert job["paper_ext"] == ".txt"
+    assert job["prereg_ext"] == ".txt"
+    assert job["selected_dimensions"] == dimensions
+    assert job["append_previous_output"] is False
+
+
+def test_create_text_comparison_accepts_clinical_registration_id(tmp_path, monkeypatch):
+    client, redis = _make_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/v1/comparisons/text",
+        json={
+            "registration_id": "https://clinicaltrials.gov/study/NCT01234567",
+            "paper_text": "paper text",
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 202
+    job = _queued_job(redis)
+    assert job["comparison_type"] == "clinical_trials"
+    assert job["registration_id"] == "NCT01234567"
+    assert job["paper_ext"] == ".txt"
+    assert job["selected_dimensions"] == default_dimensions_for("clinical_trials")
+
+
+def test_create_text_comparison_rejects_ambiguous_registration_input(tmp_path, monkeypatch):
+    client, _redis = _make_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/v1/comparisons/text",
+        json={
+            "registration_id": "NCT01234567",
+            "registration_text": "registered plan",
+            "paper_text": "paper text",
+        },
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "AMBIGUOUS_REGISTRATION_INPUT"
 
 
 def test_create_comparison_rejects_invalid_dimensions(tmp_path, monkeypatch):
