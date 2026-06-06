@@ -168,7 +168,7 @@ def _parse_dimensions(dimensions_data: str) -> list[dict[str, str]]:
 
 def _normalize_parser_choice(parser_choice: str) -> str:
     normalized = (parser_choice or "").strip().lower()
-    if normalized not in {"grobid", "dpt2"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf"}:
         raise HTTPException(status_code=400, detail="Unsupported parser choice")
     return normalized
 
