@@ -93,13 +93,15 @@ Then open http://localhost:8000 for the UI. FastAPI routes:
 ## Server-to-server API
 Set `REGCHECK_API_TOKEN` and pass it as a bearer token or `X-API-Key`.
 The multipart endpoint accepts `.txt`, `.docx`, and `.pdf` paper uploads.
+For PDF uploads, `parser_choice` can be `grobid`, `dpt2`, or `pymupdf`.
 
 Multipart upload:
 ```bash
 curl -X POST "$REGCHECK_URL/api/v1/comparisons" \
   -H "Authorization: Bearer $REGCHECK_API_TOKEN" \
   -F "registration_file=@/path/to/preregistration.txt" \
-  -F "paper=@/path/to/paper.txt"
+  -F "paper=@/path/to/paper.txt" \
+  -F "parser_choice=pymupdf"
 ```
 
 Direct text submission:

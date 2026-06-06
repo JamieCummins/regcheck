@@ -290,6 +290,32 @@ def test_create_comparison_uses_supplied_dimensions(tmp_path, monkeypatch):
     assert job["append_previous_output"] is False
 
 
+def test_create_comparison_accepts_pymupdf_parser_and_ethics_dimensions(tmp_path, monkeypatch):
+    client, redis = _make_client(tmp_path, monkeypatch)
+    dimensions = [
+        {"dimension": "Ethical approval: Committee", "definition": "Ethics body name."},
+        {"dimension": "Ethical approval: Number", "definition": "Ethics approval identifier."},
+        {"dimension": "Ethics approval: Date", "definition": "Ethics approval date."},
+    ]
+
+    response = client.post(
+        "/api/v1/comparisons",
+        data={
+            "registration_id": "NCT01234567",
+            "dimensions": json.dumps(dimensions),
+            "parser_choice": "pymupdf",
+        },
+        files={"paper": _paper_file()},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 202
+    job = _queued_job(redis)
+    assert job["comparison_type"] == "clinical_trials"
+    assert job["parser_choice"] == "pymupdf"
+    assert job["selected_dimensions"] == dimensions
+
+
 def test_create_comparison_accepts_json_text_inputs(tmp_path, monkeypatch):
     client, redis = _make_client(tmp_path, monkeypatch)
     dimensions = [

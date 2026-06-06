@@ -110,6 +110,20 @@ async def test_extract_pdf_text_grobid_error_then_dpt_then_pymupdf(tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_extract_pdf_text_pymupdf_primary(tmp_path):
+    pdf_path = tmp_path / "text-primary.pdf"
+    _make_text_pdf(str(pdf_path), "hello primary pymupdf")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="pymupdf",
+    )
+
+    assert "hello primary pymupdf" in extracted
+    assert used == "pymupdf"
+
+
+@pytest.mark.asyncio
 async def test_extract_pdf_text_dpt2_mode_falls_back_to_pymupdf(tmp_path, monkeypatch):
     pdf_path = tmp_path / "text2.pdf"
     _make_text_pdf(str(pdf_path), "hello dpt mode")

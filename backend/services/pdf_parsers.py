@@ -155,6 +155,14 @@ async def _run_fallback_chain(
     raise ValueError("Fallback parsing failed: " + "; ".join(errors))
 
 
+def _extract_pymupdf_text(filename: str) -> str:
+    if fitz is None:  # pragma: no cover - optional dependency
+        raise RuntimeError("PyMuPDF is not installed")
+    from .documents import extract_text_from_pdf
+
+    return extract_text_from_pdf(filename)
+
+
 async def pdf2grobid(
     filename: str,
     grobid_url: str | None = None,
@@ -255,10 +263,25 @@ async def extract_pdf_text(
     Returns (extracted_text, used_parser_label).
     """
     normalized = (parser_choice or "grobid").strip().lower()
-    if normalized not in {"grobid", "dpt2"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
     fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
+
+    if normalized == "pymupdf":
+        try:
+            extracted = _extract_pymupdf_text(filename)
+            if not _has_usable_text(extracted):
+                raise ValueError("Parsed PDF but extracted no usable text (PyMuPDF).")
+            return extracted, "pymupdf"
+        except Exception as exc:
+            if fallback_chain:
+                logger.warning(
+                    "PyMuPDF parsing failed; attempting fallbacks",
+                    extra={"pdf_path": filename, "error": str(exc)},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise
 
     if normalized == "dpt2":
         parser_callable = dpt_parser or pdf2dpt
