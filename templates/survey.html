@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260605-blue' %}
+    {% set static_version = '20260610-dim6' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -12,7 +12,7 @@
     <title>Quick Survey — RegCheck</title>
     <style>
         .survey-page {
-            background: #0f1118;
+            background: #0a0c11;
         }
 
         .survey-main {
@@ -24,8 +24,8 @@
         }
 
         .survey-card {
-            background: #1f2432;
-            border: 1px solid rgba(222, 230, 255, 0.14);
+            background: #141823;
+            border: 1px solid rgba(190, 200, 230, 0.10);
             border-radius: 0.5rem;
             box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
             padding: clamp(1.4rem, 1.6vw + 0.8rem, 2.2rem);
@@ -60,18 +60,18 @@
         .survey-title {
             font-size: clamp(1.65rem, 1vw + 1.35rem, 2rem);
             margin: 0;
-            color: #f4f6ff;
+            color: #eef1fb;
             letter-spacing: 0;
         }
 
         .survey-lede {
-            color: #aeb4cf;
+            color: #9aa2bd;
             margin: 0.1rem 0 0;
             line-height: 1.5;
         }
 
         .survey-page .text-muted {
-            color: #aeb4cf !important;
+            color: #9aa2bd !important;
         }
 
         .survey-steps {
@@ -92,7 +92,7 @@
         }
 
         .question-progress {
-            color: #aeb4cf;
+            color: #9aa2bd;
             font-size: 0.9rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -110,7 +110,7 @@
             font-weight: 700;
             letter-spacing: 0.01em;
             margin: 0;
-            color: #f4f6ff;
+            color: #eef1fb;
         }
 
         .survey-control {
@@ -122,9 +122,9 @@
         .survey-input,
         .survey-select,
         .survey-textarea {
-            background: #141722;
-            border: 1px solid rgba(222, 230, 255, 0.14);
-            color: #f4f6ff;
+            background: #11141c;
+            border: 1px solid rgba(190, 200, 230, 0.10);
+            color: #eef1fb;
             border-radius: 0.5rem;
             padding: 0.85rem 1rem;
             font-size: 0.95rem;
@@ -144,13 +144,13 @@
             background-position: right 0.75rem center;
             background-size: 0.6rem;
             cursor: pointer;
-            color: #f4f6ff;
-            background-color: #141722;
+            color: #eef1fb;
+            background-color: #11141c;
         }
 
         .survey-select option {
-            color: #f4f6ff;
-            background-color: #171a24;
+            color: #eef1fb;
+            background-color: #171b26;
         }
 
         .survey-input::placeholder,
@@ -161,10 +161,10 @@
         .survey-input:focus,
         .survey-select:focus,
         .survey-textarea:focus {
-            border-color: rgba(122, 162, 255, 0.68);
-            box-shadow: 0 0 0 0.18rem rgba(122, 162, 255, 0.2);
+            border-color: rgba(47, 116, 217, 0.68);
+            box-shadow: 0 0 0 0.18rem rgba(47, 116, 217, 0.2);
             outline: none;
-            background: #141722;
+            background: #11141c;
         }
 
         .survey-textarea {
@@ -190,7 +190,7 @@
         .link-button {
             background: transparent;
             border: none;
-            color: #7aa2ff;
+            color: #2f74d9;
             font-weight: 700;
             letter-spacing: 0.02em;
             cursor: pointer;
@@ -199,7 +199,7 @@
 
         .link-button:focus,
         .link-button:hover {
-            color: #9bb7ff;
+            color: #4c8ce8;
             text-decoration: underline;
             outline: none;
         }
@@ -210,38 +210,38 @@
             gap: 0.45rem;
             padding: 0.5rem 0.85rem;
             border-radius: 999px;
-            color: #9bb7ff;
-            background: rgba(122, 162, 255, 0.18);
+            color: #4c8ce8;
+            background: rgba(47, 116, 217, 0.18);
             border: 1px solid rgba(155, 183, 255, 0.28);
             font-size: 0.9rem;
             align-self: flex-start;
         }
 
         .survey-page .pulse-pill.text-success {
-            color: #9bb7ff !important;
+            color: #4c8ce8 !important;
         }
 
         .survey-page .pulse-pill.text-danger {
-            color: #ffadb2 !important;
+            color: #ef8076 !important;
         }
 
         .pill-dot {
             width: 0.65rem;
             height: 0.65rem;
-            background: #7aa2ff;
+            background: #2f74d9;
             border-radius: 50%;
-            box-shadow: 0 0 0 0 rgba(122, 162, 255, 0.6);
+            box-shadow: 0 0 0 0 rgba(47, 116, 217, 0.6);
             animation: pulse 1.8s infinite;
         }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(122, 162, 255, 0.55); }
-            70% { box-shadow: 0 0 0 14px rgba(122, 162, 255, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(122, 162, 255, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0.55); }
+            70% { box-shadow: 0 0 0 14px rgba(47, 116, 217, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0); }
         }
 
         .progress-note {
-            color: #aeb4cf;
+            color: #9aa2bd;
             font-size: 0.95rem;
         }
 
@@ -251,9 +251,9 @@
             justify-content: center;
             min-height: 2.7rem;
             padding: 0.7rem 1.1rem;
-            color: #081312;
-            background: #7aa2ff;
-            border: 1px solid #7aa2ff;
+            color: #ffffff;
+            background: #2f74d9;
+            border: 1px solid #2f74d9;
             border-radius: 0.5rem;
             font-weight: 700;
             text-decoration: none;
@@ -261,9 +261,9 @@
 
         .result-link:hover,
         .result-link:focus {
-            color: #081312;
-            background: #9bb7ff;
-            border-color: #9bb7ff;
+            color: #ffffff;
+            background: #4c8ce8;
+            border-color: #4c8ce8;
             text-decoration: none;
         }
     </style>

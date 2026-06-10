@@ -17,6 +17,7 @@
 
     const state = {
         taskId: app.dataset.taskId || "",
+        demoSrc: app.dataset.demoSrc || "",
         items: [],
         manifest: null,
         manifestUnavailable: false,
@@ -29,12 +30,14 @@
         evidenceLimit: loadEvidenceLimit(),
         renderDataCache: new Map(),
         lastWorkflowStatus: null,
+        logSeen: "",
         pollHandle: null,
     };
 
     const els = {
         list: document.getElementById("dimension-list"),
         count: document.getElementById("dimension-count"),
+        railSummary: document.getElementById("rail-summary"),
         detail: document.getElementById("dimension-detail"),
         empty: document.getElementById("report-empty-state"),
         viewer: document.getElementById("source-viewer"),
@@ -46,12 +49,19 @@
         nextPage: document.getElementById("source-next-page"),
         pageLabel: document.getElementById("source-page-label"),
         closeViewer: document.getElementById("source-close-btn"),
-        logLine: document.getElementById("workflow-log-line"),
-        spinner: document.getElementById("workflow-spinner"),
-        statusNote: document.getElementById("processing-status-note"),
+        statusPill: document.getElementById("report-status-pill"),
+        statusDot: document.getElementById("report-status-dot"),
+        statusText: document.getElementById("report-status-text"),
         copyLink: document.getElementById("copy-report-link-btn"),
+        copyLinkLabel: document.getElementById("copy-report-link-label"),
         csv: document.getElementById("download-report-csv-btn"),
+        toast: document.getElementById("report-toast"),
+        log: document.getElementById("report-log"),
+        logList: document.getElementById("report-log-list"),
+        logProgress: document.getElementById("report-log-progress"),
     };
+
+    const READY_SOURCE_HTML = els.sourceCanvas ? els.sourceCanvas.innerHTML : "";
 
     function escapeHtml(value) {
         return (value === null || value === undefined ? "" : String(value))
@@ -64,9 +74,9 @@
 
     function judgementInfo(value) {
         const normalized = (value || "").toString().trim().toLowerCase();
-        if (normalized === "yes") return { label: "Deviation", cls: "judgement-chip--yes" };
-        if (normalized === "no") return { label: "No Deviation", cls: "judgement-chip--no" };
-        return { label: "Missing", cls: "judgement-chip--missing" };
+        if (normalized === "yes") return { label: "Deviation", tone: "flag" };
+        if (normalized === "no") return { label: "No deviation", tone: "ok" };
+        return { label: "Missing", tone: "warn" };
     }
 
     function parseQuotes(quotes) {
@@ -123,45 +133,47 @@
         }
     }
 
-    function appendWorkflowLog(statusText) {
-        if (!statusText || statusText === state.lastWorkflowStatus) return;
-        state.lastWorkflowStatus = statusText;
-        if (!els.logLine) return;
-        const timestamp = new Date().toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-        });
-        els.logLine.textContent = `[${timestamp}] ${statusText}`;
-    }
-
-    function updateStatus(stateValue) {
-        if (els.spinner) {
-            if (stateValue === "SUCCESS" || stateValue === "FAILURE") {
-                els.spinner.classList.add("d-none");
-            } else {
-                els.spinner.classList.remove("d-none");
-            }
+    function setStatus(stateValue, detailText, counts) {
+        if (!els.statusPill) return;
+        const running = stateValue !== "SUCCESS" && stateValue !== "FAILURE";
+        els.statusPill.classList.toggle("is-running", running);
+        els.statusPill.classList.toggle("is-done", stateValue === "SUCCESS");
+        els.statusPill.classList.toggle("is-error", stateValue === "FAILURE");
+        const hasCounts = counts && Number.isFinite(counts.processed) && Number.isFinite(counts.total) && counts.total > 0;
+        if (els.statusText) {
+            els.statusText.textContent =
+                stateValue === "SUCCESS" ? "Complete" :
+                stateValue === "FAILURE" ? "Processing failed" :
+                hasCounts ? `Processing · ${counts.processed}/${counts.total}` : "Processing";
         }
-        if (els.statusNote) {
-            els.statusNote.textContent = stateValue === "FAILURE" ? "Processing failed" : "";
+        if (detailText && detailText !== state.lastWorkflowStatus) {
+            state.lastWorkflowStatus = detailText;
+            els.statusPill.title = detailText;
         }
     }
 
-    async function loadManifest() {
-        try {
-            const response = await fetch(`/report/${state.taskId}/manifest`);
-            if (!response.ok) {
-                state.manifest = null;
-                state.manifestUnavailable = true;
-                return;
-            }
-            state.manifest = await response.json();
-            state.manifestUnavailable = false;
-            renderSourceTabs();
-        } catch (_error) {
-            state.manifest = state.manifest || null;
+    function appendLog(text, counts) {
+        if (els.logProgress && counts && Number.isFinite(counts.processed) && Number.isFinite(counts.total) && counts.total > 0) {
+            els.logProgress.textContent = `${counts.processed}/${counts.total} dimensions`;
         }
+        if (!text || !els.logList || text === state.logSeen) return;
+        state.logSeen = text;
+        const li = document.createElement("li");
+        const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        li.innerHTML = `<time>${escapeHtml(time)}</time><span>${escapeHtml(text)}</span>`;
+        els.logList.appendChild(li);
+        els.logList.scrollTop = els.logList.scrollHeight;
+        if (els.log) els.log.classList.remove("d-none");
+    }
+
+    function showToast(message) {
+        if (!els.toast) return;
+        els.toast.textContent = message;
+        els.toast.classList.add("is-visible");
+        window.clearTimeout(showToast._handle);
+        showToast._handle = window.setTimeout(() => {
+            els.toast.classList.remove("is-visible");
+        }, 1800);
     }
 
     function render() {
@@ -173,9 +185,38 @@
         }
     }
 
+    function verdictCounts() {
+        const counts = { flag: 0, ok: 0, warn: 0 };
+        state.items.forEach((item) => {
+            counts[judgementInfo(item.deviation_judgement).tone] += 1;
+        });
+        return counts;
+    }
+
+    function renderRailSummary() {
+        if (!els.railSummary) return;
+        if (!state.items.length) {
+            els.railSummary.innerHTML = "";
+            return;
+        }
+        const counts = verdictCounts();
+        const segments = [
+            { tone: "flag", value: counts.flag, label: "deviation" },
+            { tone: "warn", value: counts.warn, label: "missing" },
+            { tone: "ok", value: counts.ok, label: "clean" },
+        ].filter((segment) => segment.value > 0);
+        els.railSummary.innerHTML = segments.map((segment) => `
+            <span class="rail-summary__item rail-summary__item--${segment.tone}">
+                <span class="verdict-dot verdict-dot--${segment.tone}"></span>
+                <strong>${segment.value}</strong> ${escapeHtml(segment.label)}
+            </span>
+        `).join("");
+    }
+
     function renderDimensionList() {
         if (!els.list) return;
         els.count.textContent = String(state.items.length);
+        renderRailSummary();
         els.list.innerHTML = "";
         state.items.forEach((item, index) => {
             const info = judgementInfo(item.deviation_judgement);
@@ -185,16 +226,21 @@
             button.type = "button";
             button.className = `dimension-card ${index === state.activeIndex ? "is-active" : ""}`;
             button.innerHTML = `
-                <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
+                <span class="dimension-card__top">
+                    <span class="verdict-dot verdict-dot--${info.tone}" title="${escapeHtml(info.label)}"></span>
+                    <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
+                </span>
                 <span class="dimension-card__meta">
-                    <span class="judgement-chip ${info.cls}">${info.label}</span>
-                    <span>${regCount + paperCount} chunks</span>
+                    <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
+                    <span class="dimension-card__count">${regCount + paperCount} quotes</span>
                 </span>
             `;
             button.addEventListener("click", () => {
                 state.activeIndex = index;
                 state.activeEvidence = null;
                 render();
+                const detail = document.querySelector(".report-detail");
+                if (detail) detail.scrollTop = 0;
             });
             els.list.appendChild(button);
         });
@@ -212,21 +258,24 @@
         const item = state.items[Math.min(state.activeIndex, state.items.length - 1)] || {};
         const info = judgementInfo(item.deviation_judgement);
         els.detail.innerHTML = `
-            <div class="detail-meta">
-                <span class="judgement-chip ${info.cls}">${info.label}</span>
+            <div class="detail-head">
+                <p class="detail-eyebrow">Dimension ${state.activeIndex + 1} of ${state.items.length}</p>
+                <h2>${escapeHtml(item.dimension || "Dimension")}</h2>
             </div>
-            <h2>${escapeHtml(item.dimension || "Dimension")}</h2>
-            <div class="deviation-box">
-                <p class="section-title">Judgement</p>
-                <p>${escapeHtml(item.deviation_information || "No deviation information found.")}</p>
+            <div class="verdict-banner verdict-banner--${info.tone}">
+                <div class="verdict-banner__head">
+                    <span class="verdict-dot verdict-dot--${info.tone}"></span>
+                    <span class="verdict-banner__label">${info.label}</span>
+                </div>
+                <p class="verdict-banner__body">${escapeHtml(item.deviation_information || "No deviation information found.")}</p>
             </div>
             <div class="summary-grid">
                 <div class="summary-box">
-                    <p class="section-title">Registration Summary</p>
+                    <p class="section-title">Registration summary</p>
                     <p>${escapeHtml(item.registration_content_summary || "No summary available.")}</p>
                 </div>
                 <div class="summary-box">
-                    <p class="section-title">Paper Summary</p>
+                    <p class="section-title">Paper summary</p>
                     <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
                 </div>
             </div>
@@ -234,7 +283,7 @@
                 <div class="evidence-section__header">
                     <div>
                         <p class="section-title">Evidence</p>
-                        <p class="evidence-limit-note">Showing ${escapeHtml(evidenceLimitLabel(state.evidenceLimit).toLowerCase())} by similarity. CSV export includes all chunks.</p>
+                        <p class="evidence-limit-note">Showing ${escapeHtml(evidenceLimitLabel(state.evidenceLimit).toLowerCase())} by similarity. Click a quote to view it in context. CSV export includes all chunks.</p>
                     </div>
                     <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
                         ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
@@ -245,12 +294,12 @@
                     </div>
                 </div>
                 <div class="evidence-grid">
-                    <div>
-                        <p class="section-title">Registration</p>
+                    <div class="evidence-column">
+                        <p class="evidence-column__title evidence-column__title--reg">Registration</p>
                         <div class="evidence-list" id="registration-evidence-list"></div>
                     </div>
-                    <div>
-                        <p class="section-title">Paper</p>
+                    <div class="evidence-column">
+                        <p class="evidence-column__title evidence-column__title--paper">Paper</p>
                         <div class="evidence-list" id="paper-evidence-list"></div>
                     </div>
                 </div>
@@ -275,21 +324,27 @@
         container.innerHTML = "";
         const list = sortedQuotes(quotes, state.evidenceLimit);
         if (!list.length) {
-            container.innerHTML = `<div class="source-placeholder">No evidence found</div>`;
+            container.innerHTML = `<div class="evidence-empty">No evidence found</div>`;
             return;
         }
         list.forEach((quote) => {
             const chunk = chunkForQuote(quote);
             const isActive = state.activeEvidence && state.activeEvidence.quote.id === quote.id;
+            const hasScore = quote.score && quote.score > 0;
+            const pct = hasScore ? Math.max(6, Math.min(100, Math.round(quote.score * 100))) : 0;
             const button = document.createElement("button");
             button.type = "button";
-            button.className = `evidence-card ${isActive ? "is-active" : ""}`;
+            button.className = `evidence-card evidence-card--${section} ${isActive ? "is-active" : ""}`;
             button.innerHTML = `
                 <span class="evidence-card__head">
-                    <span>${escapeHtml(quote.id || "Evidence")}</span>
-                    <span class="evidence-card__score">${quote.score ? quote.score.toFixed(3) : ""}</span>
+                    <span class="evidence-card__id">${escapeHtml(quote.id || "Evidence")}</span>
+                    ${hasScore ? `
+                        <span class="evidence-card__strength" title="Similarity ${quote.score.toFixed(3)}" aria-label="Similarity ${quote.score.toFixed(3)}">
+                            <span class="evidence-card__strength-bar" style="width:${pct}%"></span>
+                        </span>` : ""}
                 </span>
                 <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
+                <span class="evidence-card__cue">View in context &rsaquo;</span>
             `;
             button.addEventListener("click", () => openEvidence(quote));
             container.appendChild(button);
@@ -344,7 +399,7 @@
     }
 
     function renderUnavailableSourceState() {
-        els.sourceTitle.textContent = "Sources Unavailable";
+        els.sourceTitle.textContent = "Sources unavailable";
         const status = state.evidenceStatus ? `<p>Status: ${escapeHtml(state.evidenceStatus)}</p>` : "";
         const error = state.evidenceError ? `<p>${escapeHtml(state.evidenceError)}</p>` : "";
         const fallback = status || error
@@ -363,6 +418,15 @@
         els.rawLink.classList.add("d-none");
     }
 
+    function showReadySourceState() {
+        els.sourceTitle.textContent = "Context";
+        els.sourceCanvas.innerHTML = READY_SOURCE_HTML;
+        els.pageLabel.textContent = "-";
+        els.prevPage.disabled = true;
+        els.nextPage.disabled = true;
+        els.rawLink.classList.add("d-none");
+    }
+
     async function renderSourceViewer() {
         if (!els.sourceCanvas || !els.sourceTitle) return;
         if (state.manifestUnavailable) {
@@ -372,12 +436,7 @@
         const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
         const source = sources[state.currentSourceId] || null;
         if (!source) {
-            els.sourceTitle.textContent = "No Source Selected";
-            els.sourceCanvas.innerHTML = `<div class="source-placeholder">No source selected</div>`;
-            els.pageLabel.textContent = "-";
-            els.rawLink.classList.add("d-none");
-            els.prevPage.disabled = true;
-            els.nextPage.disabled = true;
+            showReadySourceState();
             return;
         }
         els.sourceTitle.textContent = source.label || source.id;
@@ -427,6 +486,13 @@
                 ${highlights}
             </div>
         `;
+        const firstHighlight = els.sourceCanvas.querySelector(".pdf-highlight");
+        if (firstHighlight) {
+            firstHighlight.classList.add("is-active");
+            window.requestAnimationFrame(() => {
+                firstHighlight.scrollIntoView({ block: "center", behavior: "smooth" });
+            });
+        }
     }
 
     async function renderTextSource(source, chunk) {
@@ -441,7 +507,11 @@
         els.nextPage.disabled = true;
         els.sourceCanvas.innerHTML = `<div class="source-text">${highlightText(text, start, end)}</div>`;
         const mark = els.sourceCanvas.querySelector("mark");
-        if (mark) mark.scrollIntoView({ block: "center" });
+        if (mark) {
+            window.requestAnimationFrame(() => {
+                mark.scrollIntoView({ block: "center", behavior: "smooth" });
+            });
+        }
     }
 
     async function getRenderData(sourceId) {
@@ -503,7 +573,7 @@
             ]);
         });
         const csvText = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-        const blob = new Blob(["\uFEFF", csvText], { type: "text/csv;charset=utf-8;" });
+        const blob = new Blob(["﻿", csvText], { type: "text/csv;charset=utf-8;" });
         const link = document.createElement("a");
         link.download = "regcheck-report.csv";
         link.href = window.URL.createObjectURL(blob);
@@ -514,15 +584,49 @@
     }
 
     async function copyReportLink() {
+        let copied = false;
         try {
             await navigator.clipboard.writeText(window.location.href);
-            els.copyLink.textContent = "Copied";
+            copied = true;
         } catch (_error) {
-            els.copyLink.textContent = "Copy Failed";
+            try {
+                const temp = document.createElement("textarea");
+                temp.value = window.location.href;
+                temp.style.position = "fixed";
+                temp.style.opacity = "0";
+                document.body.appendChild(temp);
+                temp.select();
+                copied = document.execCommand("copy");
+                document.body.removeChild(temp);
+            } catch (_fallbackError) {
+                copied = false;
+            }
         }
+        if (els.copyLinkLabel) {
+            els.copyLinkLabel.textContent = copied ? "Copied" : "Copy failed";
+        }
+        if (els.copyLink) els.copyLink.classList.toggle("is-copied", copied);
+        showToast(copied ? "Report link copied to clipboard" : "Could not copy link");
         window.setTimeout(() => {
-            els.copyLink.textContent = "Copy link";
-        }, 1400);
+            if (els.copyLinkLabel) els.copyLinkLabel.textContent = "Share";
+            if (els.copyLink) els.copyLink.classList.remove("is-copied");
+        }, 1800);
+    }
+
+    async function loadManifest() {
+        try {
+            const response = await fetch(`/report/${state.taskId}/manifest`);
+            if (!response.ok) {
+                state.manifest = null;
+                state.manifestUnavailable = true;
+                return;
+            }
+            state.manifest = await response.json();
+            state.manifestUnavailable = false;
+            renderSourceTabs();
+        } catch (_error) {
+            state.manifest = state.manifest || null;
+        }
     }
 
     async function pollTaskStatus() {
@@ -531,8 +635,9 @@
             const data = await response.json();
             state.evidenceStatus = data.evidence_status || null;
             state.evidenceError = data.evidence_error || null;
-            appendWorkflowLog(data.status || data.state || "");
-            updateStatus(data.state);
+            const counts = { processed: data.processed_dimensions, total: data.total_dimensions };
+            setStatus(data.state, data.status || data.state || "", counts);
+            appendLog(data.status || "", counts);
             if (data.result && Array.isArray(data.result.items)) {
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
@@ -546,12 +651,35 @@
                 await loadManifest();
             }
             render();
+            if (data.state === "SUCCESS" && els.log) {
+                els.log.classList.add("d-none");
+            }
             if (data.state !== "SUCCESS" && data.state !== "FAILURE") {
                 state.pollHandle = window.setTimeout(pollTaskStatus, 3000);
             }
         } catch (_error) {
-            appendWorkflowLog("Failed to fetch report status");
-            updateStatus("FAILURE");
+            setStatus("FAILURE", "Failed to fetch report status");
+        }
+    }
+
+    async function loadDemo() {
+        try {
+            const response = await fetch(state.demoSrc);
+            if (!response.ok) throw new Error("demo fixture unavailable");
+            const data = await response.json();
+            state.items = Array.isArray(data.items) ? data.items : [];
+            state.manifest = data.manifest || null;
+            state.manifestUnavailable = !state.manifest;
+            if (data.render_data) {
+                Object.keys(data.render_data).forEach((id) => {
+                    state.renderDataCache.set(id, data.render_data[id]);
+                });
+            }
+            setStatus("SUCCESS", "Sample report");
+            if (els.statusText) els.statusText.textContent = "Sample report";
+            render();
+        } catch (_error) {
+            setStatus("FAILURE", "Could not load the sample report");
         }
     }
 
@@ -579,5 +707,9 @@
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
 
-    pollTaskStatus();
+    if (state.demoSrc) {
+        loadDemo();
+    } else {
+        pollTaskStatus();
+    }
 })();

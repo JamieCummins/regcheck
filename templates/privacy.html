@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260605-blue' %}
+    {% set static_version = '20260610-dim6' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -10,35 +10,70 @@
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
     <title>RegCheck Privacy Policy</title>
-    <link rel="canonical" href="https://getbootstrap.com/docs/5.3/examples/cover/">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
     <style>
-      header {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
+      .legal-main {
+        flex: 1;
+        width: min(820px, 100%);
+        margin: 0 auto;
+        padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem;
+        text-align: left;
       }
-
-      main {
-          flex-grow: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
+      .legal-doc h1 {
+        font-size: clamp(1.9rem, 3vw, 2.6rem);
+        margin: 0 0 0.6rem;
       }
+      .legal-meta {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.3rem 0.8rem;
+        border-radius: 999px;
+        background: var(--rc-surface-2);
+        border: 1px solid var(--rc-border);
+        color: var(--rc-muted);
+        font-size: 0.8rem;
+        margin: 0 0 1.6rem;
+      }
+      .legal-doc h2 {
+        font-size: 1.2rem;
+        margin: 2.2rem 0 0.7rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--rc-border);
+        color: var(--rc-text);
+      }
+      .legal-doc h3 {
+        font-size: 1rem;
+        margin: 1.4rem 0 0.4rem;
+        color: var(--rc-accent-strong);
+      }
+      .legal-doc p {
+        color: var(--rc-muted);
+        line-height: 1.7;
+        margin: 0 0 0.85rem;
+      }
+      .legal-doc strong { color: var(--rc-text); font-weight: 600; }
+      .legal-doc ul {
+        color: var(--rc-muted);
+        line-height: 1.7;
+        padding-left: 1.2rem;
+        margin: 0 0 1rem;
+      }
+      .legal-doc li { margin-bottom: 0.5rem; }
+      .legal-doc a { color: var(--rc-accent-strong); word-break: break-word; }
+      .legal-doc a:hover { color: var(--rc-accent); }
     </style>
 </head>
 {% set nav_active = '' %}
-<body class="d-flex text-center text-bg-dark page-shell">
+<body class="text-bg-dark page-shell">
   <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
       <header class="mb-auto">
           {% include '_partials/navbar.html' %}
       </header>
     {% include '_partials/mobile_notice.html' %}
 
-    <main class="px-3">
-      <div class="mx-auto text-start" style="max-width: 900px;">
+    <main class="legal-main">
+      <article class="legal-doc">
         <h1>RegCheck Privacy Policy</h1>
-        <p class="lead">Effective date: 22/01/2026</p>
+        <p class="legal-meta">Effective date: 22/01/2026</p>
         <p>This Privacy Policy explains how RegCheck (“RegCheck”, “we”, “us”) collects and processes personal data when you use our website and services (the “Service”).</p>
 
         <h2>1) Data controller and contact</h2>
@@ -145,7 +180,7 @@
 
         <h2>11) Changes to this policy</h2>
         <p>We may update this Policy from time to time. We will post the updated version and change the effective date above.</p>
-      </div>
+      </article>
     </main>
 
     {% include '_partials/footer.html' %}

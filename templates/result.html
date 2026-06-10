@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260605-blue' %}
+    {% set static_version = '20260610-dim6' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -15,20 +15,41 @@
     <div class="report-shell">
         <header class="report-header">
             {% include '_partials/navbar.html' %}
-            {% include '_partials/mobile_notice.html' %}
             <div class="report-topbar">
-                <div>
+                <div class="report-topbar__lead">
                     <h1 id="results-page-tagline">RegCheck Report</h1>
+                    <span class="report-status-pill" id="report-status-pill" aria-live="polite" title="">
+                        <span class="report-status-pill__dot" id="report-status-dot"></span>
+                        <span id="report-status-text">Processing</span>
+                    </span>
                 </div>
                 <div class="report-actions">
-                    <button type="button" class="report-action-btn report-action-btn--secondary" id="copy-report-link-btn">Copy link</button>
-                    <button type="button" class="report-action-btn report-action-btn--primary" id="download-report-csv-btn">Download CSV</button>
+                    <button type="button" class="report-action-btn report-action-btn--primary" id="copy-report-link-btn">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                        <span id="copy-report-link-label">Share</span>
+                    </button>
+                    <button type="button" class="report-action-btn report-action-btn--ghost" id="download-report-csv-btn">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <path d="M7 10l5 5 5-5"/>
+                            <path d="M12 15V3"/>
+                        </svg>
+                        <span>Export CSV</span>
+                    </button>
                 </div>
             </div>
-            <div class="report-status" aria-live="polite">
-                <span id="workflow-spinner" class="spinner-border spinner-border-sm text-info" role="status" aria-hidden="true"></span>
-                <span id="workflow-log-line" class="font-monospace"></span>
-                <span id="processing-status-note"></span>
+            <div id="report-log" class="report-log d-none" aria-live="polite">
+                <div class="report-log__head">
+                    <span class="report-log__title">
+                        <span class="report-log__spinner" aria-hidden="true"></span>
+                        Generating report
+                    </span>
+                    <span id="report-log-progress" class="report-log__progress"></span>
+                </div>
+                <ol id="report-log-list" class="report-log__list"></ol>
             </div>
         </header>
 
@@ -38,11 +59,15 @@
                     <span>Dimensions</span>
                     <span id="dimension-count" class="rail-count">0</span>
                 </div>
+                <div id="rail-summary" class="rail-summary"></div>
                 <div id="dimension-list" class="dimension-list"></div>
             </aside>
 
             <section class="report-detail" aria-label="Report detail">
-                <div id="report-empty-state" class="report-empty-state">Report loading</div>
+                <div id="report-empty-state" class="report-empty-state">
+                    <span class="report-empty-state__spinner" aria-hidden="true"></span>
+                    <p>Preparing your report&hellip;</p>
+                </div>
                 <article id="dimension-detail" class="dimension-detail d-none"></article>
             </section>
 
@@ -50,7 +75,7 @@
                 <div class="source-viewer__header">
                     <div>
                         <p class="source-viewer__eyebrow">Source</p>
-                        <h2 id="source-title">No Source Selected</h2>
+                        <h2 id="source-title">Context</h2>
                     </div>
                     <button type="button" class="source-viewer__close" id="source-close-btn" aria-label="Close source viewer">&times;</button>
                 </div>
@@ -59,16 +84,25 @@
                     <button type="button" class="source-page-btn" id="source-prev-page" aria-label="Previous page">&lsaquo;</button>
                     <span id="source-page-label">-</span>
                     <button type="button" class="source-page-btn" id="source-next-page" aria-label="Next page">&rsaquo;</button>
-                    <a id="source-raw-link" class="source-raw-link d-none" target="_blank" rel="noopener">Open Raw</a>
+                    <a id="source-raw-link" class="source-raw-link d-none" target="_blank" rel="noopener">Open raw</a>
                 </div>
                 <div id="source-canvas" class="source-canvas">
-                    <div class="source-placeholder">No source selected</div>
+                    <div class="source-placeholder source-placeholder--ready">
+                        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <path d="M14 2v6h6"/>
+                            <path d="M9 13h6M9 17h4"/>
+                        </svg>
+                        <p>Select a quote to see its context in the registration/paper.</p>
+                    </div>
                 </div>
             </aside>
         </main>
 
         {% include '_partials/footer.html' %}
     </div>
+
+    <div id="report-toast" class="report-toast" role="status" aria-live="polite"></div>
 
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
     <script src="{{ url_for('static', path='js/report.js') }}?v={{ static_version }}"></script>
