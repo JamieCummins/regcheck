@@ -1,0 +1,70 @@
+{
+  "items": [
+    {
+      "dimension": "Sample size",
+      "registration_content_quotes": "[PREREG_0001, relevance_score=0.94]\nWe will recruit 200 participants from Prolific, and data collection will stop once 200 complete responses are obtained.",
+      "registration_content_summary": "A fixed sample of 200 participants is planned via Prolific, with a stopping rule at 200 complete responses.",
+      "paper_content_quotes": "[PAPER_0001, relevance_score=0.93]\nA total of 243 participants were recruited via Prolific. After exclusions, 218 participants remained in the final sample.",
+      "paper_content_summary": "243 participants were recruited and 218 were retained for analysis after exclusions.",
+      "deviation_judgement": "yes",
+      "deviation_information": "The registration planned a fixed sample of 200 participants (PREREG_0001), but the paper recruited 243 and analysed 218 (PAPER_0001). The realised sample size deviates from the preregistered plan."
+    },
+    {
+      "dimension": "Hypotheses",
+      "registration_content_quotes": "[PREREG_0002, relevance_score=0.97]\nWe predict that participants under time pressure will make more deontological judgments than participants in the control condition.",
+      "registration_content_summary": "Directional prediction: time pressure increases deontological judgments relative to control.",
+      "paper_content_quotes": "[PAPER_0002, relevance_score=0.96]\nWe hypothesised that time pressure would increase deontological responding relative to the control condition.",
+      "paper_content_summary": "The same directional prediction is stated for deontological responding.",
+      "deviation_judgement": "no",
+      "deviation_information": "The directional hypothesis is consistent between the registration (PREREG_0002) and the paper (PAPER_0002). No deviation."
+    },
+    {
+      "dimension": "Manipulated variables",
+      "registration_content_quotes": "[PREREG_0005, relevance_score=0.90]\nTime pressure will be manipulated between subjects: participants in the experimental condition will have 8 seconds to respond to each dilemma, while control participants will have unlimited time.",
+      "registration_content_summary": "Time pressure manipulated between subjects (8 seconds vs. unlimited time).",
+      "paper_content_quotes": "[PAPER_0006, relevance_score=0.90]\nTime pressure was manipulated between participants; those in the time-pressure condition were given 8 seconds per dilemma, whereas control participants responded at their own pace.",
+      "paper_content_summary": "Between-subjects time-pressure manipulation (8 seconds vs. self-paced).",
+      "deviation_judgement": "no",
+      "deviation_information": "The manipulation (an 8-second limit, applied between subjects) is implemented as planned (PREREG_0005, PAPER_0006). No deviation."
+    },
+    {
+      "dimension": "Exclusion criteria",
+      "registration_content_quotes": "[PREREG_0003, relevance_score=0.91]\nWe will exclude participants who fail more than one of three attention checks.",
+      "registration_content_summary": "Only one exclusion rule is preregistered: failing more than one of three attention checks.",
+      "paper_content_quotes": "[PAPER_0003, relevance_score=0.90]\nParticipants who failed two or more of the three attention checks were excluded from analyses.\n\n[PAPER_0004, relevance_score=0.86]\nWe additionally excluded 7 participants for completing the study in under two minutes, a criterion that was not specified in our preregistration.",
+      "paper_content_summary": "Applies the attention-check rule, plus an additional exclusion for completion in under two minutes.",
+      "deviation_judgement": "yes",
+      "deviation_information": "Beyond the preregistered attention-check rule (PREREG_0003, PAPER_0003), the paper adds an unplanned exclusion for completing the study in under two minutes (PAPER_0004), which was not specified in the registration. This is a deviation."
+    },
+    {
+      "dimension": "Incomplete and missing data",
+      "registration_content_quotes": "",
+      "registration_content_summary": "Not described in the registration.",
+      "paper_content_quotes": "",
+      "paper_content_summary": "Not described in the paper.",
+      "deviation_judgement": "missing",
+      "deviation_information": "Neither the registration nor the paper describes how incomplete or missing data were handled, so no comparison could be made."
+    }
+  ],
+  "manifest": {
+    "sources": {
+      "registration": { "id": "registration", "label": "Preregistration", "kind": "text" },
+      "paper": { "id": "paper", "label": "Research paper", "kind": "text" }
+    },
+    "chunks": {
+      "PREREG_0001": { "id": "PREREG_0001", "source_id": "registration", "text": "We will recruit 200 participants from Prolific, and data collection will stop once 200 complete responses are obtained." },
+      "PREREG_0002": { "id": "PREREG_0002", "source_id": "registration", "text": "We predict that participants under time pressure will make more deontological judgments than participants in the control condition." },
+      "PREREG_0003": { "id": "PREREG_0003", "source_id": "registration", "text": "We will exclude participants who fail more than one of three attention checks." },
+      "PREREG_0005": { "id": "PREREG_0005", "source_id": "registration", "text": "Time pressure will be manipulated between subjects: participants in the experimental condition will have 8 seconds to respond to each dilemma, while control participants will have unlimited time." },
+      "PAPER_0001": { "id": "PAPER_0001", "source_id": "paper", "text": "A total of 243 participants were recruited via Prolific. After exclusions, 218 participants remained in the final sample." },
+      "PAPER_0002": { "id": "PAPER_0002", "source_id": "paper", "text": "We hypothesised that time pressure would increase deontological responding relative to the control condition." },
+      "PAPER_0003": { "id": "PAPER_0003", "source_id": "paper", "text": "Participants who failed two or more of the three attention checks were excluded from analyses." },
+      "PAPER_0004": { "id": "PAPER_0004", "source_id": "paper", "text": "We additionally excluded 7 participants for completing the study in under two minutes, a criterion that was not specified in our preregistration." },
+      "PAPER_0006": { "id": "PAPER_0006", "source_id": "paper", "text": "Time pressure was manipulated between participants; those in the time-pressure condition were given 8 seconds per dilemma, whereas control participants responded at their own pace." }
+    }
+  },
+  "render_data": {
+    "registration": { "text": "Preregistration — Time pressure and moral judgment\n\nSample size. We will recruit 200 participants from Prolific, and data collection will stop once 200 complete responses are obtained.\n\nHypotheses. We predict that participants under time pressure will make more deontological judgments than participants in the control condition.\n\nManipulated variables. Time pressure will be manipulated between subjects: participants in the experimental condition will have 8 seconds to respond to each dilemma, while control participants will have unlimited time.\n\nExclusion criteria. We will exclude participants who fail more than one of three attention checks.\n\nStatistical models. We will analyse the data using a 2 (time pressure: yes vs. no) x 2 (dilemma type) mixed ANOVA, with an alpha of .05." },
+    "paper": { "text": "Method\n\nParticipants. A total of 243 participants were recruited via Prolific. After exclusions, 218 participants remained in the final sample.\n\nHypotheses. We hypothesised that time pressure would increase deontological responding relative to the control condition.\n\nDesign and manipulation. Time pressure was manipulated between participants; those in the time-pressure condition were given 8 seconds per dilemma, whereas control participants responded at their own pace.\n\nExclusions. Participants who failed two or more of the three attention checks were excluded from analyses. We additionally excluded 7 participants for completing the study in under two minutes, a criterion that was not specified in our preregistration.\n\nAnalysis. Responses were analysed with a 2 (time pressure) x 2 (dilemma type) mixed ANOVA (alpha = .05). We also report an exploratory mediation analysis." }
+  }
+}

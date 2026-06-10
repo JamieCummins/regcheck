@@ -68,10 +68,11 @@ body {
 }
 
 .navbar .navbar-brand span {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: var(--rc-font-wordmark);
   font-size: 1.5rem;
-  letter-spacing: 0.05em;
-  color: #f5f7ff;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--rc-text);
 }
 
 .navbar .navbar-brand {

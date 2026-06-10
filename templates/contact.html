@@ -1,49 +1,88 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260605-blue' %}
+    {% set static_version = '20260610-dim6' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
+    <meta name="description" content="Contact the RegCheck team."/>
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
     <title>RegCheck Contact</title>
-    <link rel="canonical" href="https://getbootstrap.com/docs/5.3/examples/cover/">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
     <style>
-      header {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
+      .contact-main {
+        flex: 1;
+        width: min(640px, 100%);
+        margin: 0 auto;
+        padding: clamp(1.5rem, 5vh, 3.5rem) 1rem 2rem;
+        text-align: left;
       }
-
-      main {
-          flex-grow: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
+      .contact-card {
+        background: var(--rc-surface);
+        border: 1px solid var(--rc-border);
+        border-radius: var(--rc-radius-lg);
+        box-shadow: var(--rc-shadow-md);
+        padding: clamp(1.6rem, 4vw, 2.4rem);
+        position: relative;
+        overflow: hidden;
       }
-  </style>
-
+      .contact-card::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 3px;
+        background: var(--rc-gradient-primary);
+      }
+      .contact-title { margin: 0 0 0.5rem; }
+      .contact-lede { color: var(--rc-muted); margin: 0 0 1.5rem; line-height: 1.6; }
+      .contact-email-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1.6rem;
+      }
+      .contact-details {
+        border-top: 1px solid var(--rc-border);
+        padding-top: 1.3rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+        color: var(--rc-muted);
+        line-height: 1.5;
+      }
+      .contact-details .contact-name {
+        color: var(--rc-text);
+        font-weight: 600;
+        font-size: 1.02rem;
+      }
+      .contact-details a { color: var(--rc-accent-strong); }
+    </style>
 </head>
 {% set nav_active = 'contact' %}
-<body class="d-flex text-center text-bg-dark page-shell">
+<body class="text-bg-dark page-shell">
   <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
       <header class="mb-auto">
           {% include '_partials/navbar.html' %}
       </header>
-    {% include '_partials/mobile_notice.html' %}
-    <main class="px-3 contact-margin-top">
-        <h1>Contact Us</h1>
-        <p class="lead">Want to collaborate with RegCheck or have questions?<br>Please email <a class="footer-link" target="_blank" href="mailto:jamie.cummins@unibe.ch">jamie.cummins@unibe.ch.</a></p><br><br>
-        <div class="contact-info">Jamie Cummins<br>
-        <a class="footer-link" target="_blank" href="https://www.consumer.imu.unibe.ch/index_eng.html">Department for Psychology of Digitalisation</a><br>
-        and <a class="footer-link" target="_blank" href="https://www.dig.psy.unibe.ch/index_eng.html">Department for Consumer Behavior</a><br>
-        University of Bern<br>
-        3012 Bern<br>
-        Switzerland<br></div>
+
+    <main class="contact-main">
+      <div class="contact-card">
+        <h1 class="contact-title">Get in touch</h1>
+        <p class="contact-lede">Want to collaborate with RegCheck, report an issue, or have questions about the tool? We&rsquo;d love to hear from you.</p>
+        <a class="btn btn-primary contact-email-btn" href="mailto:jamie.cummins@unibe.ch">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+          jamie.cummins@unibe.ch
+        </a>
+        <div class="contact-details">
+          <span class="contact-name">Jamie Cummins</span>
+          <span>
+            <a target="_blank" rel="noopener" href="https://www.consumer.imu.unibe.ch/index_eng.html">Department for Psychology of Digitalisation</a><br>
+            <a target="_blank" rel="noopener" href="https://www.dig.psy.unibe.ch/index_eng.html">Department for Consumer Behavior</a>
+          </span>
+          <span>University of Bern<br>3012 Bern, Switzerland</span>
+        </div>
+      </div>
     </main>
 
     {% include '_partials/footer.html' %}
