@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260611-resize' %}
+    {% set static_version = '20260611-nopagelabel' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -65,9 +65,6 @@
                 </div>
                 <div id="source-tabs" class="source-tabs"></div>
                 <div class="source-toolbar">
-                    <button type="button" class="source-page-btn" id="source-prev-page" aria-label="Previous page">&lsaquo;</button>
-                    <span id="source-page-label">-</span>
-                    <button type="button" class="source-page-btn" id="source-next-page" aria-label="Next page">&rsaquo;</button>
                     <a id="source-raw-link" class="source-raw-link d-none" target="_blank" rel="noopener">Open raw</a>
                 </div>
                 <div id="source-canvas" class="source-canvas">
