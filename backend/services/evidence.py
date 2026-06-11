@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import string
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -221,7 +222,114 @@ def _text_slice_for_page(text: str, chunk_start: int, chunk_end: int, page_info:
     return text[start:end].strip()
 
 
+# Ligatures PyMuPDF may emit in extracted text; expanded before token comparison.
+_LIGATURES = {
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "ﬅ": "ft",
+    "ﬆ": "st",
+}
+_TOKEN_STRIP_CHARS = string.punctuation + "“”‘’«»…·—–‐‑­"
+
+
+def _norm_match_token(token: str) -> str:
+    text = token
+    for src, dst in _LIGATURES.items():
+        text = text.replace(src, dst)
+    text = text.replace("­", "")
+    return text.strip(_TOKEN_STRIP_CHARS).lower()
+
+
+def _word_sequence_rects(page, text: str) -> list[dict[str, float]]:
+    """Locate `text` on the page by matching its word sequence against the
+    page's extracted words, returning per-line bounding rects.
+
+    Unlike page.search_for(), this is immune to line wraps, hyphenation, and
+    ligature rendering, and it covers the entire matched span instead of a
+    truncated prefix.
+    """
+    needle = [t for t in (_norm_match_token(w) for w in (text or "").split()) if t]
+    if not needle:
+        return []
+    try:
+        words = page.get_text("words")  # (x0, y0, x1, y1, word, block, line, word_no)
+    except Exception:
+        return []
+    tokens: list[tuple[str, int]] = []
+    for index, word in enumerate(words):
+        norm = _norm_match_token(word[4])
+        if norm:
+            tokens.append((norm, index))
+    if not tokens:
+        return []
+
+    values = [t[0] for t in tokens]
+    n, m = len(values), len(needle)
+    budget_total = max(1, m // 10)
+
+    def walk(start: int, budget: int) -> tuple[int, int]:
+        """Walk needle vs page tokens from `start` with a substitution budget.
+        Returns (matched_count, consumed_page_tokens)."""
+        matched = 0
+        offset = 0
+        for expected in needle:
+            position = start + offset
+            if position >= n:
+                break
+            if values[position] == expected:
+                matched += 1
+            elif budget > 0:
+                budget -= 1
+            else:
+                break
+            offset += 1
+        return matched, offset
+
+    best_start = -1
+    best_consumed = 0
+    best_matched = 0
+    for start in range(n):
+        if values[start] != needle[0]:
+            continue
+        matched, consumed = walk(start, budget_total)
+        if matched > best_matched:
+            best_matched, best_start, best_consumed = matched, start, consumed
+            if matched == m:
+                break
+    if best_start < 0 or best_matched < max(1, int(m * 0.8)):
+        return []
+
+    # Merge the consumed words into one rect per (block, line).
+    groups: dict[tuple[int, int], list[float]] = {}
+    order: list[tuple[int, int]] = []
+    for token_index in range(best_start, best_start + best_consumed):
+        word = words[tokens[token_index][1]]
+        key = (int(word[5]), int(word[6]))
+        if key not in groups:
+            groups[key] = [float(word[0]), float(word[1]), float(word[2]), float(word[3])]
+            order.append(key)
+        else:
+            box = groups[key]
+            box[0] = min(box[0], float(word[0]))
+            box[1] = min(box[1], float(word[1]))
+            box[2] = max(box[2], float(word[2]))
+            box[3] = max(box[3], float(word[3]))
+    return [
+        {"x0": groups[key][0], "y0": groups[key][1], "x1": groups[key][2], "y1": groups[key][3]}
+        for key in order
+    ]
+
+
 def _search_page_rects(page, text: str) -> list[dict[str, float]]:
+    # Primary: word-sequence matching (full coverage, layout-robust).
+    rects = _word_sequence_rects(page, text)
+    if rects:
+        return rects
+
+    # Fallback: PyMuPDF geometric search, dehyphenated, then truncated needles.
     candidate = " ".join((text or "").split())
     if not candidate:
         return []
@@ -230,9 +338,15 @@ def _search_page_rects(page, text: str) -> list[dict[str, float]]:
         attempts.append(candidate[:240].rsplit(" ", 1)[0] or candidate[:240])
     if len(candidate) > 120:
         attempts.append(candidate[:120].rsplit(" ", 1)[0] or candidate[:120])
+    flags = getattr(fitz, "TEXT_DEHYPHENATE", 0) if fitz is not None else 0
     for attempt in attempts:
         try:
-            rects = page.search_for(attempt)
+            rects = page.search_for(attempt, flags=flags)
+        except TypeError:
+            try:
+                rects = page.search_for(attempt)
+            except Exception:
+                rects = []
         except Exception:
             rects = []
         if rects:
@@ -361,11 +475,15 @@ def build_pdf_evidence_source(
             **base_source,
             "render_mode": render_mode,
             "page_count": len(doc),
+            # start/end are char offsets into the source text, letting the
+            # viewer map any text span to its page when rects are missing.
             "pages": [
                 {
                     "page_number": page["page_number"],
                     "width": page["width"],
                     "height": page["height"],
+                    "start": page["start"],
+                    "end": page["end"],
                 }
                 for page in pages
             ],

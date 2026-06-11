@@ -608,7 +608,7 @@ body.is-col-resizing * {
 
 .quotes-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 0.9rem;
     align-items: start;
 }
@@ -680,20 +680,13 @@ body.is-col-resizing * {
     letter-spacing: 0.04em;
 }
 
-.evidence-card__strength {
-    width: 3.2rem;
-    height: 0.32rem;
-    border-radius: 999px;
-    background: var(--rc-surface-3);
-    overflow: hidden;
+.evidence-card__score {
     flex: 0 0 auto;
-}
-
-.evidence-card__strength-bar {
-    display: block;
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, var(--rc-accent), var(--rc-accent-strong));
+    font-family: var(--rc-font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--rc-accent-strong);
+    font-variant-numeric: tabular-nums;
 }
 
 .evidence-card__text {
@@ -867,6 +860,39 @@ body.is-col-resizing * {
 
 .pdf-highlight.is-active {
     box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
+}
+
+/* Page-level fallback marker for quotes whose exact rects are unavailable. */
+.pdf-page-flag {
+    position: absolute;
+    right: 0.55rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-family: var(--rc-font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    box-shadow: var(--rc-shadow-sm);
+    z-index: 3;
+}
+
+.pdf-page-flag--reg { background: #A9C5EC; color: #0d1426; }
+.pdf-page-flag--ppr { background: var(--report-highlight); color: #2a2300; }
+
+.pdf-page-flag.is-active {
+    box-shadow: 0 0 0 2px var(--rc-accent), var(--rc-shadow-sm);
+}
+
+/* Quote cards that could not be anchored in the rendered documents. */
+.evidence-card.is-unlocated .evidence-card__id::after {
+    content: " · not located";
+    color: var(--rc-faint);
+    font-weight: 400;
+    text-transform: none;
 }
 
 .source-text {
