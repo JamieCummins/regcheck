@@ -293,10 +293,10 @@
     /* ── render shell ────────────────────────────────────────────────────── */
 
     function render() {
-        renderStatusSummary();
-        if (!els.views) return;
         const dims = dimensions();
         state.ready = dims.length > 0;
+        renderStatusSummary();
+        if (!els.views) return;
 
         if (!state.ready) {
             els.views.innerHTML = `
