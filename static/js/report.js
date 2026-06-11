@@ -158,11 +158,9 @@
         }
         if (!text || !els.logList || text === state.logSeen) return;
         state.logSeen = text;
-        const li = document.createElement("li");
         const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        li.innerHTML = `<time>${escapeHtml(time)}</time><span>${escapeHtml(text)}</span>`;
-        els.logList.appendChild(li);
-        els.logList.scrollTop = els.logList.scrollHeight;
+        // Single line: the latest status replaces the previous one.
+        els.logList.innerHTML = `<li><time>${escapeHtml(time)}</time><span>${escapeHtml(text)}</span></li>`;
         if (els.log) els.log.classList.remove("d-none");
     }
 
@@ -203,7 +201,7 @@
         const segments = [
             { tone: "flag", value: counts.flag, label: "deviation" },
             { tone: "warn", value: counts.warn, label: "missing" },
-            { tone: "ok", value: counts.ok, label: "clean" },
+            { tone: "ok", value: counts.ok, label: "no deviation" },
         ].filter((segment) => segment.value > 0);
         els.railSummary.innerHTML = segments.map((segment) => `
             <span class="rail-summary__item rail-summary__item--${segment.tone}">
@@ -241,6 +239,7 @@
                 render();
                 const detail = document.querySelector(".report-detail");
                 if (detail) detail.scrollTop = 0;
+                autoShowTopEvidence();
             });
             els.list.appendChild(button);
         });
@@ -384,7 +383,8 @@
         return chunk.locations.find((location) => location.kind === kind) || null;
     }
 
-    function openEvidence(quote) {
+    function openEvidence(quote, opts) {
+        opts = opts || {};
         const chunk = chunkForQuote(quote);
         state.activeEvidence = { quote, chunk };
         if (chunk && chunk.source_id) {
@@ -395,7 +395,30 @@
         renderDimensionDetail();
         renderSourceTabs();
         renderSourceViewer();
-        if (els.viewer) els.viewer.classList.add("is-open");
+        // Auto-flick (e.g. on dimension select) updates the docked pane but
+        // must not pop the mobile bottom-sheet open.
+        if (els.viewer && !opts.auto) els.viewer.classList.add("is-open");
+    }
+
+    // A source document is the "registration" if its chunks carry PREREG ids.
+    function isRegistrationSource(sourceId) {
+        if (!sourceId || !state.manifest || !state.manifest.chunks) return false;
+        return Object.values(state.manifest.chunks)
+            .some((c) => c.source_id === sourceId && /^PREREG/i.test(c.id || ""));
+    }
+
+    // On dimension select / load, pre-open the highest-similarity quote so the
+    // source pane flicks to the most relevant page automatically.
+    function autoShowTopEvidence() {
+        if (state.activeEvidence) return;
+        if (state.manifestUnavailable || !state.manifest) return;
+        const item = state.items[Math.min(state.activeIndex, state.items.length - 1)];
+        if (!item) return;
+        const quotes = parseQuotes(item.registration_content_quotes || "")
+            .concat(parseQuotes(item.paper_content_quotes || ""))
+            .filter((q) => chunkForQuote(q))
+            .sort((a, b) => (b.score || 0) - (a.score || 0));
+        if (quotes.length) openEvidence(quotes[0], { auto: true });
     }
 
     function renderUnavailableSourceState() {
@@ -458,41 +481,53 @@
 
     function renderPdfSource(source, chunk) {
         const pageCount = source.page_count || (source.pages || []).length || 1;
-        if (!state.currentPage || state.currentPage < 1) state.currentPage = 1;
-        if (state.currentPage > pageCount) state.currentPage = pageCount;
         const template = source.page_url_template || "";
-        const src = template.replace("{page_number}", String(state.currentPage));
-        const pageInfo = (source.pages || []).find((page) => page.page_number === state.currentPage) || {};
+        const isReg = isRegistrationSource(source.id);
+        const hlClass = "pdf-highlight" + (isReg ? " pdf-highlight--reg" : "");
         const highlightLocations = chunk && Array.isArray(chunk.locations)
-            ? chunk.locations.filter((location) => location.kind === "pdf" && location.page === state.currentPage)
+            ? chunk.locations.filter((location) => location.kind === "pdf")
             : [];
-        const highlights = highlightLocations.flatMap((location) => {
-            const width = location.page_width || pageInfo.width || 1;
-            const height = location.page_height || pageInfo.height || 1;
-            return (location.rects || []).map((rect) => {
-                const left = (rect.x0 / width) * 100;
-                const top = (rect.y0 / height) * 100;
-                const rectWidth = ((rect.x1 - rect.x0) / width) * 100;
-                const rectHeight = ((rect.y1 - rect.y0) / height) * 100;
-                return `<span class="pdf-highlight" style="left:${left}%; top:${top}%; width:${rectWidth}%; height:${rectHeight}%;"></span>`;
-            });
-        }).join("");
-        els.pageLabel.textContent = `${state.currentPage} / ${pageCount}`;
-        els.prevPage.disabled = state.currentPage <= 1;
-        els.nextPage.disabled = state.currentPage >= pageCount;
-        els.sourceCanvas.innerHTML = `
-            <div class="pdf-stage">
-                <img src="${escapeHtml(src)}" alt="${escapeHtml(source.label || "PDF page")}">
-                ${highlights}
-            </div>
-        `;
-        const firstHighlight = els.sourceCanvas.querySelector(".pdf-highlight");
-        if (firstHighlight) {
-            firstHighlight.classList.add("is-active");
+        const targetPage = highlightLocations.length
+            ? highlightLocations[0].page
+            : Math.min(Math.max(state.currentPage || 1, 1), pageCount);
+
+        // Render every page stacked so the source can be scrolled continuously.
+        let html = "";
+        for (let page = 1; page <= pageCount; page += 1) {
+            const src = template.replace("{page_number}", String(page));
+            const pageInfo = (source.pages || []).find((p) => p.page_number === page) || {};
+            const highlights = highlightLocations
+                .filter((location) => location.page === page)
+                .flatMap((location) => {
+                    const width = location.page_width || pageInfo.width || 1;
+                    const height = location.page_height || pageInfo.height || 1;
+                    return (location.rects || []).map((rect) => {
+                        const left = (rect.x0 / width) * 100;
+                        const top = (rect.y0 / height) * 100;
+                        const rectWidth = ((rect.x1 - rect.x0) / width) * 100;
+                        const rectHeight = ((rect.y1 - rect.y0) / height) * 100;
+                        return `<span class="${hlClass} is-active" style="left:${left}%; top:${top}%; width:${rectWidth}%; height:${rectHeight}%;"></span>`;
+                    });
+                }).join("");
+            html += `<div class="pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}</div>`;
+        }
+        els.sourceCanvas.innerHTML = html;
+        state.currentPage = targetPage;
+        els.pageLabel.textContent = `${targetPage} / ${pageCount}`;
+        els.prevPage.disabled = false;
+        els.nextPage.disabled = false;
+        // Flick to the page that holds the highlight (or the current page).
+        const targetEl = els.sourceCanvas.querySelector(`.pdf-stage[data-page="${targetPage}"]`);
+        if (targetEl) {
             window.requestAnimationFrame(() => {
-                firstHighlight.scrollIntoView({ block: "center", behavior: "smooth" });
+                targetEl.scrollIntoView({ block: "start", behavior: "smooth" });
             });
         }
+    }
+
+    function scrollToPage(page) {
+        const stage = els.sourceCanvas && els.sourceCanvas.querySelector(`.pdf-stage[data-page="${page}"]`);
+        if (stage) stage.scrollIntoView({ block: "start", behavior: "smooth" });
     }
 
     async function renderTextSource(source, chunk) {
@@ -505,7 +540,8 @@
         els.pageLabel.textContent = source.kind === "json" ? "JSON" : "Text";
         els.prevPage.disabled = true;
         els.nextPage.disabled = true;
-        els.sourceCanvas.innerHTML = `<div class="source-text">${highlightText(text, start, end)}</div>`;
+        const regClass = isRegistrationSource(source.id) ? " is-reg" : "";
+        els.sourceCanvas.innerHTML = `<div class="source-text${regClass}">${highlightText(text, start, end)}</div>`;
         const mark = els.sourceCanvas.querySelector("mark");
         if (mark) {
             window.requestAnimationFrame(() => {
@@ -651,6 +687,7 @@
                 await loadManifest();
             }
             render();
+            autoShowTopEvidence();
             if (data.state === "SUCCESS" && els.log) {
                 els.log.classList.add("d-none");
             }
@@ -678,6 +715,7 @@
             setStatus("SUCCESS", "Sample report");
             if (els.statusText) els.statusText.textContent = "Sample report";
             render();
+            autoShowTopEvidence();
         } catch (_error) {
             setStatus("FAILURE", "Could not load the sample report");
         }
@@ -685,14 +723,29 @@
 
     if (els.prevPage) {
         els.prevPage.addEventListener("click", () => {
-            state.currentPage = Math.max(1, state.currentPage - 1);
-            renderSourceViewer();
+            state.currentPage = Math.max(1, (state.currentPage || 1) - 1);
+            scrollToPage(state.currentPage);
         });
     }
     if (els.nextPage) {
         els.nextPage.addEventListener("click", () => {
-            state.currentPage += 1;
-            renderSourceViewer();
+            const stages = els.sourceCanvas.querySelectorAll(".pdf-stage[data-page]");
+            const max = stages.length || ((state.currentPage || 1) + 1);
+            state.currentPage = Math.min(max, (state.currentPage || 1) + 1);
+            scrollToPage(state.currentPage);
+        });
+    }
+    if (els.sourceCanvas) {
+        els.sourceCanvas.addEventListener("scroll", () => {
+            const stages = els.sourceCanvas.querySelectorAll(".pdf-stage[data-page]");
+            if (!stages.length) return;
+            const canvasTop = els.sourceCanvas.getBoundingClientRect().top;
+            let current = 1;
+            stages.forEach((st) => {
+                if (st.getBoundingClientRect().top - canvasTop <= 80) current = Number(st.dataset.page);
+            });
+            state.currentPage = current;
+            els.pageLabel.textContent = `${current} / ${stages.length}`;
         });
     }
     if (els.closeViewer) {

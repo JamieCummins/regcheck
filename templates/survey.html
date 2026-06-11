@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260610-dim6' %}
+    {% set static_version = '20260611-palette' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -12,7 +12,7 @@
     <title>Quick Survey — RegCheck</title>
     <style>
         .survey-page {
-            background: #0a0c11;
+            background: #15171E;
         }
 
         .survey-main {
@@ -24,7 +24,7 @@
         }
 
         .survey-card {
-            background: #141823;
+            background: #232733;
             border: 1px solid rgba(190, 200, 230, 0.10);
             border-radius: 0.5rem;
             box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35);
@@ -65,13 +65,13 @@
         }
 
         .survey-lede {
-            color: #9aa2bd;
+            color: #B9BEC9;
             margin: 0.1rem 0 0;
             line-height: 1.5;
         }
 
         .survey-page .text-muted {
-            color: #9aa2bd !important;
+            color: #B9BEC9 !important;
         }
 
         .survey-steps {
@@ -92,7 +92,7 @@
         }
 
         .question-progress {
-            color: #9aa2bd;
+            color: #B9BEC9;
             font-size: 0.9rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -122,7 +122,7 @@
         .survey-input,
         .survey-select,
         .survey-textarea {
-            background: #11141c;
+            background: #1C1F28;
             border: 1px solid rgba(190, 200, 230, 0.10);
             color: #eef1fb;
             border-radius: 0.5rem;
@@ -145,26 +145,26 @@
             background-size: 0.6rem;
             cursor: pointer;
             color: #eef1fb;
-            background-color: #11141c;
+            background-color: #1C1F28;
         }
 
         .survey-select option {
             color: #eef1fb;
-            background-color: #171b26;
+            background-color: #232733;
         }
 
         .survey-input::placeholder,
         .survey-textarea::placeholder {
-            color: #8f96b3;
+            color: #828A9C;
         }
 
         .survey-input:focus,
         .survey-select:focus,
         .survey-textarea:focus {
-            border-color: rgba(47, 116, 217, 0.68);
-            box-shadow: 0 0 0 0.18rem rgba(47, 116, 217, 0.2);
+            border-color: rgba(58, 91, 192, 0.68);
+            box-shadow: 0 0 0 0.18rem rgba(58, 91, 192, 0.2);
             outline: none;
-            background: #11141c;
+            background: #1C1F28;
         }
 
         .survey-textarea {
@@ -190,7 +190,7 @@
         .link-button {
             background: transparent;
             border: none;
-            color: #2f74d9;
+            color: #7BA0DC;
             font-weight: 700;
             letter-spacing: 0.02em;
             cursor: pointer;
@@ -199,7 +199,7 @@
 
         .link-button:focus,
         .link-button:hover {
-            color: #4c8ce8;
+            color: #7BA0DC;
             text-decoration: underline;
             outline: none;
         }
@@ -210,15 +210,15 @@
             gap: 0.45rem;
             padding: 0.5rem 0.85rem;
             border-radius: 999px;
-            color: #4c8ce8;
-            background: rgba(47, 116, 217, 0.18);
+            color: #7BA0DC;
+            background: rgba(58, 91, 192, 0.18);
             border: 1px solid rgba(155, 183, 255, 0.28);
             font-size: 0.9rem;
             align-self: flex-start;
         }
 
         .survey-page .pulse-pill.text-success {
-            color: #4c8ce8 !important;
+            color: #7BA0DC !important;
         }
 
         .survey-page .pulse-pill.text-danger {
@@ -228,20 +228,20 @@
         .pill-dot {
             width: 0.65rem;
             height: 0.65rem;
-            background: #2f74d9;
+            background: #3A5BC0;
             border-radius: 50%;
-            box-shadow: 0 0 0 0 rgba(47, 116, 217, 0.6);
+            box-shadow: 0 0 0 0 rgba(58, 91, 192, 0.6);
             animation: pulse 1.8s infinite;
         }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0.55); }
-            70% { box-shadow: 0 0 0 14px rgba(47, 116, 217, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0.55); }
+            70% { box-shadow: 0 0 0 14px rgba(58, 91, 192, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0); }
         }
 
         .progress-note {
-            color: #9aa2bd;
+            color: #B9BEC9;
             font-size: 0.95rem;
         }
 
@@ -252,8 +252,8 @@
             min-height: 2.7rem;
             padding: 0.7rem 1.1rem;
             color: #ffffff;
-            background: #2f74d9;
-            border: 1px solid #2f74d9;
+            background: #3A5BC0;
+            border: 1px solid #3A5BC0;
             border-radius: 0.5rem;
             font-weight: 700;
             text-decoration: none;
@@ -262,8 +262,8 @@
         .result-link:hover,
         .result-link:focus {
             color: #ffffff;
-            background: #4c8ce8;
-            border-color: #4c8ce8;
+            background: #4B6CCB;
+            border-color: #4B6CCB;
             text-decoration: none;
         }
     </style>
