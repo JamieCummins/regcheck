@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260611-tracing' %}
+    {% set static_version = '20260612-pymupdf' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -48,7 +48,7 @@
                   <section class="form-step choice-step" data-step="2">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Choose a parser</h2>
-                          <p class="step-sub">This determines how RegCheck reads your paper. GROBID works best for typeset journal PDFs. DPT-2 handles less standard academic documents better.</p>
+                          <p class="step-sub">This determines how RegCheck reads your paper. GROBID works best for typeset journal PDFs. DPT-2 handles less standard academic documents better. PyMuPDF runs entirely on our server and keeps all selectable text (including author notes and footnotes).</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
@@ -56,6 +56,7 @@
                               <select class="form-control app-toggles" id="parser_choice" name="parser_choice">
                                   <option value="grobid">GROBID</option>
                                   <option value="dpt2">DPT-2</option>
+                                  <option value="pymupdf">PyMuPDF</option>
                               </select>
                           </div>
                       </div>

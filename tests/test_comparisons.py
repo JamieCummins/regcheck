@@ -302,3 +302,124 @@ async def test_current_task_ttl_sets_task_expiry_when_missing(monkeypatch):
 
     assert ttl == 1234
     assert redis.expiries["task-1"] == 1234
+
+
+@pytest.mark.parametrize(
+    "defaults_name",
+    ["CLINICAL_DEFAULT_DIMENSIONS", "PRECLINICAL_DEFAULT_DIMENSIONS"],
+)
+def test_default_dimension_sets_all_carry_definitions(defaults_name):
+    """The canonical default sets are the single source of default dimensions;
+    every entry must ship a non-empty definition (guards the old mismatch
+    where 'Design: Planned sample size' silently resolved to an empty one)."""
+    defaults = getattr(comparisons, defaults_name)
+    assert defaults
+    for item in defaults:
+        assert item["dimension"].strip()
+        assert item["definition"].strip(), f"missing definition for {item['dimension']!r}"
+
+
+def test_clinical_defaults_are_the_curated_set():
+    names = [item["dimension"] for item in comparisons.CLINICAL_DEFAULT_DIMENSIONS]
+    assert names == [
+        "Eligibility – inclusion criteria",
+        "Eligibility – exclusion criteria",
+        "Intervention/treatment and control/placebo",
+        "Ethical approval – number",
+        "Ethical approval – committee",
+        "Ethical approval – date",
+        "Sample size",
+        "Date recruitment started",
+        "Outcomes – primary",
+        "Outcomes – secondary",
+        "Method of randomisation and allocation",
+    ]
+
+
+def test_preclinical_defaults_are_the_curated_set():
+    names = [item["dimension"] for item in comparisons.PRECLINICAL_DEFAULT_DIMENSIONS]
+    assert names == [
+        "Study type (exploratory vs. confirmatory)",
+        "Total number of animals",
+        "Number of animals per group",
+        "Intervention and control",
+        "Measures to reduce bias",
+        "Primary outcomes",
+        "Secondary outcomes",
+        "Statistical analyses",
+        "Hypotheses",
+    ]
+
+
+def test_resolve_dimensions_user_values_win_verbatim():
+    """User-specified dimensions (UI or API) are used exactly as given —
+    including empty definitions. No name-based fallback may fire."""
+    user = [
+        {"dimension": "Eligibility – inclusion criteria", "definition": ""},
+        {"name": "Custom dimension", "definition": "  my definition  "},
+        {"dimension": "   "},
+        "not-a-dict",
+    ]
+    resolved = comparisons._resolve_dimensions(user, comparisons.CLINICAL_DEFAULT_DIMENSIONS)
+    assert resolved == [
+        {"dimension": "Eligibility – inclusion criteria", "definition": ""},
+        {"dimension": "Custom dimension", "definition": "my definition"},
+    ]
+
+
+def test_resolve_dimensions_falls_back_to_explicit_defaults_only():
+    resolved = comparisons._resolve_dimensions(None, comparisons.CLINICAL_DEFAULT_DIMENSIONS)
+    assert resolved == comparisons.CLINICAL_DEFAULT_DIMENSIONS
+    # Copies, not aliases: mutating a resolved item must not corrupt the canon.
+    resolved[0]["definition"] = "mutated"
+    assert comparisons.CLINICAL_DEFAULT_DIMENSIONS[0]["definition"] != "mutated"
+    # And with no defaults supplied (general flow), empty selection stays empty.
+    assert comparisons._resolve_dimensions(None) == []
+    assert comparisons._resolve_dimensions([]) == []
+
+
+def test_wizard_clinical_preset_matches_backend(tmp_path):
+    """The wizard's 'Clinical / Medical' preset (static/js/wizard.js) must stay
+    identical to CLINICAL_DEFAULT_DIMENSIONS — guards against the two clinical
+    sources drifting apart."""
+    import json
+    import re
+    from pathlib import Path
+
+    wizard = Path(__file__).resolve().parent.parent / "static" / "js" / "wizard.js"
+    src = wizard.read_text(encoding="utf-8")
+    m = re.search(
+        r'key:\s*"clinical",.*?dims:\s*(\[.*?\])\n\s{12}\},',
+        src,
+        re.DOTALL,
+    )
+    assert m, "clinical preset block not found in wizard.js"
+    # Convert the JS array literal (unquoted keys) into JSON.
+    js_array = m.group(1)
+    js_array = re.sub(r'(\{|,)\s*(name|definition):', r'\1"\2":', js_array)
+    preset = json.loads(js_array)
+    backend = [
+        {"name": d["dimension"], "definition": d["definition"]}
+        for d in comparisons.CLINICAL_DEFAULT_DIMENSIONS
+    ]
+    assert preset == backend
+
+
+def test_wizard_preclinical_preset_matches_backend():
+    """The wizard's 'Preclinical / Animal' preset must stay identical to
+    PRECLINICAL_DEFAULT_DIMENSIONS (the two are generated from one source)."""
+    import json
+    import re
+    from pathlib import Path
+
+    wizard = Path(__file__).resolve().parent.parent / "static" / "js" / "wizard.js"
+    src = wizard.read_text(encoding="utf-8")
+    m = re.search(r'key:\s*"preclinical",.*?dims:\s*(\[.*?\])\n\s{12}\}', src, re.DOTALL)
+    assert m, "preclinical preset block not found in wizard.js"
+    js_array = re.sub(r'(\{|,)\s*(name|definition):', r'\1"\2":', m.group(1))
+    preset = json.loads(js_array)
+    backend = [
+        {"name": d["dimension"], "definition": d["definition"]}
+        for d in comparisons.PRECLINICAL_DEFAULT_DIMENSIONS
+    ]
+    assert preset == backend
