@@ -3,7 +3,7 @@
 .wizard-page {
     min-height: 100vh;
     background:
-        radial-gradient(900px 480px at 50% -12%, rgba(47, 116, 217, 0.12), transparent 62%),
+        radial-gradient(900px 480px at 50% -12%, rgba(58, 91, 192, 0.12), transparent 62%),
         var(--rc-bg) !important;
 }
 
@@ -420,7 +420,7 @@
     font-weight: 600;
     color: var(--rc-on-accent);
     background: var(--rc-gradient-primary);
-    box-shadow: 0 4px 12px -5px rgba(47, 116, 217, 0.8);
+    box-shadow: 0 4px 12px -5px rgba(58, 91, 192, 0.8);
 }
 
 /* grip handle */
@@ -785,13 +785,13 @@
     background: var(--rc-gradient-primary);
     border: none;
     color: var(--rc-on-accent);
-    box-shadow: 0 6px 16px rgba(47, 116, 217, 0.28);
+    box-shadow: 0 6px 16px rgba(58, 91, 192, 0.28);
 }
 
 .wizard-nav .btn-primary:hover,
 .wizard-nav .btn-primary:focus {
     color: var(--rc-on-accent);
-    box-shadow: 0 10px 22px rgba(47, 116, 217, 0.36);
+    box-shadow: 0 10px 22px rgba(58, 91, 192, 0.36);
     transform: translateY(-1px);
 }
 

@@ -9,43 +9,44 @@
     --rc-font-display: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --rc-font-mono: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --rc-font-wordmark: 'Sora', 'IBM Plex Sans', sans-serif;
-    /* Surfaces — cool, navy-leaning dark */
-    --rc-bg: #0a0e16;
-    --rc-surface: #121826;
-    --rc-surface-2: #182134;
-    --rc-surface-3: #212d44;
-    --rc-panel: #121826;
+    /* Surfaces — RegCheck palette (logo study X1), dark */
+    --rc-bg: #15171E;
+    --rc-surface: #1C1F28;
+    --rc-surface-2: #232733;
+    --rc-surface-3: #2E3340;
+    --rc-panel: #1C1F28;
     /* Borders */
-    --rc-border: rgba(150, 173, 214, 0.13);
-    --rc-border-strong: rgba(150, 173, 214, 0.26);
+    --rc-border: #2A2E3A;
+    --rc-border-strong: #333845;
     /* Text */
-    --rc-text: #eef2fb;
-    --rc-muted: #98a4c0;
-    --rc-faint: #6b7793;
-    /* Brand accent — academic blue (from the RegCheck logo) */
-    --rc-accent: #2f74d9;
-    --rc-accent-strong: #4c8ce8;
-    --rc-accent-soft: rgba(47, 116, 217, 0.16);
-    --rc-accent-line: rgba(47, 116, 217, 0.45);
+    --rc-text: #E9EAEE;
+    --rc-muted: #B9BEC9;
+    --rc-faint: #828A9C;
+    /* Primary blue — dark fill (#3A5BC0) + light link/text (#7BA0DC) */
+    --rc-accent: #3A5BC0;
+    --rc-accent-hover: #4B6CCB;
+    --rc-accent-strong: #7BA0DC;
+    --rc-accent-soft: rgba(94, 146, 206, 0.12);
+    --rc-accent-line: rgba(123, 196, 220, 0.35);
     --rc-on-accent: #ffffff;
-    --rc-accent-blue: #2f74d9;
-    --rc-accent-blue-soft: #4c8ce8;
-    --rc-accent-teal: #2f74d9;
-    --rc-accent-teal-strong: #4c8ce8;
-    --rc-accent-red: #e2675c;
-    --rc-accent-red-soft: #ef8a80;
-    --rc-gradient-primary: linear-gradient(135deg, #2f74d9, #19a5c0);
-    --rc-gradient-secondary: linear-gradient(135deg, #e2675c, #e3a23e);
-    /* Semantic decision trio — logo-derived, distinct on dark */
-    --rc-flag: #ec6a5e;        /* deviation */
-    --rc-flag-bg: rgba(228, 96, 82, 0.16);
-    --rc-flag-border: rgba(228, 96, 82, 0.46);
-    --rc-ok: #3fbf90;          /* no deviation */
+    --rc-accent-blue: #A9C5EC;
+    --rc-accent-blue-soft: #7BA0DC;
+    --rc-accent-teal: #3A5BC0;
+    --rc-accent-teal-strong: #4B6CCB;
+    --rc-accent-red: #D97A6C;
+    --rc-accent-red-soft: #CF4E3E;
+    --rc-gradient-primary: linear-gradient(135deg, #3A5BC0, #4B6CCB);
+    --rc-gradient-secondary: linear-gradient(135deg, #CF4E3E, #DF7E44);
+    /* Semantic decision trio (verdicts) */
+    --rc-flag: #D97A6C;        /* deviation */
+    --rc-flag-bg: rgba(207, 78, 62, 0.16);
+    --rc-flag-border: rgba(207, 78, 62, 0.45);
+    --rc-ok: #3FBF90;          /* no deviation (green kept for clarity) */
     --rc-ok-bg: rgba(45, 178, 134, 0.16);
-    --rc-ok-border: rgba(45, 178, 134, 0.46);
-    --rc-warn: #e8b14a;        /* missing */
-    --rc-warn-bg: rgba(230, 170, 60, 0.16);
-    --rc-warn-border: rgba(230, 170, 60, 0.46);
+    --rc-ok-border: rgba(45, 178, 134, 0.45);
+    --rc-warn: #DCA45C;        /* missing / not stated */
+    --rc-warn-bg: rgba(223, 126, 68, 0.15);
+    --rc-warn-border: rgba(223, 126, 68, 0.45);
     /* Elevation */
     --rc-shadow-sm: 0 2px 8px rgba(2, 6, 16, 0.40);
     --rc-shadow-md: 0 14px 34px rgba(2, 6, 16, 0.46);
@@ -649,8 +650,8 @@ footer {
 .nav-link:hover,
 .nav-link:focus,
 .nav-masthead .active {
-    color: var(--rc-accent-teal) !important;
-    border-bottom-color: var(--rc-accent-teal) !important;
+    color: var(--rc-accent-strong) !important;
+    border-bottom-color: var(--rc-accent-strong) !important;
 }
 
 .navbar-dark .navbar-toggler {
@@ -678,7 +679,7 @@ footer {
 .dropdown-menu-dark .dropdown-item:hover,
 .dropdown-menu-dark .dropdown-item:focus {
     background: var(--rc-accent-soft);
-    color: var(--rc-accent-teal);
+    color: var(--rc-accent-strong);
 }
 
 .dropdown-item.active,
@@ -758,8 +759,8 @@ footer {
 
 .form-control:focus,
 .form-select:focus {
-    border-color: rgba(47, 116, 217, 0.6);
-    box-shadow: 0 0 0 0.18rem rgba(47, 116, 217, 0.22);
+    border-color: rgba(58, 91, 192, 0.6);
+    box-shadow: 0 0 0 0.18rem rgba(58, 91, 192, 0.22);
 }
 
 select.form-control,
@@ -806,6 +807,6 @@ body:not(.results-page) .table-responsive tbody + tbody {
 
 .footer-link:hover,
 .footer-link:focus {
-    color: var(--rc-accent-teal);
+    color: var(--rc-accent-strong);
 }
 

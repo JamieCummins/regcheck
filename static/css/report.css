@@ -13,7 +13,7 @@
 .report-page {
     min-height: 100dvh;
     background:
-        radial-gradient(1100px 520px at 82% -8%, rgba(47, 116, 217, 0.10), transparent 60%),
+        radial-gradient(1100px 520px at 82% -8%, rgba(58, 91, 192, 0.10), transparent 60%),
         var(--rc-bg) !important;
     color: var(--rc-text);
     text-align: left;
@@ -50,7 +50,7 @@
 
 .report-page .nav-link:hover,
 .report-page .nav-link:focus {
-    color: var(--rc-accent) !important;
+    color: var(--rc-accent-strong) !important;
 }
 
 .report-page .px-3,
@@ -131,9 +131,9 @@
 }
 
 @keyframes report-pulse {
-    0% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0.55); }
-    70% { box-shadow: 0 0 0 7px rgba(47, 116, 217, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(47, 116, 217, 0); }
+    0% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0.55); }
+    70% { box-shadow: 0 0 0 7px rgba(58, 91, 192, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0); }
 }
 
 .report-actions {
@@ -173,8 +173,8 @@
 
 .report-action-btn--primary:hover,
 .report-action-btn--primary:focus {
-    background: var(--rc-accent-strong);
-    border-color: var(--rc-accent-strong);
+    background: var(--rc-accent-hover);
+    border-color: var(--rc-accent-hover);
     transform: translateY(-1px);
 }
 
@@ -877,14 +877,20 @@
     pointer-events: none;
 }
 
+/* Registration evidence highlights in blue (paper stays amber). */
+.pdf-highlight--reg {
+    background: rgba(94, 146, 206, 0.40);
+    border-color: rgba(123, 160, 220, 0.85);
+}
+
 .pdf-highlight.is-active {
-    box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(47, 116, 217, 0.5);
+    box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
     animation: highlight-pop 0.9s ease;
 }
 
 @keyframes highlight-pop {
-    0% { box-shadow: 0 0 0 5px rgba(47, 116, 217, 0.45); }
-    100% { box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(47, 116, 217, 0.5); }
+    0% { box-shadow: 0 0 0 5px rgba(58, 91, 192, 0.45); }
+    100% { box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5); }
 }
 
 .source-text {
@@ -903,7 +909,13 @@
     background: var(--report-highlight);
     padding: 0.05rem 0.12rem;
     border-radius: 3px;
-    box-shadow: 0 0 0 2px rgba(47, 116, 217, 0.55);
+    box-shadow: 0 0 0 2px rgba(58, 91, 192, 0.55);
+}
+
+/* Registration source: blue highlight to match the REGISTRATION column. */
+.source-text.is-reg mark {
+    color: #0d1426;
+    background: #A9C5EC;
 }
 
 /* Toast --------------------------------------------------------------------- */
