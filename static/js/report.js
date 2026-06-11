@@ -721,6 +721,106 @@
         }
     }
 
+    function setupResizers() {
+        const rail = app.querySelector(".report-dimension-rail");
+        const detail = app.querySelector(".report-detail");
+        const source = app.querySelector(".source-viewer");
+        if (!rail || !detail || !source) return;
+
+        const MIN_RAIL = 176, MAX_RAIL = 460, MIN_SOURCE = 300, MAX_SOURCE = 820, MIN_DETAIL = 320;
+        const RAIL_KEY = "regcheck.report.railW", SOURCE_KEY = "regcheck.report.sourceW";
+
+        const makeSplitter = (kind, label) => {
+            const el = document.createElement("div");
+            el.className = "report-splitter";
+            el.dataset.resize = kind;
+            el.setAttribute("role", "separator");
+            el.setAttribute("aria-orientation", "vertical");
+            el.setAttribute("tabindex", "0");
+            el.setAttribute("aria-label", label);
+            return el;
+        };
+        const railSplit = makeSplitter("rail", "Drag to resize the dimensions panel");
+        const sourceSplit = makeSplitter("source", "Drag to resize the source panel");
+        rail.after(railSplit);
+        detail.after(sourceSplit);
+
+        const isActive = () => getComputedStyle(railSplit).display !== "none";
+        const gutters = () => railSplit.offsetWidth + sourceSplit.offsetWidth;
+        const widthOf = (el) => el.getBoundingClientRect().width;
+
+        function applyRail(w) {
+            const maxRail = Math.min(MAX_RAIL, widthOf(app) - widthOf(source) - gutters() - MIN_DETAIL);
+            w = Math.max(MIN_RAIL, Math.min(w, Math.max(MIN_RAIL, maxRail)));
+            app.style.setProperty("--rail-w", Math.round(w) + "px");
+        }
+        function applySource(w) {
+            const maxSource = Math.min(MAX_SOURCE, widthOf(app) - widthOf(rail) - gutters() - MIN_DETAIL);
+            w = Math.max(MIN_SOURCE, Math.min(w, Math.max(MIN_SOURCE, maxSource)));
+            app.style.setProperty("--source-w", Math.round(w) + "px");
+        }
+        function persist() {
+            if (!window.localStorage) return;
+            const r = app.style.getPropertyValue("--rail-w").trim();
+            const s = app.style.getPropertyValue("--source-w").trim();
+            if (r) window.localStorage.setItem(RAIL_KEY, r);
+            if (s) window.localStorage.setItem(SOURCE_KEY, s);
+        }
+        const hasCustom = () => !!app.style.getPropertyValue("--rail-w") || !!app.style.getPropertyValue("--source-w");
+
+        function startDrag(event, splitter, kind) {
+            if (!isActive()) return;
+            event.preventDefault();
+            splitter.classList.add("is-active");
+            document.body.classList.add("is-col-resizing");
+            const startX = event.clientX;
+            const startRail = widthOf(rail);
+            const startSource = widthOf(source);
+            const move = (ev) => {
+                const dx = ev.clientX - startX;
+                if (kind === "rail") applyRail(startRail + dx);
+                else applySource(startSource - dx);
+            };
+            const up = () => {
+                document.removeEventListener("pointermove", move);
+                document.removeEventListener("pointerup", up);
+                splitter.classList.remove("is-active");
+                document.body.classList.remove("is-col-resizing");
+                persist();
+            };
+            document.addEventListener("pointermove", move);
+            document.addEventListener("pointerup", up);
+        }
+        function onKey(event, kind) {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const step = (event.shiftKey ? 48 : 16) * (event.key === "ArrowRight" ? 1 : -1);
+            if (kind === "rail") applyRail(widthOf(rail) + step);
+            else applySource(widthOf(source) - step);
+            persist();
+        }
+        railSplit.addEventListener("pointerdown", (e) => startDrag(e, railSplit, "rail"));
+        sourceSplit.addEventListener("pointerdown", (e) => startDrag(e, sourceSplit, "source"));
+        railSplit.addEventListener("keydown", (e) => onKey(e, "rail"));
+        sourceSplit.addEventListener("keydown", (e) => onKey(e, "source"));
+        railSplit.addEventListener("dblclick", () => { app.style.removeProperty("--rail-w"); persist(); });
+        sourceSplit.addEventListener("dblclick", () => { app.style.removeProperty("--source-w"); persist(); });
+
+        if (window.localStorage) {
+            const r = window.localStorage.getItem(RAIL_KEY);
+            const s = window.localStorage.getItem(SOURCE_KEY);
+            if (r) app.style.setProperty("--rail-w", r);
+            if (s) app.style.setProperty("--source-w", s);
+        }
+        const reclamp = () => {
+            if (!isActive() || !hasCustom()) return;
+            if (app.style.getPropertyValue("--rail-w")) applyRail(widthOf(rail));
+            if (app.style.getPropertyValue("--source-w")) applySource(widthOf(source));
+        };
+        window.addEventListener("resize", reclamp);
+        reclamp();
+    }
+
     if (els.prevPage) {
         els.prevPage.addEventListener("click", () => {
             state.currentPage = Math.max(1, (state.currentPage || 1) - 1);
@@ -759,6 +859,8 @@
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
+
+    setupResizers();
 
     if (state.demoSrc) {
         loadDemo();
