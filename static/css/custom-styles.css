@@ -360,6 +360,17 @@ body:not(.results-page) .table-responsive tbody + tbody {
 .footer-link {
     color: inherit;
 }
+.footer-links {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+.footer-sep {
+    opacity: 0.5;
+    user-select: none;
+}
 .page-background,
 :root,
 html,

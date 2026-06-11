@@ -176,3 +176,22 @@ async def test_extract_pdf_text_dpt2_mode_falls_back_to_pymupdf(tmp_path, monkey
 
     assert "hello dpt mode" in extracted
     assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_pymupdf_primary(tmp_path):
+    """PyMuPDF is selectable as a primary, in-process parser and preserves
+    all selectable text (e.g. author notes)."""
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "Author note: corresponding author jane@example.org")
+    text, used = await extract_pdf_text(str(pdf), parser_choice="pymupdf")
+    assert used == "pymupdf"
+    assert "Author note" in text
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_rejects_unknown_parser(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "body")
+    with pytest.raises(ValueError):
+        await extract_pdf_text(str(pdf), parser_choice="nope")

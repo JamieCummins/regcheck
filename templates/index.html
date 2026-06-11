@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
   <head>
-    {% set static_version = '20260611-tracing' %}
+    {% set static_version = '20260612-pymupdf' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {% include '_partials/head_assets.html' %}
@@ -37,12 +37,6 @@
         flex-direction: column;
         align-items: center;
         gap: 1rem;
-      }
-      .home-unibe {
-        height: 40px;
-        width: auto;
-        opacity: 0.9;
-        margin-bottom: 0.25rem;
       }
       .home-eyebrow {
         display: inline-flex;
@@ -153,7 +147,6 @@
 
   <main class="home-main">
     <section class="home-hero">
-      <img class="home-unibe" src="{{ url_for('static', path='assets/logo_unibe.png') }}?v={{ static_version }}" alt="University of Bern">
       <h1 class="home-title">Compare study plans with final papers.</h1>
       <p class="home-lede">For medical and social science researchers. RegCheck extracts and compares text between study registrations and final papers.</p>
       <div class="home-cta">

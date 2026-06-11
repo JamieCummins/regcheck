@@ -66,3 +66,9 @@ async def privacy(request: Request):
 async def faq(request: Request):
     templates = request.app.state.templates
     return templates.TemplateResponse("faq.html", {"request": request})
+
+
+@router.get("/api", response_class=HTMLResponse, name="api_docs")
+async def api_docs(request: Request):
+    templates = request.app.state.templates
+    return templates.TemplateResponse("api.html", {"request": request})

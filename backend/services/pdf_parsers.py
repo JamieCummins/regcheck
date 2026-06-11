@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import logging
@@ -265,10 +266,42 @@ async def extract_pdf_text(
     Returns (extracted_text, used_parser_label).
     """
     normalized = (parser_choice or "grobid").strip().lower()
-    if normalized not in {"grobid", "dpt2"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
     fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
+
+    if normalized == "pymupdf":
+        # In-process extraction (PyMuPDF / fitz): no external service, and it
+        # keeps all selectable text — including author notes and footnotes.
+        if fitz is None:  # pragma: no cover - optional dependency
+            if fallback_chain:
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise ValueError("PyMuPDF (fitz) is not installed.")
+        try:
+            from .documents import extract_text_from_pdf as _pymupdf_extract
+
+            extracted = await asyncio.to_thread(_pymupdf_extract, filename)
+        except Exception as exc:
+            if fallback_chain:
+                logger.warning(
+                    "PyMuPDF parsing failed; attempting fallbacks",
+                    extra={"pdf_path": filename, "error": str(exc)},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise
+        if not _has_usable_text(extracted):
+            if is_likely_scanned_pdf(filename) and fallback_chain:
+                logger.info(
+                    "Scanned PDF detected (PyMuPDF); attempting fallbacks",
+                    extra={"pdf_path": filename},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise ValueError(
+                "Parsed PDF but extracted no usable text (PyMuPDF). "
+                "If this is a scanned PDF, select the DPT2 parser (OCR)."
+            )
+        return extracted, "pymupdf"
 
     if normalized == "dpt2":
         parser_callable = dpt_parser or pdf2dpt
