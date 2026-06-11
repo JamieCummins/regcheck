@@ -45,9 +45,6 @@
         sourceTabs: document.getElementById("source-tabs"),
         sourceCanvas: document.getElementById("source-canvas"),
         rawLink: document.getElementById("source-raw-link"),
-        prevPage: document.getElementById("source-prev-page"),
-        nextPage: document.getElementById("source-next-page"),
-        pageLabel: document.getElementById("source-page-label"),
         closeViewer: document.getElementById("source-close-btn"),
         statusPill: document.getElementById("report-status-pill"),
         statusDot: document.getElementById("report-status-dot"),
@@ -435,18 +432,12 @@
                 ${error}
             </div>
         `;
-        els.pageLabel.textContent = "-";
-        els.prevPage.disabled = true;
-        els.nextPage.disabled = true;
         els.rawLink.classList.add("d-none");
     }
 
     function showReadySourceState() {
         els.sourceTitle.textContent = "Context";
         els.sourceCanvas.innerHTML = READY_SOURCE_HTML;
-        els.pageLabel.textContent = "-";
-        els.prevPage.disabled = true;
-        els.nextPage.disabled = true;
         els.rawLink.classList.add("d-none");
     }
 
@@ -513,9 +504,6 @@
         }
         els.sourceCanvas.innerHTML = html;
         state.currentPage = targetPage;
-        els.pageLabel.textContent = `${targetPage} / ${pageCount}`;
-        els.prevPage.disabled = false;
-        els.nextPage.disabled = false;
         // Flick to the page that holds the highlight (or the current page).
         const targetEl = els.sourceCanvas.querySelector(`.pdf-stage[data-page="${targetPage}"]`);
         if (targetEl) {
@@ -525,11 +513,6 @@
         }
     }
 
-    function scrollToPage(page) {
-        const stage = els.sourceCanvas && els.sourceCanvas.querySelector(`.pdf-stage[data-page="${page}"]`);
-        if (stage) stage.scrollIntoView({ block: "start", behavior: "smooth" });
-    }
-
     async function renderTextSource(source, chunk) {
         const renderData = await getRenderData(source.id);
         const text = renderData && renderData.text ? renderData.text : "";
@@ -537,9 +520,6 @@
         const fallbackStart = chunk && chunk.text ? text.indexOf(chunk.text) : -1;
         const start = location && Number.isFinite(location.start) ? location.start : fallbackStart;
         const end = location && Number.isFinite(location.end) ? location.end : (fallbackStart >= 0 && chunk ? fallbackStart + chunk.text.length : -1);
-        els.pageLabel.textContent = source.kind === "json" ? "JSON" : "Text";
-        els.prevPage.disabled = true;
-        els.nextPage.disabled = true;
         const regClass = isRegistrationSource(source.id) ? " is-reg" : "";
         els.sourceCanvas.innerHTML = `<div class="source-text${regClass}">${highlightText(text, start, end)}</div>`;
         const mark = els.sourceCanvas.querySelector("mark");
@@ -821,33 +801,6 @@
         reclamp();
     }
 
-    if (els.prevPage) {
-        els.prevPage.addEventListener("click", () => {
-            state.currentPage = Math.max(1, (state.currentPage || 1) - 1);
-            scrollToPage(state.currentPage);
-        });
-    }
-    if (els.nextPage) {
-        els.nextPage.addEventListener("click", () => {
-            const stages = els.sourceCanvas.querySelectorAll(".pdf-stage[data-page]");
-            const max = stages.length || ((state.currentPage || 1) + 1);
-            state.currentPage = Math.min(max, (state.currentPage || 1) + 1);
-            scrollToPage(state.currentPage);
-        });
-    }
-    if (els.sourceCanvas) {
-        els.sourceCanvas.addEventListener("scroll", () => {
-            const stages = els.sourceCanvas.querySelectorAll(".pdf-stage[data-page]");
-            if (!stages.length) return;
-            const canvasTop = els.sourceCanvas.getBoundingClientRect().top;
-            let current = 1;
-            stages.forEach((st) => {
-                if (st.getBoundingClientRect().top - canvasTop <= 80) current = Number(st.dataset.page);
-            });
-            state.currentPage = current;
-            els.pageLabel.textContent = `${current} / ${stages.length}`;
-        });
-    }
     if (els.closeViewer) {
         els.closeViewer.addEventListener("click", () => {
             els.viewer.classList.remove("is-open");
