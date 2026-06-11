@@ -5,13 +5,11 @@
     if (!app) return;
 
     const EVIDENCE_LIMIT_KEY = "regcheck.report.evidenceLimit";
-    const DEFAULT_EVIDENCE_LIMIT = 3;
-    const EVIDENCE_LIMIT_OPTIONS = [3, 5, 10, "all"];
+    const DEFAULT_EVIDENCE_LIMIT = 2;
+    const EVIDENCE_LIMIT_OPTIONS = [2, 4, 6];
 
     function loadEvidenceLimit() {
-        const stored = window.localStorage ? window.localStorage.getItem(EVIDENCE_LIMIT_KEY) : null;
-        if (stored === "all") return "all";
-        const parsed = parseInt(stored || "", 10);
+        const parsed = parseInt(window.localStorage ? window.localStorage.getItem(EVIDENCE_LIMIT_KEY) : "", 10);
         return EVIDENCE_LIMIT_OPTIONS.includes(parsed) ? parsed : DEFAULT_EVIDENCE_LIMIT;
     }
 
@@ -447,9 +445,7 @@
         }
         quotes.forEach((quote) => {
             const chunk = chunkForQuote(quote);
-            const hasScore = quote.score && quote.score > 0;
-            const pct = hasScore ? Math.max(6, Math.min(100, Math.round(quote.score * 100))) : 0;
-            const traceable = quoteHasSource(quote);
+            const hasScore = Number.isFinite(quote.score) && quote.score > 0;
             const active = opts.activeId && quote.id === opts.activeId;
             const button = document.createElement("button");
             button.type = "button";
@@ -458,22 +454,12 @@
             button.innerHTML = `
                 <span class="evidence-card__head">
                     <span class="evidence-card__id">${escapeHtml(quote.id || "Evidence")}</span>
-                    ${hasScore ? `
-                        <span class="evidence-card__strength" title="Similarity ${quote.score.toFixed(3)}" aria-label="Similarity ${quote.score.toFixed(3)}">
-                            <span class="evidence-card__strength-bar" style="width:${pct}%"></span>
-                        </span>` : ""}
+                    <span class="evidence-card__score" title="Relevance score">${hasScore ? quote.score.toFixed(2) : "&mdash;"}</span>
                 </span>
                 <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
-                ${traceable && !opts.compact ? `<span class="evidence-card__cue">Open in documents &rsaquo;</span>` : ""}
+                ${opts.compact ? "" : `<span class="evidence-card__cue">Open in documents &rsaquo;</span>`}
             `;
-            if (opts.onPick) {
-                button.addEventListener("click", () => opts.onPick(quote));
-            } else if (traceable) {
-                button.addEventListener("click", () => openDocuments(quote));
-            } else {
-                button.disabled = true;
-                button.classList.add("is-disabled");
-            }
+            button.addEventListener("click", () => (opts.onPick ? opts.onPick(quote) : openDocuments(quote)));
             container.appendChild(button);
         });
     }
@@ -549,6 +535,7 @@
             renderDocPanel(item, "ppr", pprQuotes),
         ]).then(() => {
             refreshActiveHighlight();
+            markUnlocatedQuotes();
             scrollActiveIntoView();
         });
     }
@@ -581,7 +568,10 @@
             return;
         }
         if (source.kind === "pdf" && source.render_mode === "pdf") {
-            scroll.innerHTML = buildPdfDoc(source, quotes, role);
+            // Render text is also needed for the page-flag fallback (quotes
+            // whose rect-finding failed at ingestion).
+            const renderData = await getRenderData(source.id);
+            scroll.innerHTML = buildPdfDoc(source, quotes, role, renderData);
         } else {
             const renderData = await getRenderData(source.id);
             const text = (renderData && renderData.text) || "";
@@ -603,8 +593,19 @@
     }
 
     function refreshActiveHighlight() {
-        els.viewDocuments.querySelectorAll(".doc-mark, .pdf-highlight").forEach((node) => {
+        els.viewDocuments.querySelectorAll(".doc-mark, .pdf-highlight, .pdf-page-flag").forEach((node) => {
             node.classList.toggle("is-active", node.dataset.quote === state.activeQuoteId);
+        });
+    }
+
+    // Flag middle-pane quote cards whose quote could not be anchored anywhere
+    // in either document, so a dead click is explained rather than silent.
+    function markUnlocatedQuotes() {
+        els.viewDocuments.querySelectorAll("#docs-quotes .evidence-card").forEach((card) => {
+            const located = !!document.getElementById(`docmark-${card.dataset.quote}`);
+            card.classList.toggle("is-unlocated", !located);
+            if (!located) card.title = "This quote could not be located in the rendered document.";
+            else card.removeAttribute("title");
         });
     }
 
@@ -626,16 +627,41 @@
         return `docmark-${quote.id}`;
     }
 
+    // Resolve where a quote sits in the document text. Stored chunk offsets
+    // are used only after validation; otherwise fall back to the locator's
+    // tiered fuzzy matching (exact → normalized → dehyphenated → seeded).
+    function resolveTextSpan(docText, quote) {
+        if (!docText) return null;
+        const locator = window.RegCheckLocator || null;
+        const chunk = chunkForQuote(quote);
+        const expected = (chunk && chunk.text) || quote.text || "";
+        if (chunk) {
+            const loc = firstLocation(chunk, "text") || firstLocation(chunk, "json");
+            if (loc && Number.isFinite(loc.start) && Number.isFinite(loc.end) && loc.end > loc.start) {
+                if (!locator || locator.spanMatches(docText, loc.start, loc.end, expected)) {
+                    return { start: loc.start, end: loc.end, approximate: false };
+                }
+            }
+        }
+        if (!expected) return null;
+        if (locator) {
+            const hit = locator.locateQuote(docText, expected);
+            if (hit) return hit;
+            if (quote.text && quote.text !== expected) {
+                return locator.locateQuote(docText, quote.text);
+            }
+            return null;
+        }
+        const index = docText.indexOf(expected);
+        return index >= 0 ? { start: index, end: index + expected.length, approximate: false } : null;
+    }
+
     function buildTextDoc(text, quotes) {
         if (!text) return `<div class="source-placeholder">Document text unavailable.</div>`;
         const ranges = [];
         quotes.forEach((quote) => {
-            const chunk = chunkForQuote(quote);
-            const loc = chunk ? (firstLocation(chunk, "text") || firstLocation(chunk, "json")) : null;
-            const body = (chunk && chunk.text) || quote.text || "";
-            let start = loc && Number.isFinite(loc.start) ? loc.start : text.indexOf(body);
-            let end = loc && Number.isFinite(loc.end) ? loc.end : (start >= 0 ? start + body.length : -1);
-            if (start >= 0 && end > start) ranges.push({ start, end, quote });
+            const span = resolveTextSpan(text, quote);
+            if (span) ranges.push({ start: span.start, end: span.end, approximate: span.approximate, quote });
         });
         ranges.sort((a, b) => a.start - b.start);
         const clean = [];
@@ -647,7 +673,8 @@
         clean.forEach((r) => {
             out += escapeHtml(text.slice(cursor, r.start));
             const active = r.quote.id === state.activeQuoteId ? " is-active" : "";
-            out += `<mark class="doc-mark${active}" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}">`
+            const approx = r.approximate ? ` title="Approximate location"` : "";
+            out += `<mark class="doc-mark${active}" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}"${approx}>`
                 + escapeHtml(text.slice(r.start, r.end))
                 + `</mark>`;
             cursor = r.end;
@@ -656,10 +683,36 @@
         return out;
     }
 
-    function buildPdfDoc(source, quotes, role) {
+    function buildPdfDoc(source, quotes, role, renderData) {
         const pageCount = source.page_count || (source.pages || []).length || 1;
         const template = source.page_url_template || "";
         const hlBase = "pdf-highlight" + (role === "reg" ? " pdf-highlight--reg" : "");
+        const locator = window.RegCheckLocator || null;
+        const renderText = (renderData && renderData.text) || "";
+        const pages = (renderData && renderData.pages) || source.pages || [];
+
+        // Quotes without rect locations fall back to a clickable page-level
+        // flag: find the quote in the render text, map the offset to a page.
+        const flagsByPage = new Map();
+        quotes.forEach((quote) => {
+            const chunk = chunkForQuote(quote);
+            const hasRects = chunk && Array.isArray(chunk.locations)
+                && chunk.locations.some((l) => l.kind === "pdf" && (l.rects || []).length);
+            if (hasRects) return;
+            let offset = null;
+            const span = renderText ? resolveTextSpan(renderText, quote) : null;
+            if (span) offset = span.start;
+            else if (chunk) {
+                const loc = firstLocation(chunk, "text") || firstLocation(chunk, "json");
+                if (loc && Number.isFinite(loc.start)) offset = loc.start;
+            }
+            if (offset === null || !locator) return;
+            const pageHit = locator.pageForOffset(pages, offset, renderText.length || undefined);
+            if (!pageHit) return;
+            if (!flagsByPage.has(pageHit.page)) flagsByPage.set(pageHit.page, []);
+            flagsByPage.get(pageHit.page).push({ quote, approximate: pageHit.approximate });
+        });
+
         let html = "";
         for (let page = 1; page <= pageCount; page += 1) {
             const src = template.replace("{page_number}", String(page));
@@ -683,7 +736,16 @@
                     });
                 });
             }).join("");
-            html += `<div class="pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}</div>`;
+            const flags = (flagsByPage.get(page) || []).map((entry, index) => {
+                const active = entry.quote.id === state.activeQuoteId ? " is-active" : "";
+                const title = entry.approximate
+                    ? "Quote is on (approximately) this page — exact position unavailable"
+                    : "Quote is on this page — exact position unavailable";
+                return `<button type="button" class="pdf-page-flag pdf-page-flag--${role}${active}"
+                    id="${highlightId(entry.quote)}" data-quote="${escapeHtml(entry.quote.id)}"
+                    style="top: calc(0.6rem + ${index * 1.9}rem)" title="${title}">${escapeHtml(entry.quote.id)}</button>`;
+            }).join("");
+            html += `<div class="pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}${flags}</div>`;
         }
         return html;
     }

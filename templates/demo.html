@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260611-twoview2' %}
+    {% set static_version = '20260611-tracing' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -69,6 +69,7 @@
     <div id="report-toast" class="report-toast" role="status" aria-live="polite"></div>
 
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+    <script src="{{ url_for('static', path='js/quote-locator.js') }}?v={{ static_version }}"></script>
     <script src="{{ url_for('static', path='js/report.js') }}?v={{ static_version }}"></script>
 </body>
 </html>
