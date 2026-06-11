@@ -23,31 +23,26 @@
         manifestUnavailable: false,
         evidenceStatus: null,
         evidenceError: null,
+        view: "decision",         // "decision" | "documents"
         activeIndex: 0,
-        activeEvidence: null,
-        currentSourceId: null,
-        currentPage: 1,
+        activeQuoteId: null,      // active highlighted quote in the documents view
         evidenceLimit: loadEvidenceLimit(),
         renderDataCache: new Map(),
         lastWorkflowStatus: null,
         logSeen: "",
         pollHandle: null,
+        decisionResizersDone: false,
     };
 
     const els = {
+        viewDecision: document.getElementById("view-decision"),
+        viewDocuments: document.getElementById("view-documents"),
         list: document.getElementById("dimension-list"),
         count: document.getElementById("dimension-count"),
-        railSummary: document.getElementById("rail-summary"),
         detail: document.getElementById("dimension-detail"),
         empty: document.getElementById("report-empty-state"),
-        viewer: document.getElementById("source-viewer"),
-        sourceTitle: document.getElementById("source-title"),
-        sourceTabs: document.getElementById("source-tabs"),
-        sourceCanvas: document.getElementById("source-canvas"),
-        rawLink: document.getElementById("source-raw-link"),
-        closeViewer: document.getElementById("source-close-btn"),
+        quotesPane: document.getElementById("quotes-pane"),
         statusPill: document.getElementById("report-status-pill"),
-        statusDot: document.getElementById("report-status-dot"),
         statusText: document.getElementById("report-status-text"),
         copyLink: document.getElementById("copy-report-link-btn"),
         copyLinkLabel: document.getElementById("copy-report-link-label"),
@@ -58,7 +53,11 @@
         logProgress: document.getElementById("report-log-progress"),
     };
 
-    const READY_SOURCE_HTML = els.sourceCanvas ? els.sourceCanvas.innerHTML : "";
+    const prefersReducedMotion = window.matchMedia
+        ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        : false;
+
+    /* ── helpers ─────────────────────────────────────────────────────────── */
 
     function escapeHtml(value) {
         return (value === null || value === undefined ? "" : String(value))
@@ -130,6 +129,59 @@
         }
     }
 
+    function currentItem() {
+        if (!state.items.length) return null;
+        const index = Math.min(Math.max(state.activeIndex, 0), state.items.length - 1);
+        state.activeIndex = index;
+        return state.items[index];
+    }
+
+    function quotesForRole(item, role) {
+        const raw = role === "reg" ? item.registration_content_quotes : item.paper_content_quotes;
+        return sortedQuotes(parseQuotes(raw || ""), state.evidenceLimit)
+            .map((q) => Object.assign({}, q, { doc: role }));
+    }
+
+    function manifestSources() {
+        return (state.manifest && state.manifest.sources) || {};
+    }
+
+    function chunkForQuote(quote) {
+        if (!state.manifest || !state.manifest.chunks) return null;
+        return state.manifest.chunks[quote.id] || null;
+    }
+
+    function firstLocation(chunk, kind) {
+        if (!chunk || !Array.isArray(chunk.locations)) return null;
+        return chunk.locations.find((location) => location.kind === kind) || null;
+    }
+
+    function isRegistrationSource(sourceId) {
+        if (!sourceId || !state.manifest || !state.manifest.chunks) return false;
+        return Object.values(state.manifest.chunks)
+            .some((c) => c.source_id === sourceId && /^PREREG/i.test(c.id || ""));
+    }
+
+    function roleSourceId(item, role) {
+        const quotes = parseQuotes(role === "reg" ? item.registration_content_quotes : item.paper_content_quotes);
+        for (const q of quotes) {
+            const chunk = chunkForQuote(q);
+            if (chunk && chunk.source_id) return chunk.source_id;
+        }
+        const ids = Object.keys(manifestSources());
+        for (const id of ids) {
+            if (role === "reg" ? isRegistrationSource(id) : !isRegistrationSource(id)) return id;
+        }
+        return null;
+    }
+
+    function quoteHasSource(quote) {
+        const chunk = chunkForQuote(quote);
+        return !state.manifestUnavailable && !!(chunk && chunk.source_id);
+    }
+
+    /* ── status pill / log / toast ───────────────────────────────────────── */
+
     function setStatus(stateValue, detailText, counts) {
         if (!els.statusPill) return;
         const running = stateValue !== "SUCCESS" && stateValue !== "FAILURE";
@@ -156,7 +208,6 @@
         if (!text || !els.logList || text === state.logSeen) return;
         state.logSeen = text;
         const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        // Single line: the latest status replaces the previous one.
         els.logList.innerHTML = `<li><time>${escapeHtml(time)}</time><span>${escapeHtml(text)}</span></li>`;
         if (els.log) els.log.classList.remove("d-none");
     }
@@ -171,47 +222,104 @@
         }, 1800);
     }
 
+    /* ── resizable columns ───────────────────────────────────────────────── */
+
+    function installResizers(container, panels, storageKey, mins, defaults) {
+        if (!container || panels.length < 2) return;
+        let stored = null;
+        try { stored = JSON.parse(window.localStorage.getItem(storageKey) || "null"); } catch (_e) { stored = null; }
+        panels.forEach((panel, i) => {
+            const grow = (Array.isArray(stored) && stored[i]) || defaults[i] || 1;
+            panel.dataset.grow = defaults[i] || 1;
+            panel.style.flex = `${grow} 1 0`;
+            panel.style.minWidth = (mins[i] || 200) + "px";
+        });
+        const persist = () => {
+            const grows = panels.map((p) => parseFloat(p.style.flexGrow) || 1);
+            try { window.localStorage.setItem(storageKey, JSON.stringify(grows)); } catch (_e) { /* ignore */ }
+        };
+        for (let i = 0; i < panels.length - 1; i += 1) {
+            const splitter = document.createElement("div");
+            splitter.className = "report-splitter";
+            splitter.setAttribute("role", "separator");
+            splitter.setAttribute("aria-orientation", "vertical");
+            splitter.setAttribute("tabindex", "0");
+            splitter.setAttribute("aria-label", "Drag to resize panels");
+            panels[i].after(splitter);
+            attachSplitter(splitter, panels[i], panels[i + 1], persist);
+        }
+    }
+
+    function attachSplitter(splitter, left, right, persist) {
+        const reset = () => {
+            left.style.flex = `${left.dataset.grow || 1} 1 0`;
+            right.style.flex = `${right.dataset.grow || 1} 1 0`;
+            persist();
+        };
+        splitter.addEventListener("dblclick", reset);
+        splitter.addEventListener("pointerdown", (event) => {
+            if (getComputedStyle(splitter).display === "none") return;
+            event.preventDefault();
+            splitter.classList.add("is-active");
+            document.body.classList.add("is-col-resizing");
+            const startX = event.clientX;
+            const leftW = left.getBoundingClientRect().width;
+            const rightW = right.getBoundingClientRect().width;
+            const total = leftW + rightW;
+            const totalGrow = (parseFloat(left.style.flexGrow) || 1) + (parseFloat(right.style.flexGrow) || 1);
+            const leftMin = parseFloat(left.style.minWidth) || 120;
+            const rightMin = parseFloat(right.style.minWidth) || 120;
+            const move = (ev) => {
+                let nl = leftW + (ev.clientX - startX);
+                nl = Math.max(leftMin, Math.min(nl, total - rightMin));
+                const nr = total - nl;
+                left.style.flex = `${(nl / total) * totalGrow} 1 0`;
+                right.style.flex = `${(nr / total) * totalGrow} 1 0`;
+            };
+            const up = () => {
+                document.removeEventListener("pointermove", move);
+                document.removeEventListener("pointerup", up);
+                splitter.classList.remove("is-active");
+                document.body.classList.remove("is-col-resizing");
+                persist();
+            };
+            document.addEventListener("pointermove", move);
+            document.addEventListener("pointerup", up);
+        });
+    }
+
+    /* ── top-level render ────────────────────────────────────────────────── */
+
     function render() {
+        const hasItems = state.items.length > 0;
+        const inDocuments = state.view === "documents" && hasItems;
+        if (els.viewDecision) els.viewDecision.classList.toggle("d-none", inDocuments);
+        if (els.viewDocuments) els.viewDocuments.classList.toggle("d-none", !inDocuments);
+
         renderDimensionList();
         renderDimensionDetail();
-        renderSourceTabs();
-        if (state.manifestUnavailable) {
-            renderSourceViewer();
+        renderQuotesPane();
+        if (inDocuments) renderDocumentsView();
+
+        if (!state.decisionResizersDone && els.viewDecision) {
+            const panels = [
+                els.viewDecision.querySelector(".report-dimension-rail"),
+                els.viewDecision.querySelector(".report-detail"),
+                els.viewDecision.querySelector(".report-quotes"),
+            ].filter(Boolean);
+            if (panels.length === 3) {
+                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols",
+                    [150, 280, 320], [1, 2, 2.5]);
+                state.decisionResizersDone = true;
+            }
         }
     }
 
-    function verdictCounts() {
-        const counts = { flag: 0, ok: 0, warn: 0 };
-        state.items.forEach((item) => {
-            counts[judgementInfo(item.deviation_judgement).tone] += 1;
-        });
-        return counts;
-    }
-
-    function renderRailSummary() {
-        if (!els.railSummary) return;
-        if (!state.items.length) {
-            els.railSummary.innerHTML = "";
-            return;
-        }
-        const counts = verdictCounts();
-        const segments = [
-            { tone: "flag", value: counts.flag, label: "deviation" },
-            { tone: "warn", value: counts.warn, label: "missing" },
-            { tone: "ok", value: counts.ok, label: "no deviation" },
-        ].filter((segment) => segment.value > 0);
-        els.railSummary.innerHTML = segments.map((segment) => `
-            <span class="rail-summary__item rail-summary__item--${segment.tone}">
-                <span class="verdict-dot verdict-dot--${segment.tone}"></span>
-                <strong>${segment.value}</strong> ${escapeHtml(segment.label)}
-            </span>
-        `).join("");
-    }
+    /* ── decision view: dimensions rail ──────────────────────────────────── */
 
     function renderDimensionList() {
         if (!els.list) return;
-        els.count.textContent = String(state.items.length);
-        renderRailSummary();
+        if (els.count) els.count.textContent = String(state.items.length);
         els.list.innerHTML = "";
         state.items.forEach((item, index) => {
             const info = judgementInfo(item.deviation_judgement);
@@ -221,10 +329,7 @@
             button.type = "button";
             button.className = `dimension-card ${index === state.activeIndex ? "is-active" : ""}`;
             button.innerHTML = `
-                <span class="dimension-card__top">
-                    <span class="verdict-dot verdict-dot--${info.tone}" title="${escapeHtml(info.label)}"></span>
-                    <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
-                </span>
+                <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
                 <span class="dimension-card__meta">
                     <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
                     <span class="dimension-card__count">${regCount + paperCount} quotes</span>
@@ -232,15 +337,18 @@
             `;
             button.addEventListener("click", () => {
                 state.activeIndex = index;
-                state.activeEvidence = null;
+                state.view = "decision";
+                state.activeQuoteId = null;
                 render();
                 const detail = document.querySelector(".report-detail");
                 if (detail) detail.scrollTop = 0;
-                autoShowTopEvidence();
+                if (els.quotesPane) els.quotesPane.scrollTop = 0;
             });
             els.list.appendChild(button);
         });
     }
+
+    /* ── decision view: middle detail (decision + rationale + summaries) ──── */
 
     function renderDimensionDetail() {
         if (!els.detail || !els.empty) return;
@@ -251,16 +359,14 @@
         }
         els.empty.classList.add("d-none");
         els.detail.classList.remove("d-none");
-        const item = state.items[Math.min(state.activeIndex, state.items.length - 1)] || {};
+        const item = currentItem() || {};
         const info = judgementInfo(item.deviation_judgement);
         els.detail.innerHTML = `
             <div class="detail-head">
-                <p class="detail-eyebrow">Dimension ${state.activeIndex + 1} of ${state.items.length}</p>
                 <h2>${escapeHtml(item.dimension || "Dimension")}</h2>
             </div>
             <div class="verdict-banner verdict-banner--${info.tone}">
                 <div class="verdict-banner__head">
-                    <span class="verdict-dot verdict-dot--${info.tone}"></span>
                     <span class="verdict-banner__label">${info.label}</span>
                 </div>
                 <p class="verdict-banner__body">${escapeHtml(item.deviation_information || "No deviation information found.")}</p>
@@ -275,62 +381,80 @@
                     <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
                 </div>
             </div>
-            <div class="evidence-section">
-                <div class="evidence-section__header">
-                    <div>
-                        <p class="section-title">Evidence</p>
-                        <p class="evidence-limit-note">Showing ${escapeHtml(evidenceLimitLabel(state.evidenceLimit).toLowerCase())} by similarity. Click a quote to view it in context. CSV export includes all chunks.</p>
-                    </div>
-                    <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
-                        ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
-                            <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}">
-                                ${escapeHtml(option === "all" ? "All" : String(option))}
-                            </button>
-                        `).join("")}
-                    </div>
-                </div>
-                <div class="evidence-grid">
-                    <div class="evidence-column">
-                        <p class="evidence-column__title evidence-column__title--reg">Registration</p>
-                        <div class="evidence-list" id="registration-evidence-list"></div>
-                    </div>
-                    <div class="evidence-column">
-                        <p class="evidence-column__title evidence-column__title--paper">Paper</p>
-                        <div class="evidence-list" id="paper-evidence-list"></div>
-                    </div>
-                </div>
-            </div>
         `;
-        els.detail.querySelectorAll("[data-evidence-limit]").forEach((button) => {
+    }
+
+    /* ── decision view: right pane (quotes list) ─────────────────────────── */
+
+    function limitControlHtml() {
+        return `
+            <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
+                ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
+                    <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}">
+                        ${escapeHtml(option === "all" ? "All" : String(option))}
+                    </button>
+                `).join("")}
+            </div>`;
+    }
+
+    function bindLimitControl(scope, rerender) {
+        scope.querySelectorAll("[data-evidence-limit]").forEach((button) => {
             button.addEventListener("click", () => {
                 const raw = button.dataset.evidenceLimit;
                 const next = raw === "all" ? "all" : parseInt(raw, 10);
                 if (!EVIDENCE_LIMIT_OPTIONS.includes(next)) return;
                 persistEvidenceLimit(next);
-                renderDimensionDetail();
+                rerender();
             });
         });
-        renderEvidenceList("registration", parseQuotes(item.registration_content_quotes || ""));
-        renderEvidenceList("paper", parseQuotes(item.paper_content_quotes || ""));
     }
 
-    function renderEvidenceList(section, quotes) {
-        const container = document.getElementById(`${section}-evidence-list`);
+    function renderQuotesPane() {
+        if (!els.quotesPane) return;
+        if (!state.items.length) {
+            els.quotesPane.innerHTML = "";
+            return;
+        }
+        const item = currentItem() || {};
+        els.quotesPane.innerHTML = `
+            <div class="quotes-pane__header">
+                <p class="section-title">Evidence quotes</p>
+                ${limitControlHtml()}
+            </div>
+            <div class="quotes-grid">
+                <div class="evidence-column">
+                    <p class="evidence-column__title evidence-column__title--reg">Registration</p>
+                    <div class="evidence-list" id="registration-evidence-list"></div>
+                </div>
+                <div class="evidence-column">
+                    <p class="evidence-column__title evidence-column__title--paper">Paper</p>
+                    <div class="evidence-list" id="paper-evidence-list"></div>
+                </div>
+            </div>
+        `;
+        bindLimitControl(els.quotesPane, renderQuotesPane);
+        renderQuoteList(document.getElementById("registration-evidence-list"), quotesForRole(item, "reg"), "reg");
+        renderQuoteList(document.getElementById("paper-evidence-list"), quotesForRole(item, "ppr"), "ppr");
+    }
+
+    function renderQuoteList(container, quotes, role, opts) {
         if (!container) return;
+        opts = opts || {};
         container.innerHTML = "";
-        const list = sortedQuotes(quotes, state.evidenceLimit);
-        if (!list.length) {
+        if (!quotes.length) {
             container.innerHTML = `<div class="evidence-empty">No evidence found</div>`;
             return;
         }
-        list.forEach((quote) => {
+        quotes.forEach((quote) => {
             const chunk = chunkForQuote(quote);
-            const isActive = state.activeEvidence && state.activeEvidence.quote.id === quote.id;
             const hasScore = quote.score && quote.score > 0;
             const pct = hasScore ? Math.max(6, Math.min(100, Math.round(quote.score * 100))) : 0;
+            const traceable = quoteHasSource(quote);
+            const active = opts.activeId && quote.id === opts.activeId;
             const button = document.createElement("button");
             button.type = "button";
-            button.className = `evidence-card evidence-card--${section} ${isActive ? "is-active" : ""}`;
+            button.className = `evidence-card evidence-card--${role} ${active ? "is-active" : ""}`;
+            button.dataset.quote = quote.id;
             button.innerHTML = `
                 <span class="evidence-card__head">
                     <span class="evidence-card__id">${escapeHtml(quote.id || "Evidence")}</span>
@@ -340,218 +464,256 @@
                         </span>` : ""}
                 </span>
                 <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
-                <span class="evidence-card__cue">View in context &rsaquo;</span>
+                ${traceable && !opts.compact ? `<span class="evidence-card__cue">Open in documents &rsaquo;</span>` : ""}
             `;
-            button.addEventListener("click", () => openEvidence(quote));
+            if (opts.onPick) {
+                button.addEventListener("click", () => opts.onPick(quote));
+            } else if (traceable) {
+                button.addEventListener("click", () => openDocuments(quote));
+            } else {
+                button.disabled = true;
+                button.classList.add("is-disabled");
+            }
             container.appendChild(button);
         });
     }
 
-    function chunkForQuote(quote) {
-        if (!state.manifest || !state.manifest.chunks) return null;
-        return state.manifest.chunks[quote.id] || null;
+    /* ── documents view (step 2): registration | quotes | paper ──────────── */
+
+    function openDocuments(quote) {
+        state.view = "documents";
+        state.activeQuoteId = quote ? quote.id : null;
+        render();
     }
 
-    function renderSourceTabs() {
-        if (!els.sourceTabs) return;
-        const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
-        els.sourceTabs.innerHTML = "";
-        if (state.manifestUnavailable) {
-            return;
+    function backToDecision() {
+        state.view = "decision";
+        render();
+    }
+
+    function combinedQuotes(item) {
+        return quotesForRole(item, "reg").concat(quotesForRole(item, "ppr"));
+    }
+
+    function renderDocumentsView() {
+        if (!els.viewDocuments) return;
+        const item = currentItem();
+        if (!item) return;
+        const info = judgementInfo(item.deviation_judgement);
+        const regQuotes = quotesForRole(item, "reg");
+        const pprQuotes = quotesForRole(item, "ppr");
+        const all = regQuotes.concat(pprQuotes);
+        if (!all.some((q) => q.id === state.activeQuoteId)) {
+            state.activeQuoteId = all.length ? all[0].id : null;
         }
-        Object.values(sources).forEach((source) => {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = `source-tab ${source.id === state.currentSourceId ? "is-active" : ""}`;
-            button.textContent = source.label || source.id;
-            button.addEventListener("click", () => {
-                state.currentSourceId = source.id;
-                state.activeEvidence = null;
-                state.currentPage = 1;
-                renderSourceViewer();
-                renderSourceTabs();
-            });
-            els.sourceTabs.appendChild(button);
+
+        els.viewDocuments.innerHTML = `
+            <div class="docs-bar">
+                <button type="button" class="docs-back" data-back>
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                    Back to decision
+                </button>
+                <span class="docs-bar__dim">${escapeHtml(item.dimension || "Dimension")}</span>
+                <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
+            </div>
+            <div class="docs-body">
+                <section class="docs-panel docs-panel--doc">
+                    <div class="docs-panel__head"><span class="docs-tag docs-tag--reg">Registration</span></div>
+                    <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
+                </section>
+                <section class="docs-panel docs-panel--quotes">
+                    <div class="docs-panel__head">
+                        <span class="section-title">Quotes</span>
+                        ${limitControlHtml()}
+                    </div>
+                    <div class="docs-panel__scroll" id="docs-quotes"></div>
+                </section>
+                <section class="docs-panel docs-panel--doc">
+                    <div class="docs-panel__head"><span class="docs-tag docs-tag--ppr">Paper</span></div>
+                    <div class="docs-panel__scroll" id="docs-ppr-scroll"><div class="source-placeholder">Loading…</div></div>
+                </section>
+            </div>
+        `;
+
+        const back = els.viewDocuments.querySelector("[data-back]");
+        if (back) back.addEventListener("click", backToDecision);
+        bindLimitControl(els.viewDocuments, renderDocumentsView);
+
+        const body = els.viewDocuments.querySelector(".docs-body");
+        const panels = [...els.viewDocuments.querySelectorAll(".docs-panel")];
+        installResizers(body, panels, "regcheck.report.docsCols", [220, 200, 220], [2, 1.3, 2]);
+
+        renderMiddleQuotes(regQuotes, pprQuotes);
+        Promise.all([
+            renderDocPanel(item, "reg", regQuotes),
+            renderDocPanel(item, "ppr", pprQuotes),
+        ]).then(() => {
+            refreshActiveHighlight();
+            scrollActiveIntoView();
         });
     }
 
-    function firstLocation(chunk, kind) {
-        if (!chunk || !Array.isArray(chunk.locations)) return null;
-        return chunk.locations.find((location) => location.kind === kind) || null;
-    }
-
-    function openEvidence(quote, opts) {
-        opts = opts || {};
-        const chunk = chunkForQuote(quote);
-        state.activeEvidence = { quote, chunk };
-        if (chunk && chunk.source_id) {
-            state.currentSourceId = chunk.source_id;
-            const pdfLocation = firstLocation(chunk, "pdf");
-            state.currentPage = pdfLocation ? pdfLocation.page : 1;
-        }
-        renderDimensionDetail();
-        renderSourceTabs();
-        renderSourceViewer();
-        // Auto-flick (e.g. on dimension select) updates the docked pane but
-        // must not pop the mobile bottom-sheet open.
-        if (els.viewer && !opts.auto) els.viewer.classList.add("is-open");
-    }
-
-    // A source document is the "registration" if its chunks carry PREREG ids.
-    function isRegistrationSource(sourceId) {
-        if (!sourceId || !state.manifest || !state.manifest.chunks) return false;
-        return Object.values(state.manifest.chunks)
-            .some((c) => c.source_id === sourceId && /^PREREG/i.test(c.id || ""));
-    }
-
-    // On dimension select / load, pre-open the highest-similarity quote so the
-    // source pane flicks to the most relevant page automatically.
-    function autoShowTopEvidence() {
-        if (state.activeEvidence) return;
-        if (state.manifestUnavailable || !state.manifest) return;
-        const item = state.items[Math.min(state.activeIndex, state.items.length - 1)];
-        if (!item) return;
-        const quotes = parseQuotes(item.registration_content_quotes || "")
-            .concat(parseQuotes(item.paper_content_quotes || ""))
-            .filter((q) => chunkForQuote(q))
-            .sort((a, b) => (b.score || 0) - (a.score || 0));
-        if (quotes.length) openEvidence(quotes[0], { auto: true });
-    }
-
-    function renderUnavailableSourceState() {
-        els.sourceTitle.textContent = "Sources unavailable";
-        const status = state.evidenceStatus ? `<p>Status: ${escapeHtml(state.evidenceStatus)}</p>` : "";
-        const error = state.evidenceError ? `<p>${escapeHtml(state.evidenceError)}</p>` : "";
-        const fallback = status || error
-            ? ""
-            : "<p>Evidence artifacts were not created for this report.</p>";
-        els.sourceCanvas.innerHTML = `
-            <div class="source-placeholder">
-                ${fallback}
-                ${status}
-                ${error}
+    function renderMiddleQuotes(regQuotes, pprQuotes) {
+        const container = els.viewDocuments.querySelector("#docs-quotes");
+        if (!container) return;
+        container.innerHTML = `
+            <div class="evidence-column">
+                <p class="evidence-column__title evidence-column__title--reg">Registration</p>
+                <div class="evidence-list" id="docs-reg-quotes"></div>
+            </div>
+            <div class="evidence-column">
+                <p class="evidence-column__title evidence-column__title--paper">Paper</p>
+                <div class="evidence-list" id="docs-ppr-quotes"></div>
             </div>
         `;
-        els.rawLink.classList.add("d-none");
+        const pick = (quote) => setActiveQuote(quote.id);
+        renderQuoteList(document.getElementById("docs-reg-quotes"), regQuotes, "reg", { compact: true, onPick: pick, activeId: state.activeQuoteId });
+        renderQuoteList(document.getElementById("docs-ppr-quotes"), pprQuotes, "ppr", { compact: true, onPick: pick, activeId: state.activeQuoteId });
     }
 
-    function showReadySourceState() {
-        els.sourceTitle.textContent = "Context";
-        els.sourceCanvas.innerHTML = READY_SOURCE_HTML;
-        els.rawLink.classList.add("d-none");
-    }
-
-    async function renderSourceViewer() {
-        if (!els.sourceCanvas || !els.sourceTitle) return;
-        if (state.manifestUnavailable) {
-            renderUnavailableSourceState();
+    async function renderDocPanel(item, role, quotes) {
+        const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        if (!scroll) return;
+        const sourceId = roleSourceId(item, role);
+        const source = sourceId ? manifestSources()[sourceId] : null;
+        if (state.manifestUnavailable || !source) {
+            scroll.innerHTML = `<div class="source-placeholder">Source document unavailable.</div>`;
             return;
         }
-        const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
-        const source = sources[state.currentSourceId] || null;
-        if (!source) {
-            showReadySourceState();
-            return;
-        }
-        els.sourceTitle.textContent = source.label || source.id;
-        if (source.raw_url) {
-            els.rawLink.href = source.raw_url;
-            els.rawLink.classList.remove("d-none");
-        } else {
-            els.rawLink.classList.add("d-none");
-        }
-        const chunk = state.activeEvidence && state.activeEvidence.chunk && state.activeEvidence.chunk.source_id === source.id
-            ? state.activeEvidence.chunk
-            : null;
         if (source.kind === "pdf" && source.render_mode === "pdf") {
-            renderPdfSource(source, chunk);
-            return;
+            scroll.innerHTML = buildPdfDoc(source, quotes, role);
+        } else {
+            const renderData = await getRenderData(source.id);
+            const text = (renderData && renderData.text) || "";
+            scroll.innerHTML = `<div class="source-text source-text--doc ${role === "reg" ? "is-reg" : ""}">${buildTextDoc(text, quotes)}</div>`;
         }
-        await renderTextSource(source, chunk);
+        scroll.querySelectorAll("[data-quote]").forEach((node) => {
+            node.addEventListener("click", () => setActiveQuote(node.dataset.quote));
+        });
     }
 
-    function renderPdfSource(source, chunk) {
+    function setActiveQuote(id) {
+        state.activeQuoteId = id;
+        refreshActiveHighlight();
+        // Reflect selection in the middle quote cards.
+        els.viewDocuments.querySelectorAll("#docs-quotes .evidence-card").forEach((card) => {
+            card.classList.toggle("is-active", card.dataset.quote === id);
+        });
+        scrollActiveIntoView();
+    }
+
+    function refreshActiveHighlight() {
+        els.viewDocuments.querySelectorAll(".doc-mark, .pdf-highlight").forEach((node) => {
+            node.classList.toggle("is-active", node.dataset.quote === state.activeQuoteId);
+        });
+    }
+
+    function scrollActiveIntoView() {
+        if (!state.activeQuoteId) return;
+        const el = document.getElementById(`docmark-${state.activeQuoteId}`);
+        if (!el) return;
+        const container = el.closest(".docs-panel__scroll");
+        if (!container) return;
+        window.requestAnimationFrame(() => {
+            const cr = container.getBoundingClientRect();
+            const er = el.getBoundingClientRect();
+            const top = container.scrollTop + (er.top - cr.top) - (container.clientHeight / 2) + (er.height / 2);
+            container.scrollTo({ top, behavior: prefersReducedMotion ? "auto" : "smooth" });
+        });
+    }
+
+    function highlightId(quote) {
+        return `docmark-${quote.id}`;
+    }
+
+    function buildTextDoc(text, quotes) {
+        if (!text) return `<div class="source-placeholder">Document text unavailable.</div>`;
+        const ranges = [];
+        quotes.forEach((quote) => {
+            const chunk = chunkForQuote(quote);
+            const loc = chunk ? (firstLocation(chunk, "text") || firstLocation(chunk, "json")) : null;
+            const body = (chunk && chunk.text) || quote.text || "";
+            let start = loc && Number.isFinite(loc.start) ? loc.start : text.indexOf(body);
+            let end = loc && Number.isFinite(loc.end) ? loc.end : (start >= 0 ? start + body.length : -1);
+            if (start >= 0 && end > start) ranges.push({ start, end, quote });
+        });
+        ranges.sort((a, b) => a.start - b.start);
+        const clean = [];
+        let lastEnd = -1;
+        ranges.forEach((r) => { if (r.start >= lastEnd) { clean.push(r); lastEnd = r.end; } });
+
+        let out = "";
+        let cursor = 0;
+        clean.forEach((r) => {
+            out += escapeHtml(text.slice(cursor, r.start));
+            const active = r.quote.id === state.activeQuoteId ? " is-active" : "";
+            out += `<mark class="doc-mark${active}" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}">`
+                + escapeHtml(text.slice(r.start, r.end))
+                + `</mark>`;
+            cursor = r.end;
+        });
+        out += escapeHtml(text.slice(cursor));
+        return out;
+    }
+
+    function buildPdfDoc(source, quotes, role) {
         const pageCount = source.page_count || (source.pages || []).length || 1;
         const template = source.page_url_template || "";
-        const isReg = isRegistrationSource(source.id);
-        const hlClass = "pdf-highlight" + (isReg ? " pdf-highlight--reg" : "");
-        const highlightLocations = chunk && Array.isArray(chunk.locations)
-            ? chunk.locations.filter((location) => location.kind === "pdf")
-            : [];
-        const targetPage = highlightLocations.length
-            ? highlightLocations[0].page
-            : Math.min(Math.max(state.currentPage || 1, 1), pageCount);
-
-        // Render every page stacked so the source can be scrolled continuously.
+        const hlBase = "pdf-highlight" + (role === "reg" ? " pdf-highlight--reg" : "");
         let html = "";
         for (let page = 1; page <= pageCount; page += 1) {
             const src = template.replace("{page_number}", String(page));
             const pageInfo = (source.pages || []).find((p) => p.page_number === page) || {};
-            const highlights = highlightLocations
-                .filter((location) => location.page === page)
-                .flatMap((location) => {
-                    const width = location.page_width || pageInfo.width || 1;
-                    const height = location.page_height || pageInfo.height || 1;
-                    return (location.rects || []).map((rect) => {
+            const highlights = quotes.flatMap((quote) => {
+                const chunk = chunkForQuote(quote);
+                const locs = chunk && Array.isArray(chunk.locations)
+                    ? chunk.locations.filter((l) => l.kind === "pdf" && l.page === page)
+                    : [];
+                const active = quote.id === state.activeQuoteId ? " is-active" : "";
+                return locs.flatMap((loc) => {
+                    const width = loc.page_width || pageInfo.width || 1;
+                    const height = loc.page_height || pageInfo.height || 1;
+                    return (loc.rects || []).map((rect, ri) => {
                         const left = (rect.x0 / width) * 100;
                         const top = (rect.y0 / height) * 100;
-                        const rectWidth = ((rect.x1 - rect.x0) / width) * 100;
-                        const rectHeight = ((rect.y1 - rect.y0) / height) * 100;
-                        return `<span class="${hlClass} is-active" style="left:${left}%; top:${top}%; width:${rectWidth}%; height:${rectHeight}%;"></span>`;
+                        const w = ((rect.x1 - rect.x0) / width) * 100;
+                        const h = ((rect.y1 - rect.y0) / height) * 100;
+                        const anchor = ri === 0 ? `id="${highlightId(quote)}"` : "";
+                        return `<span class="${hlBase}${active}" ${anchor} data-quote="${escapeHtml(quote.id)}" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%;"></span>`;
                     });
-                }).join("");
+                });
+            }).join("");
             html += `<div class="pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}</div>`;
         }
-        els.sourceCanvas.innerHTML = html;
-        state.currentPage = targetPage;
-        // Flick to the page that holds the highlight (or the current page).
-        const targetEl = els.sourceCanvas.querySelector(`.pdf-stage[data-page="${targetPage}"]`);
-        if (targetEl) {
-            window.requestAnimationFrame(() => {
-                targetEl.scrollIntoView({ block: "start", behavior: "smooth" });
-            });
-        }
+        return html;
     }
 
-    async function renderTextSource(source, chunk) {
-        const renderData = await getRenderData(source.id);
-        const text = renderData && renderData.text ? renderData.text : "";
-        const location = chunk ? (firstLocation(chunk, "text") || firstLocation(chunk, "json")) : null;
-        const fallbackStart = chunk && chunk.text ? text.indexOf(chunk.text) : -1;
-        const start = location && Number.isFinite(location.start) ? location.start : fallbackStart;
-        const end = location && Number.isFinite(location.end) ? location.end : (fallbackStart >= 0 && chunk ? fallbackStart + chunk.text.length : -1);
-        const regClass = isRegistrationSource(source.id) ? " is-reg" : "";
-        els.sourceCanvas.innerHTML = `<div class="source-text${regClass}">${highlightText(text, start, end)}</div>`;
-        const mark = els.sourceCanvas.querySelector("mark");
-        if (mark) {
-            window.requestAnimationFrame(() => {
-                mark.scrollIntoView({ block: "center", behavior: "smooth" });
-            });
-        }
+    function stepQuote(dir) {
+        const item = currentItem();
+        if (!item) return;
+        const all = combinedQuotes(item);
+        const idx = all.findIndex((q) => q.id === state.activeQuoteId);
+        const next = idx + dir;
+        if (next < 0 || next >= all.length) return;
+        setActiveQuote(all[next].id);
     }
+
+    /* ── render-data fetch ───────────────────────────────────────────────── */
 
     async function getRenderData(sourceId) {
         if (state.renderDataCache.has(sourceId)) return state.renderDataCache.get(sourceId);
-        const response = await fetch(`/report/${state.taskId}/sources/${sourceId}/render-data`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        state.renderDataCache.set(sourceId, data);
-        return data;
+        try {
+            const response = await fetch(`/report/${state.taskId}/sources/${sourceId}/render-data`);
+            if (!response.ok) return null;
+            const data = await response.json();
+            state.renderDataCache.set(sourceId, data);
+            return data;
+        } catch (_error) {
+            return null;
+        }
     }
 
-    function highlightText(text, start, end) {
-        if (!text) return "";
-        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
-            return escapeHtml(text);
-        }
-        return [
-            escapeHtml(text.slice(0, start)),
-            "<mark>",
-            escapeHtml(text.slice(start, end)),
-            "</mark>",
-            escapeHtml(text.slice(end)),
-        ].join("");
-    }
+    /* ── CSV / share ─────────────────────────────────────────────────────── */
 
     function csvEscape(value) {
         const text = (value === null || value === undefined ? "" : value).toString();
@@ -618,9 +780,7 @@
                 copied = false;
             }
         }
-        if (els.copyLinkLabel) {
-            els.copyLinkLabel.textContent = copied ? "Copied" : "Copy failed";
-        }
+        if (els.copyLinkLabel) els.copyLinkLabel.textContent = copied ? "Copied" : "Copy failed";
         if (els.copyLink) els.copyLink.classList.toggle("is-copied", copied);
         showToast(copied ? "Report link copied to clipboard" : "Could not copy link");
         window.setTimeout(() => {
@@ -628,6 +788,8 @@
             if (els.copyLink) els.copyLink.classList.remove("is-copied");
         }, 1800);
     }
+
+    /* ── loading: poll / demo ────────────────────────────────────────────── */
 
     async function loadManifest() {
         try {
@@ -639,7 +801,6 @@
             }
             state.manifest = await response.json();
             state.manifestUnavailable = false;
-            renderSourceTabs();
         } catch (_error) {
             state.manifest = state.manifest || null;
         }
@@ -658,19 +819,14 @@
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
-            if (data.evidence_available === true) {
-                await loadManifest();
-            } else if (data.evidence_available === false) {
+            if (data.evidence_available === false) {
                 state.manifest = null;
                 state.manifestUnavailable = data.state === "SUCCESS";
             } else {
                 await loadManifest();
             }
             render();
-            autoShowTopEvidence();
-            if (data.state === "SUCCESS" && els.log) {
-                els.log.classList.add("d-none");
-            }
+            if (data.state === "SUCCESS" && els.log) els.log.classList.add("d-none");
             if (data.state !== "SUCCESS" && data.state !== "FAILURE") {
                 state.pollHandle = window.setTimeout(pollTaskStatus, 3000);
             }
@@ -695,129 +851,30 @@
             setStatus("SUCCESS", "Sample report");
             if (els.statusText) els.statusText.textContent = "Sample report";
             render();
-            autoShowTopEvidence();
         } catch (_error) {
             setStatus("FAILURE", "Could not load the sample report");
         }
     }
 
-    function setupResizers() {
-        const rail = app.querySelector(".report-dimension-rail");
-        const detail = app.querySelector(".report-detail");
-        const source = app.querySelector(".source-viewer");
-        if (!rail || !detail || !source) return;
+    /* ── keyboard ────────────────────────────────────────────────────────── */
 
-        const MIN_RAIL = 176, MAX_RAIL = 460, MIN_SOURCE = 300, MAX_SOURCE = 820, MIN_DETAIL = 320;
-        const RAIL_KEY = "regcheck.report.railW", SOURCE_KEY = "regcheck.report.sourceW";
-
-        const makeSplitter = (kind, label) => {
-            const el = document.createElement("div");
-            el.className = "report-splitter";
-            el.dataset.resize = kind;
-            el.setAttribute("role", "separator");
-            el.setAttribute("aria-orientation", "vertical");
-            el.setAttribute("tabindex", "0");
-            el.setAttribute("aria-label", label);
-            return el;
-        };
-        const railSplit = makeSplitter("rail", "Drag to resize the dimensions panel");
-        const sourceSplit = makeSplitter("source", "Drag to resize the source panel");
-        rail.after(railSplit);
-        detail.after(sourceSplit);
-
-        const isActive = () => getComputedStyle(railSplit).display !== "none";
-        const gutters = () => railSplit.offsetWidth + sourceSplit.offsetWidth;
-        const widthOf = (el) => el.getBoundingClientRect().width;
-
-        function applyRail(w) {
-            const maxRail = Math.min(MAX_RAIL, widthOf(app) - widthOf(source) - gutters() - MIN_DETAIL);
-            w = Math.max(MIN_RAIL, Math.min(w, Math.max(MIN_RAIL, maxRail)));
-            app.style.setProperty("--rail-w", Math.round(w) + "px");
-        }
-        function applySource(w) {
-            const maxSource = Math.min(MAX_SOURCE, widthOf(app) - widthOf(rail) - gutters() - MIN_DETAIL);
-            w = Math.max(MIN_SOURCE, Math.min(w, Math.max(MIN_SOURCE, maxSource)));
-            app.style.setProperty("--source-w", Math.round(w) + "px");
-        }
-        function persist() {
-            if (!window.localStorage) return;
-            const r = app.style.getPropertyValue("--rail-w").trim();
-            const s = app.style.getPropertyValue("--source-w").trim();
-            if (r) window.localStorage.setItem(RAIL_KEY, r);
-            if (s) window.localStorage.setItem(SOURCE_KEY, s);
-        }
-        const hasCustom = () => !!app.style.getPropertyValue("--rail-w") || !!app.style.getPropertyValue("--source-w");
-
-        function startDrag(event, splitter, kind) {
-            if (!isActive()) return;
-            event.preventDefault();
-            splitter.classList.add("is-active");
-            document.body.classList.add("is-col-resizing");
-            const startX = event.clientX;
-            const startRail = widthOf(rail);
-            const startSource = widthOf(source);
-            const move = (ev) => {
-                const dx = ev.clientX - startX;
-                if (kind === "rail") applyRail(startRail + dx);
-                else applySource(startSource - dx);
-            };
-            const up = () => {
-                document.removeEventListener("pointermove", move);
-                document.removeEventListener("pointerup", up);
-                splitter.classList.remove("is-active");
-                document.body.classList.remove("is-col-resizing");
-                persist();
-            };
-            document.addEventListener("pointermove", move);
-            document.addEventListener("pointerup", up);
-        }
-        function onKey(event, kind) {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            const step = (event.shiftKey ? 48 : 16) * (event.key === "ArrowRight" ? 1 : -1);
-            if (kind === "rail") applyRail(widthOf(rail) + step);
-            else applySource(widthOf(source) - step);
-            persist();
-        }
-        railSplit.addEventListener("pointerdown", (e) => startDrag(e, railSplit, "rail"));
-        sourceSplit.addEventListener("pointerdown", (e) => startDrag(e, sourceSplit, "source"));
-        railSplit.addEventListener("keydown", (e) => onKey(e, "rail"));
-        sourceSplit.addEventListener("keydown", (e) => onKey(e, "source"));
-        railSplit.addEventListener("dblclick", () => { app.style.removeProperty("--rail-w"); persist(); });
-        sourceSplit.addEventListener("dblclick", () => { app.style.removeProperty("--source-w"); persist(); });
-
-        if (window.localStorage) {
-            const r = window.localStorage.getItem(RAIL_KEY);
-            const s = window.localStorage.getItem(SOURCE_KEY);
-            if (r) app.style.setProperty("--rail-w", r);
-            if (s) app.style.setProperty("--source-w", s);
-        }
-        const reclamp = () => {
-            if (!isActive() || !hasCustom()) return;
-            if (app.style.getPropertyValue("--rail-w")) applyRail(widthOf(rail));
-            if (app.style.getPropertyValue("--source-w")) applySource(widthOf(source));
-        };
-        window.addEventListener("resize", reclamp);
-        reclamp();
+    function onKey(event) {
+        if (event.target && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA")) return;
+        if (state.view !== "documents") return;
+        if (event.key === "Escape") { event.preventDefault(); backToDecision(); }
+        else if (event.key === "ArrowLeft") { event.preventDefault(); stepQuote(-1); }
+        else if (event.key === "ArrowRight") { event.preventDefault(); stepQuote(1); }
     }
 
-    if (els.closeViewer) {
-        els.closeViewer.addEventListener("click", () => {
-            els.viewer.classList.remove("is-open");
-        });
-    }
+    /* ── wire up ─────────────────────────────────────────────────────────── */
+
     if (els.copyLink) els.copyLink.addEventListener("click", copyReportLink);
     if (els.csv) els.csv.addEventListener("click", downloadCsv);
-
+    window.addEventListener("keydown", onKey);
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
 
-    setupResizers();
-
-    if (state.demoSrc) {
-        loadDemo();
-    } else {
-        pollTaskStatus();
-    }
+    if (state.demoSrc) loadDemo();
+    else pollTaskStatus();
 })();
