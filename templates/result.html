@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260611-scorecard2' %}
+    {% set static_version = '20260611-nopagelabel' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -22,7 +22,6 @@
                         <span class="report-status-pill__dot" id="report-status-dot"></span>
                         <span id="report-status-text">Processing</span>
                     </span>
-                    <div id="report-status-summary" class="sf-summary" aria-label="Verdict summary"></div>
                 </div>
                 <div class="report-actions">
                     <button type="button" class="report-action-btn report-action-btn--primary" id="copy-report-link-btn">
@@ -54,8 +53,47 @@
             </div>
         </header>
 
-        <main id="report-app" class="report-app" data-task-id="{{ task_id }}">
-            <div id="report-views"></div>
+        <main id="report-app" class="report-workspace" data-task-id="{{ task_id }}">
+            <aside class="report-dimension-rail" aria-label="Dimensions">
+                <div class="rail-heading">
+                    <span>Dimensions</span>
+                    <span id="dimension-count" class="rail-count">0</span>
+                </div>
+                <div id="rail-summary" class="rail-summary"></div>
+                <div id="dimension-list" class="dimension-list"></div>
+            </aside>
+
+            <section class="report-detail" aria-label="Report detail">
+                <div id="report-empty-state" class="report-empty-state">
+                    <span class="report-empty-state__spinner" aria-hidden="true"></span>
+                    <p>Preparing your report&hellip;</p>
+                </div>
+                <article id="dimension-detail" class="dimension-detail d-none"></article>
+            </section>
+
+            <aside id="source-viewer" class="source-viewer" aria-label="Source viewer">
+                <div class="source-viewer__header">
+                    <div>
+                        <p class="source-viewer__eyebrow">Source</p>
+                        <h2 id="source-title">Context</h2>
+                    </div>
+                    <button type="button" class="source-viewer__close" id="source-close-btn" aria-label="Close source viewer">&times;</button>
+                </div>
+                <div id="source-tabs" class="source-tabs"></div>
+                <div class="source-toolbar">
+                    <a id="source-raw-link" class="source-raw-link d-none" target="_blank" rel="noopener">Open raw</a>
+                </div>
+                <div id="source-canvas" class="source-canvas">
+                    <div class="source-placeholder source-placeholder--ready">
+                        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <path d="M14 2v6h6"/>
+                            <path d="M9 13h6M9 17h4"/>
+                        </svg>
+                        <p>Select a quote to see its context in the registration/paper.</p>
+                    </div>
+                </div>
+            </aside>
         </main>
 
         {% include '_partials/footer.html' %}

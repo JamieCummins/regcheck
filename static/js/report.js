@@ -4,17 +4,15 @@
     const app = document.getElementById("report-app");
     if (!app) return;
 
-    const TOPK_KEY = "regcheck.report.topK";
-    const DIM_KEY = "regcheck.report.dimIndex";
-    const DEFAULT_TOPK = 2;
+    const EVIDENCE_LIMIT_KEY = "regcheck.report.evidenceLimit";
+    const DEFAULT_EVIDENCE_LIMIT = 3;
+    const EVIDENCE_LIMIT_OPTIONS = [3, 5, 10, "all"];
 
-    function loadTopK() {
-        const parsed = parseInt(window.localStorage ? window.localStorage.getItem(TOPK_KEY) : "", 10);
-        return parsed >= 1 && parsed <= 3 ? parsed : DEFAULT_TOPK;
-    }
-    function loadDimIndex() {
-        const parsed = parseInt(window.localStorage ? window.localStorage.getItem(DIM_KEY) : "", 10);
-        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    function loadEvidenceLimit() {
+        const stored = window.localStorage ? window.localStorage.getItem(EVIDENCE_LIMIT_KEY) : null;
+        if (stored === "all") return "all";
+        const parsed = parseInt(stored || "", 10);
+        return EVIDENCE_LIMIT_OPTIONS.includes(parsed) ? parsed : DEFAULT_EVIDENCE_LIMIT;
     }
 
     const state = {
@@ -25,24 +23,32 @@
         manifestUnavailable: false,
         evidenceStatus: null,
         evidenceError: null,
-        view: "board",            // board | poster | trace
-        dimIndex: loadDimIndex(),
-        activeQuote: null,        // chunk id of the active quote in trace
-        topK: loadTopK(),
-        expanded: new Set(),      // expanded quote ids in the poster
-        lastScrollSrc: "enter",   // enter | step | doc
+        activeIndex: 0,
+        activeEvidence: null,
+        currentSourceId: null,
+        currentPage: 1,
+        evidenceLimit: loadEvidenceLimit(),
         renderDataCache: new Map(),
         lastWorkflowStatus: null,
         logSeen: "",
         pollHandle: null,
-        ready: false,
     };
 
     const els = {
-        views: document.getElementById("report-views"),
+        list: document.getElementById("dimension-list"),
+        count: document.getElementById("dimension-count"),
+        railSummary: document.getElementById("rail-summary"),
+        detail: document.getElementById("dimension-detail"),
+        empty: document.getElementById("report-empty-state"),
+        viewer: document.getElementById("source-viewer"),
+        sourceTitle: document.getElementById("source-title"),
+        sourceTabs: document.getElementById("source-tabs"),
+        sourceCanvas: document.getElementById("source-canvas"),
+        rawLink: document.getElementById("source-raw-link"),
+        closeViewer: document.getElementById("source-close-btn"),
         statusPill: document.getElementById("report-status-pill"),
+        statusDot: document.getElementById("report-status-dot"),
         statusText: document.getElementById("report-status-text"),
-        statusSummary: document.getElementById("report-status-summary"),
         copyLink: document.getElementById("copy-report-link-btn"),
         copyLinkLabel: document.getElementById("copy-report-link-label"),
         csv: document.getElementById("download-report-csv-btn"),
@@ -52,11 +58,7 @@
         logProgress: document.getElementById("report-log-progress"),
     };
 
-    const prefersReducedMotion = window.matchMedia
-        ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        : false;
-
-    /* ── helpers ─────────────────────────────────────────────────────────── */
+    const READY_SOURCE_HTML = els.sourceCanvas ? els.sourceCanvas.innerHTML : "";
 
     function escapeHtml(value) {
         return (value === null || value === undefined ? "" : String(value))
@@ -67,17 +69,11 @@
             .replace(/'/g, "&#039;");
     }
 
-    const STATUS = {
-        dev: { label: "Deviation", tone: "flag" },
-        ok: { label: "No deviation", tone: "ok" },
-        mis: { label: "Missing", tone: "warn" },
-    };
-
-    function statusOf(value) {
+    function judgementInfo(value) {
         const normalized = (value || "").toString().trim().toLowerCase();
-        if (normalized === "yes") return "dev";
-        if (normalized === "no") return "ok";
-        return "mis";
+        if (normalized === "yes") return { label: "Deviation", tone: "flag" };
+        if (normalized === "no") return { label: "No deviation", tone: "ok" };
+        return { label: "Missing", tone: "warn" };
     }
 
     function parseQuotes(quotes) {
@@ -97,101 +93,42 @@
                 num: Number.isFinite(num) ? num : 0,
                 score: Number.isFinite(score) ? score : 0,
                 text,
+                raw: chunk,
             });
         }
         if (parts.length > 0) return parts;
         return quotes
             .split(/\n\s*\n/)
-            .map((text, index) => ({ id: `QUOTE_${index + 1}`, num: index + 1, score: 0, text: text.trim() }))
+            .map((text, index) => ({
+                id: `QUOTE_${index + 1}`,
+                num: index + 1,
+                score: 0,
+                text: text.trim(),
+                raw: text.trim(),
+            }))
             .filter((item) => item.text);
     }
 
-    function sortByScore(a, b) {
-        const diff = (b.score || 0) - (a.score || 0);
-        if (diff !== 0) return diff;
-        return (a.num || 0) - (b.num || 0);
-    }
-
-    function manifestChunk(id) {
-        if (!state.manifest || !state.manifest.chunks) return null;
-        return state.manifest.chunks[id] || null;
-    }
-
-    function chunkText(quote) {
-        const chunk = manifestChunk(quote.id);
-        return (chunk && chunk.text) || quote.text || "";
-    }
-
-    function locationOf(chunk, kinds) {
-        if (!chunk || !Array.isArray(chunk.locations)) return null;
-        return chunk.locations.find((location) => kinds.includes(location.kind)) || null;
-    }
-
-    // A source is the registration if its chunks carry PREREG ids.
-    function isRegistrationSource(sourceId) {
-        if (!sourceId || !state.manifest || !state.manifest.chunks) return false;
-        return Object.values(state.manifest.chunks)
-            .some((c) => c.source_id === sourceId && /^PREREG/i.test(c.id || ""));
-    }
-
-    function sourcesByRole() {
-        const sources = (state.manifest && state.manifest.sources) || {};
-        let reg = null, ppr = null;
-        Object.values(sources).forEach((source) => {
-            if (isRegistrationSource(source.id)) reg = reg || source.id;
-            else ppr = ppr || source.id;
+    function sortedQuotes(quotes, limit = "all") {
+        const sorted = [...quotes].sort((a, b) => {
+            const scoreDiff = (b.score || 0) - (a.score || 0);
+            if (scoreDiff !== 0) return scoreDiff;
+            return (a.num || 0) - (b.num || 0);
         });
-        return { reg, ppr };
+        if (limit === "all") return sorted;
+        return sorted.slice(0, limit);
     }
 
-    function roleSourceId(role, dim) {
-        const list = role === "reg" ? dim.reg : dim.ppr;
-        for (const q of list) {
-            const chunk = manifestChunk(q.id);
-            if (chunk && chunk.source_id) return chunk.source_id;
+    function evidenceLimitLabel(limit) {
+        return limit === "all" ? "All chunks" : `Top ${limit}`;
+    }
+
+    function persistEvidenceLimit(limit) {
+        state.evidenceLimit = limit;
+        if (window.localStorage) {
+            window.localStorage.setItem(EVIDENCE_LIMIT_KEY, String(limit));
         }
-        return sourcesByRole()[role];
     }
-
-    // Build the normalized dimension model the UI consumes.
-    function dimensions() {
-        return state.items.map((item, index) => {
-            const reg = parseQuotes(item.registration_content_quotes || "")
-                .sort(sortByScore)
-                .map((q, i) => Object.assign({}, q, { doc: "reg", label: `R${i + 1}` }));
-            const ppr = parseQuotes(item.paper_content_quotes || "")
-                .sort(sortByScore)
-                .map((q, i) => Object.assign({}, q, { doc: "ppr", label: `P${i + 1}` }));
-            return {
-                index,
-                id: item.dimension || `dimension-${index + 1}`,
-                name: item.dimension || `Dimension ${index + 1}`,
-                status: statusOf(item.deviation_judgement),
-                rationale: item.deviation_information || "",
-                summaryReg: item.registration_content_summary || "",
-                summaryPpr: item.paper_content_summary || "",
-                reg,
-                ppr,
-            };
-        });
-    }
-
-    function countStatuses(dims) {
-        const counts = { dev: 0, ok: 0, mis: 0 };
-        dims.forEach((d) => { counts[d.status] += 1; });
-        return counts;
-    }
-
-    function visibleQuotes(dim) {
-        return dim.reg.slice(0, state.topK).concat(dim.ppr.slice(0, state.topK));
-    }
-
-    function quoteHasSource(quote) {
-        const chunk = manifestChunk(quote.id);
-        return !state.manifestUnavailable && !!(chunk && chunk.source_id);
-    }
-
-    /* ── status pill / summary / log ─────────────────────────────────────── */
 
     function setStatus(stateValue, detailText, counts) {
         if (!els.statusPill) return;
@@ -212,26 +149,6 @@
         }
     }
 
-    function renderStatusSummary() {
-        if (!els.statusSummary) return;
-        if (!state.ready || !state.items.length) {
-            els.statusSummary.innerHTML = "";
-            return;
-        }
-        const counts = countStatuses(dimensions());
-        const segments = [
-            { tone: "flag", value: counts.dev, label: "deviation" },
-            { tone: "ok", value: counts.ok, label: "none" },
-            { tone: "warn", value: counts.mis, label: "missing" },
-        ].filter((segment) => segment.value > 0);
-        els.statusSummary.innerHTML = segments.map((segment) => `
-            <span class="sf-summary__item">
-                <span class="verdict-dot verdict-dot--${segment.tone}"></span>
-                <strong>${segment.value}</strong> ${escapeHtml(segment.label)}
-            </span>
-        `).join("");
-    }
-
     function appendLog(text, counts) {
         if (els.logProgress && counts && Number.isFinite(counts.processed) && Number.isFinite(counts.total) && counts.total > 0) {
             els.logProgress.textContent = `${counts.processed}/${counts.total} dimensions`;
@@ -239,6 +156,7 @@
         if (!text || !els.logList || text === state.logSeen) return;
         state.logSeen = text;
         const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        // Single line: the latest status replaces the previous one.
         els.logList.innerHTML = `<li><time>${escapeHtml(time)}</time><span>${escapeHtml(text)}</span></li>`;
         if (els.log) els.log.classList.remove("d-none");
     }
@@ -253,560 +171,387 @@
         }, 1800);
     }
 
-    /* ── navigation ──────────────────────────────────────────────────────── */
-
-    function setView(view) {
-        state.view = view;
-        render();
-    }
-    function openDimension(index) {
-        state.dimIndex = index;
-        if (window.localStorage) window.localStorage.setItem(DIM_KEY, String(index));
-        state.expanded = new Set();
-        setView("poster");
-    }
-    function setDimIndex(index) {
-        state.dimIndex = index;
-        if (window.localStorage) window.localStorage.setItem(DIM_KEY, String(index));
-        state.expanded = new Set();
-        render();
-    }
-    function setTopK(k) {
-        state.topK = k;
-        if (window.localStorage) window.localStorage.setItem(TOPK_KEY, String(k));
-        render();
-    }
-    function openTrace(quoteId) {
-        state.activeQuote = quoteId;
-        state.lastScrollSrc = "enter";
-        setView("trace");
-    }
-
-    function currentDim(dims) {
-        const list = dims || dimensions();
-        if (!list.length) return null;
-        const index = Math.min(Math.max(state.dimIndex, 0), list.length - 1);
-        state.dimIndex = index;
-        return list[index];
-    }
-
-    /* ── render shell ────────────────────────────────────────────────────── */
-
     function render() {
-        const dims = dimensions();
-        state.ready = dims.length > 0;
-        renderStatusSummary();
-        if (!els.views) return;
+        renderDimensionList();
+        renderDimensionDetail();
+        renderSourceTabs();
+        if (state.manifestUnavailable) {
+            renderSourceViewer();
+        }
+    }
 
-        if (!state.ready) {
-            els.views.innerHTML = `
-                <div class="sf-loading">
-                    <span class="sf-loading__spinner" aria-hidden="true"></span>
-                    <p>${escapeHtml(state.demoSrc ? "Loading sample report…" : "Preparing your report…")}</p>
-                </div>`;
+    function verdictCounts() {
+        const counts = { flag: 0, ok: 0, warn: 0 };
+        state.items.forEach((item) => {
+            counts[judgementInfo(item.deviation_judgement).tone] += 1;
+        });
+        return counts;
+    }
+
+    function renderRailSummary() {
+        if (!els.railSummary) return;
+        if (!state.items.length) {
+            els.railSummary.innerHTML = "";
             return;
         }
-
-        let html = "";
-        if (state.view === "board") html = renderBoard(dims);
-        else if (state.view === "poster") html = renderPoster(dims);
-        else if (state.view === "trace") html = renderTrace(dims);
-        els.views.innerHTML = html;
-        if (!prefersReducedMotion) {
-            els.views.firstElementChild && els.views.firstElementChild.classList.add("sf-enter");
-        }
-
-        if (state.view === "board") bindBoard();
-        else if (state.view === "poster") bindPoster(dims);
-        else if (state.view === "trace") bindTrace(dims);
-    }
-
-    /* ── level 0: scorecard ──────────────────────────────────────────────── */
-
-    function renderBoard(dims) {
-        const counts = countStatuses(dims);
-        const total = dims.length;
-        const headline = `${counts.dev} of ${total} dimension${total === 1 ? "" : "s"} ${counts.dev === 1 ? "deviates" : "deviate"} from the plan`;
-        const sublineParts = [];
-        if (counts.mis > 0) {
-            sublineParts.push(`${counts.mis} dimension${counts.mis === 1 ? " was" : "s were"} not registered`);
-        }
-        sublineParts.push("click a tile to read the decision");
-        const subline = sublineParts.join(" · ");
-
-        const tiles = dims.map((d) => {
-            const info = STATUS[d.status];
-            const preview = d.rationale || "No rationale provided.";
-            return `
-                <button type="button" class="sf-tile sf-tile--${info.tone}" data-dim="${d.index}">
-                    <span class="sf-tile__top">
-                        <span class="verdict-dot verdict-dot--${info.tone}"></span>
-                        <span class="sf-verdict sf-verdict--${info.tone}">${info.label}</span>
-                        <span class="sf-tile__go" aria-hidden="true">&#8599;</span>
-                    </span>
-                    <span class="sf-tile__name">${escapeHtml(d.name)}</span>
-                    <span class="sf-tile__preview">${escapeHtml(preview)}</span>
-                </button>`;
-        }).join("");
-
-        return `
-            <div class="sf-board">
-                <h1 class="sf-board__headline">${escapeHtml(headline)}</h1>
-                <p class="sf-board__subline">${escapeHtml(subline)}</p>
-                <div class="sf-board__grid">
-                    ${tiles}
-                    <button type="button" class="sf-tile sf-tile--export" data-export>
-                        <span class="sf-tile__export-label">Export CSV &#8595;</span>
-                    </button>
-                </div>
-            </div>`;
-    }
-
-    function bindBoard() {
-        els.views.querySelectorAll("[data-dim]").forEach((tile) => {
-            tile.addEventListener("click", () => openDimension(parseInt(tile.dataset.dim, 10)));
-        });
-        const exportTile = els.views.querySelector("[data-export]");
-        if (exportTile) exportTile.addEventListener("click", downloadCsv);
-    }
-
-    /* ── level 1: judgment poster ────────────────────────────────────────── */
-
-    function quoteRow(quote, opts) {
-        const open = state.expanded.has(quote.id);
-        const score = quote.score ? quote.score.toFixed(2) : "—";
-        const traceable = quoteHasSource(quote);
-        const traceLink = open && traceable
-            ? `<button type="button" class="sf-quote__trace sf-quote__trace--${quote.doc}" data-trace="${escapeHtml(quote.id)}">trace in document &rarr;</button>`
-            : "";
-        const body = open
-            ? `<div class="sf-quote__open">
-                    <p class="sf-quote__full">${escapeHtml(chunkText(quote))}</p>
-                    ${traceLink}
-               </div>`
-            : `<p class="sf-quote__preview">${escapeHtml(chunkText(quote))}</p>`;
-        return `
-            <div class="sf-quote sf-quote--${quote.doc} ${open ? "is-open" : ""}" data-quote="${escapeHtml(quote.id)}">
-                <div class="sf-quote__head">
-                    <span class="sf-quote__label sf-quote__label--${quote.doc}">${escapeHtml(quote.label)}</span>
-                    <span class="sf-quote__sim">${escapeHtml(score)}</span>
-                    <span class="sf-quote__chevron" aria-hidden="true">${open ? "▾" : "▸"}</span>
-                </div>
-                ${body}
-            </div>`;
-    }
-
-    function evidenceColumn(role, quotes) {
-        const labelText = role === "reg" ? "Registration" : "Paper";
-        const rows = quotes.length
-            ? quotes.map((q) => quoteRow(q, { role })).join("")
-            : `<p class="sf-evidence__empty">No retrieved quotes.</p>`;
-        return `
-            <div class="sf-evidence__col">
-                <span class="sf-evidence__col-title sf-evidence__col-title--${role}">${labelText}</span>
-                ${rows}
-            </div>`;
-    }
-
-    function renderPoster(dims) {
-        const dim = currentDim(dims);
-        const info = STATUS[dim.status];
-        const total = dims.length;
-        const vis = visibleQuotes(dim);
-        const firstTraceable = vis.find(quoteHasSource);
-        const openDocs = firstTraceable
-            ? `<button type="button" class="sf-poster__opendocs" data-trace="${escapeHtml(firstTraceable.id)}">open documents &rarr;</button>`
-            : "";
-        const topkButtons = [1, 2, 3].map((k) => `
-            <button type="button" class="sf-topk__btn ${state.topK === k ? "is-active" : ""}" data-topk="${k}">${k}</button>
+        const counts = verdictCounts();
+        const segments = [
+            { tone: "flag", value: counts.flag, label: "deviation" },
+            { tone: "warn", value: counts.warn, label: "missing" },
+            { tone: "ok", value: counts.ok, label: "no deviation" },
+        ].filter((segment) => segment.value > 0);
+        els.railSummary.innerHTML = segments.map((segment) => `
+            <span class="rail-summary__item rail-summary__item--${segment.tone}">
+                <span class="verdict-dot verdict-dot--${segment.tone}"></span>
+                <strong>${segment.value}</strong> ${escapeHtml(segment.label)}
+            </span>
         `).join("");
-
-        const prevDisabled = dim.index === 0 ? "disabled" : "";
-        const nextDisabled = dim.index === total - 1 ? "disabled" : "";
-
-        const dots = dims.map((d) => {
-            const tone = STATUS[d.status].tone;
-            return `<button type="button" class="sf-dot verdict-dot--${tone} ${d.index === dim.index ? "is-active" : ""}" data-dim="${d.index}" title="${escapeHtml(d.name)}" aria-label="${escapeHtml(d.name)}"></button>`;
-        }).join("");
-
-        return `
-            <div class="sf-poster">
-                <button type="button" class="sf-poster__arrow" data-step="-1" ${prevDisabled} aria-label="Previous dimension">‹</button>
-                <div class="sf-poster__scroll">
-                    <div class="sf-poster__col">
-                        <div class="sf-poster__crumb">
-                            <button type="button" class="sf-pill" data-board>‹ All dimensions</button>
-                            <span class="sf-poster__count">Dimension ${dim.index + 1} of ${total}</span>
-                        </div>
-                        <h1 class="sf-poster__title">${escapeHtml(dim.name)}</h1>
-                        <div class="sf-poster__verdict">
-                            <span class="verdict-dot verdict-dot--${info.tone}"></span>
-                            <span class="sf-verdict sf-verdict--${info.tone}">${info.label}</span>
-                        </div>
-                        <div class="sf-rationale sf-rationale--${info.tone}">
-                            <p>${escapeHtml(dim.rationale || "No rationale provided.")}</p>
-                        </div>
-                        <div class="sf-poster__divider"></div>
-                        <div class="sf-evidence__bar">
-                            <span class="sf-evidence__label">Evidence</span>
-                            <div class="sf-topk" role="group" aria-label="Quotes per document">${topkButtons}</div>
-                            <span class="sf-evidence__caption">quotes per document, by similarity</span>
-                            ${openDocs}
-                        </div>
-                        <div class="sf-evidence__grid">
-                            ${evidenceColumn("reg", dim.reg.slice(0, state.topK))}
-                            ${evidenceColumn("ppr", dim.ppr.slice(0, state.topK))}
-                        </div>
-                    </div>
-                </div>
-                <button type="button" class="sf-poster__arrow" data-step="1" ${nextDisabled} aria-label="Next dimension">›</button>
-                <div class="sf-poster__dots">
-                    ${dots}
-                    <span class="sf-poster__hint">← → to move · esc for scorecard</span>
-                </div>
-            </div>`;
     }
 
-    function bindPoster(dims) {
-        const dim = currentDim(dims);
-        const total = dims.length;
-        els.views.querySelectorAll("[data-step]").forEach((btn) => {
-            btn.addEventListener("click", () => {
-                const dir = parseInt(btn.dataset.step, 10);
-                const next = dim.index + dir;
-                if (next >= 0 && next < total) setDimIndex(next);
-            });
-        });
-        const board = els.views.querySelector("[data-board]");
-        if (board) board.addEventListener("click", () => setView("board"));
-        els.views.querySelectorAll("[data-topk]").forEach((btn) => {
-            btn.addEventListener("click", () => setTopK(parseInt(btn.dataset.topk, 10)));
-        });
-        els.views.querySelectorAll(".sf-dot[data-dim]").forEach((dot) => {
-            dot.addEventListener("click", () => setDimIndex(parseInt(dot.dataset.dim, 10)));
-        });
-        els.views.querySelectorAll(".sf-quote[data-quote]").forEach((row) => {
-            row.addEventListener("click", (event) => {
-                if (event.target.closest("[data-trace]")) return;
-                const id = row.dataset.quote;
-                if (state.expanded.has(id)) state.expanded.delete(id);
-                else state.expanded.add(id);
+    function renderDimensionList() {
+        if (!els.list) return;
+        els.count.textContent = String(state.items.length);
+        renderRailSummary();
+        els.list.innerHTML = "";
+        state.items.forEach((item, index) => {
+            const info = judgementInfo(item.deviation_judgement);
+            const regCount = parseQuotes(item.registration_content_quotes || "").length;
+            const paperCount = parseQuotes(item.paper_content_quotes || "").length;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `dimension-card ${index === state.activeIndex ? "is-active" : ""}`;
+            button.innerHTML = `
+                <span class="dimension-card__top">
+                    <span class="verdict-dot verdict-dot--${info.tone}" title="${escapeHtml(info.label)}"></span>
+                    <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
+                </span>
+                <span class="dimension-card__meta">
+                    <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
+                    <span class="dimension-card__count">${regCount + paperCount} quotes</span>
+                </span>
+            `;
+            button.addEventListener("click", () => {
+                state.activeIndex = index;
+                state.activeEvidence = null;
                 render();
+                const detail = document.querySelector(".report-detail");
+                if (detail) detail.scrollTop = 0;
+                autoShowTopEvidence();
             });
-        });
-        els.views.querySelectorAll("[data-trace]").forEach((link) => {
-            link.addEventListener("click", (event) => {
-                event.stopPropagation();
-                openTrace(link.dataset.trace);
-            });
+            els.list.appendChild(button);
         });
     }
 
-    /* ── level 2: document trace ─────────────────────────────────────────── */
-
-    function renderTrace(dims) {
-        const dim = currentDim(dims);
-        const info = STATUS[dim.status];
-        const total = dims.length;
-        const prevDisabled = dim.index === 0 ? "disabled" : "";
-        const nextDisabled = dim.index === total - 1 ? "disabled" : "";
-
-        return `
-            <div class="sf-trace">
-                <div class="sf-trace__head">
-                    <button type="button" class="sf-pill" data-back>‹ Back</button>
-                    <div class="sf-trace__nav">
-                        <button type="button" class="sf-trace__navbtn" data-dimstep="-1" ${prevDisabled} aria-label="Previous dimension">‹</button>
-                        <span class="verdict-dot verdict-dot--${info.tone}"></span>
-                        <span class="sf-trace__dimname">${escapeHtml(dim.name)}</span>
-                        <span class="sf-trace__count">${dim.index + 1}/${total}</span>
-                        <button type="button" class="sf-trace__navbtn" data-dimstep="1" ${nextDisabled} aria-label="Next dimension">›</button>
-                    </div>
-                    <span class="sf-verdict sf-verdict--${info.tone}">${info.label}</span>
-                    <span class="sf-trace__hint">esc to go back · ← → steps quotes</span>
-                </div>
-                <div class="sf-trace__body">
-                    <div class="sf-doc" data-doc="reg">
-                        <div class="sf-doc__scroll" data-scroll="reg">
-                            <div class="sf-doc__placeholder">Loading…</div>
-                        </div>
-                    </div>
-                    <div class="sf-trace__split"></div>
-                    <div class="sf-doc" data-doc="ppr">
-                        <div class="sf-doc__scroll" data-scroll="ppr">
-                            <div class="sf-doc__placeholder">Loading…</div>
-                        </div>
-                    </div>
-                    <div class="sf-stepper" data-stepper></div>
-                </div>
-            </div>`;
-    }
-
-    function bindTrace(dims) {
-        const dim = currentDim(dims);
-        const total = dims.length;
-
-        const back = els.views.querySelector("[data-back]");
-        if (back) back.addEventListener("click", () => setView("poster"));
-        els.views.querySelectorAll("[data-dimstep]").forEach((btn) => {
-            btn.addEventListener("click", () => {
-                const dir = parseInt(btn.dataset.dimstep, 10);
-                const next = dim.index + dir;
-                if (next < 0 || next >= total) return;
-                const nextDim = dims[next];
-                const vis = visibleQuotes(nextDim);
-                state.dimIndex = next;
-                if (window.localStorage) window.localStorage.setItem(DIM_KEY, String(next));
-                state.expanded = new Set();
-                state.activeQuote = vis.length ? vis[0].id : null;
-                state.lastScrollSrc = "enter";
-                render();
-            });
-        });
-
-        // Default active quote if none / out of range.
-        const vis = visibleQuotes(dim);
-        if (!vis.some((q) => q.id === state.activeQuote)) {
-            state.activeQuote = vis.length ? vis[0].id : null;
-        }
-
-        fillTraceColumns(dim).then(() => {
-            renderStepper(dim);
-            bindHighlightClicks();
-            scrollTraceColumns(dim);
-        });
-    }
-
-    async function fillTraceColumns(dim) {
-        const regSource = roleSourceId("reg", dim);
-        const pprSource = roleSourceId("ppr", dim);
-        await Promise.all([
-            fillColumn("reg", regSource, dim.reg.slice(0, state.topK)),
-            fillColumn("ppr", pprSource, dim.ppr.slice(0, state.topK)),
-        ]);
-    }
-
-    async function fillColumn(role, sourceId, quotes) {
-        const scroll = els.views.querySelector(`[data-scroll="${role}"]`);
-        if (!scroll) return;
-        const sources = (state.manifest && state.manifest.sources) || {};
-        const source = sourceId ? sources[sourceId] : null;
-        if (state.manifestUnavailable || !source) {
-            scroll.innerHTML = `<div class="sf-doc__placeholder">Source document unavailable.</div>`;
+    function renderDimensionDetail() {
+        if (!els.detail || !els.empty) return;
+        if (!state.items.length) {
+            els.detail.classList.add("d-none");
+            els.empty.classList.remove("d-none");
             return;
         }
-        const tag = role === "reg" ? "Preregistration" : "Research paper";
-        const title = source.label || source.id;
-        let bodyHtml;
-        if (source.kind === "pdf" && source.render_mode === "pdf") {
-            bodyHtml = buildPdfBody(source, quotes);
-        } else {
-            const renderData = await getRenderData(source.id);
-            const text = (renderData && renderData.text) || "";
-            bodyHtml = `<div class="sf-doc__text">${buildTextBody(text, quotes)}</div>`;
-        }
-        scroll.innerHTML = `
-            <div class="sf-doc__header">
-                <span class="sf-doc__tag sf-doc__tag--${role}">${escapeHtml(tag)}</span>
-                <span class="sf-doc__title">${escapeHtml(title)}</span>
+        els.empty.classList.add("d-none");
+        els.detail.classList.remove("d-none");
+        const item = state.items[Math.min(state.activeIndex, state.items.length - 1)] || {};
+        const info = judgementInfo(item.deviation_judgement);
+        els.detail.innerHTML = `
+            <div class="detail-head">
+                <p class="detail-eyebrow">Dimension ${state.activeIndex + 1} of ${state.items.length}</p>
+                <h2>${escapeHtml(item.dimension || "Dimension")}</h2>
             </div>
-            ${bodyHtml}`;
+            <div class="verdict-banner verdict-banner--${info.tone}">
+                <div class="verdict-banner__head">
+                    <span class="verdict-dot verdict-dot--${info.tone}"></span>
+                    <span class="verdict-banner__label">${info.label}</span>
+                </div>
+                <p class="verdict-banner__body">${escapeHtml(item.deviation_information || "No deviation information found.")}</p>
+            </div>
+            <div class="summary-grid">
+                <div class="summary-box">
+                    <p class="section-title">Registration summary</p>
+                    <p>${escapeHtml(item.registration_content_summary || "No summary available.")}</p>
+                </div>
+                <div class="summary-box">
+                    <p class="section-title">Paper summary</p>
+                    <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
+                </div>
+            </div>
+            <div class="evidence-section">
+                <div class="evidence-section__header">
+                    <div>
+                        <p class="section-title">Evidence</p>
+                        <p class="evidence-limit-note">Showing ${escapeHtml(evidenceLimitLabel(state.evidenceLimit).toLowerCase())} by similarity. Click a quote to view it in context. CSV export includes all chunks.</p>
+                    </div>
+                    <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
+                        ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
+                            <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}">
+                                ${escapeHtml(option === "all" ? "All" : String(option))}
+                            </button>
+                        `).join("")}
+                    </div>
+                </div>
+                <div class="evidence-grid">
+                    <div class="evidence-column">
+                        <p class="evidence-column__title evidence-column__title--reg">Registration</p>
+                        <div class="evidence-list" id="registration-evidence-list"></div>
+                    </div>
+                    <div class="evidence-column">
+                        <p class="evidence-column__title evidence-column__title--paper">Paper</p>
+                        <div class="evidence-list" id="paper-evidence-list"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        els.detail.querySelectorAll("[data-evidence-limit]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const raw = button.dataset.evidenceLimit;
+                const next = raw === "all" ? "all" : parseInt(raw, 10);
+                if (!EVIDENCE_LIMIT_OPTIONS.includes(next)) return;
+                persistEvidenceLimit(next);
+                renderDimensionDetail();
+            });
+        });
+        renderEvidenceList("registration", parseQuotes(item.registration_content_quotes || ""));
+        renderEvidenceList("paper", parseQuotes(item.paper_content_quotes || ""));
     }
 
-    function buildTextBody(text, quotes) {
-        if (!text) return `<div class="sf-doc__placeholder">Document text unavailable.</div>`;
-        const ranges = [];
-        quotes.forEach((quote) => {
-            const chunk = manifestChunk(quote.id);
-            const loc = chunk ? locationOf(chunk, ["text", "json"]) : null;
-            const body = chunkText(quote);
-            let start = loc && Number.isFinite(loc.start) ? loc.start : text.indexOf(body);
-            let end = loc && Number.isFinite(loc.end) ? loc.end : (start >= 0 ? start + body.length : -1);
-            if (start >= 0 && end > start) ranges.push({ start, end, quote });
+    function renderEvidenceList(section, quotes) {
+        const container = document.getElementById(`${section}-evidence-list`);
+        if (!container) return;
+        container.innerHTML = "";
+        const list = sortedQuotes(quotes, state.evidenceLimit);
+        if (!list.length) {
+            container.innerHTML = `<div class="evidence-empty">No evidence found</div>`;
+            return;
+        }
+        list.forEach((quote) => {
+            const chunk = chunkForQuote(quote);
+            const isActive = state.activeEvidence && state.activeEvidence.quote.id === quote.id;
+            const hasScore = quote.score && quote.score > 0;
+            const pct = hasScore ? Math.max(6, Math.min(100, Math.round(quote.score * 100))) : 0;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `evidence-card evidence-card--${section} ${isActive ? "is-active" : ""}`;
+            button.innerHTML = `
+                <span class="evidence-card__head">
+                    <span class="evidence-card__id">${escapeHtml(quote.id || "Evidence")}</span>
+                    ${hasScore ? `
+                        <span class="evidence-card__strength" title="Similarity ${quote.score.toFixed(3)}" aria-label="Similarity ${quote.score.toFixed(3)}">
+                            <span class="evidence-card__strength-bar" style="width:${pct}%"></span>
+                        </span>` : ""}
+                </span>
+                <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
+                <span class="evidence-card__cue">View in context &rsaquo;</span>
+            `;
+            button.addEventListener("click", () => openEvidence(quote));
+            container.appendChild(button);
         });
-        ranges.sort((a, b) => a.start - b.start);
-        const clean = [];
-        let lastEnd = -1;
-        ranges.forEach((r) => { if (r.start >= lastEnd) { clean.push(r); lastEnd = r.end; } });
-
-        let out = "";
-        let cursor = 0;
-        clean.forEach((r) => {
-            out += escapeHtml(text.slice(cursor, r.start));
-            const active = r.quote.id === state.activeQuote ? "is-active" : "";
-            out += `<span class="sf-hl sf-hl--${r.quote.doc} ${active}" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}">`
-                + escapeHtml(text.slice(r.start, r.end))
-                + `<span class="sf-hl__tag">${escapeHtml(r.quote.label)}</span></span>`;
-            cursor = r.end;
-        });
-        out += escapeHtml(text.slice(cursor));
-        return out;
     }
 
-    function buildPdfBody(source, quotes) {
+    function chunkForQuote(quote) {
+        if (!state.manifest || !state.manifest.chunks) return null;
+        return state.manifest.chunks[quote.id] || null;
+    }
+
+    function renderSourceTabs() {
+        if (!els.sourceTabs) return;
+        const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
+        els.sourceTabs.innerHTML = "";
+        if (state.manifestUnavailable) {
+            return;
+        }
+        Object.values(sources).forEach((source) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `source-tab ${source.id === state.currentSourceId ? "is-active" : ""}`;
+            button.textContent = source.label || source.id;
+            button.addEventListener("click", () => {
+                state.currentSourceId = source.id;
+                state.activeEvidence = null;
+                state.currentPage = 1;
+                renderSourceViewer();
+                renderSourceTabs();
+            });
+            els.sourceTabs.appendChild(button);
+        });
+    }
+
+    function firstLocation(chunk, kind) {
+        if (!chunk || !Array.isArray(chunk.locations)) return null;
+        return chunk.locations.find((location) => location.kind === kind) || null;
+    }
+
+    function openEvidence(quote, opts) {
+        opts = opts || {};
+        const chunk = chunkForQuote(quote);
+        state.activeEvidence = { quote, chunk };
+        if (chunk && chunk.source_id) {
+            state.currentSourceId = chunk.source_id;
+            const pdfLocation = firstLocation(chunk, "pdf");
+            state.currentPage = pdfLocation ? pdfLocation.page : 1;
+        }
+        renderDimensionDetail();
+        renderSourceTabs();
+        renderSourceViewer();
+        // Auto-flick (e.g. on dimension select) updates the docked pane but
+        // must not pop the mobile bottom-sheet open.
+        if (els.viewer && !opts.auto) els.viewer.classList.add("is-open");
+    }
+
+    // A source document is the "registration" if its chunks carry PREREG ids.
+    function isRegistrationSource(sourceId) {
+        if (!sourceId || !state.manifest || !state.manifest.chunks) return false;
+        return Object.values(state.manifest.chunks)
+            .some((c) => c.source_id === sourceId && /^PREREG/i.test(c.id || ""));
+    }
+
+    // On dimension select / load, pre-open the highest-similarity quote so the
+    // source pane flicks to the most relevant page automatically.
+    function autoShowTopEvidence() {
+        if (state.activeEvidence) return;
+        if (state.manifestUnavailable || !state.manifest) return;
+        const item = state.items[Math.min(state.activeIndex, state.items.length - 1)];
+        if (!item) return;
+        const quotes = parseQuotes(item.registration_content_quotes || "")
+            .concat(parseQuotes(item.paper_content_quotes || ""))
+            .filter((q) => chunkForQuote(q))
+            .sort((a, b) => (b.score || 0) - (a.score || 0));
+        if (quotes.length) openEvidence(quotes[0], { auto: true });
+    }
+
+    function renderUnavailableSourceState() {
+        els.sourceTitle.textContent = "Sources unavailable";
+        const status = state.evidenceStatus ? `<p>Status: ${escapeHtml(state.evidenceStatus)}</p>` : "";
+        const error = state.evidenceError ? `<p>${escapeHtml(state.evidenceError)}</p>` : "";
+        const fallback = status || error
+            ? ""
+            : "<p>Evidence artifacts were not created for this report.</p>";
+        els.sourceCanvas.innerHTML = `
+            <div class="source-placeholder">
+                ${fallback}
+                ${status}
+                ${error}
+            </div>
+        `;
+        els.rawLink.classList.add("d-none");
+    }
+
+    function showReadySourceState() {
+        els.sourceTitle.textContent = "Context";
+        els.sourceCanvas.innerHTML = READY_SOURCE_HTML;
+        els.rawLink.classList.add("d-none");
+    }
+
+    async function renderSourceViewer() {
+        if (!els.sourceCanvas || !els.sourceTitle) return;
+        if (state.manifestUnavailable) {
+            renderUnavailableSourceState();
+            return;
+        }
+        const sources = state.manifest && state.manifest.sources ? state.manifest.sources : {};
+        const source = sources[state.currentSourceId] || null;
+        if (!source) {
+            showReadySourceState();
+            return;
+        }
+        els.sourceTitle.textContent = source.label || source.id;
+        if (source.raw_url) {
+            els.rawLink.href = source.raw_url;
+            els.rawLink.classList.remove("d-none");
+        } else {
+            els.rawLink.classList.add("d-none");
+        }
+        const chunk = state.activeEvidence && state.activeEvidence.chunk && state.activeEvidence.chunk.source_id === source.id
+            ? state.activeEvidence.chunk
+            : null;
+        if (source.kind === "pdf" && source.render_mode === "pdf") {
+            renderPdfSource(source, chunk);
+            return;
+        }
+        await renderTextSource(source, chunk);
+    }
+
+    function renderPdfSource(source, chunk) {
         const pageCount = source.page_count || (source.pages || []).length || 1;
         const template = source.page_url_template || "";
+        const isReg = isRegistrationSource(source.id);
+        const hlClass = "pdf-highlight" + (isReg ? " pdf-highlight--reg" : "");
+        const highlightLocations = chunk && Array.isArray(chunk.locations)
+            ? chunk.locations.filter((location) => location.kind === "pdf")
+            : [];
+        const targetPage = highlightLocations.length
+            ? highlightLocations[0].page
+            : Math.min(Math.max(state.currentPage || 1, 1), pageCount);
+
+        // Render every page stacked so the source can be scrolled continuously.
         let html = "";
         for (let page = 1; page <= pageCount; page += 1) {
             const src = template.replace("{page_number}", String(page));
             const pageInfo = (source.pages || []).find((p) => p.page_number === page) || {};
-            const highlights = quotes.flatMap((quote) => {
-                const chunk = manifestChunk(quote.id);
-                const locs = chunk && Array.isArray(chunk.locations)
-                    ? chunk.locations.filter((l) => l.kind === "pdf" && l.page === page)
-                    : [];
-                const active = quote.id === state.activeQuote ? "is-active" : "";
-                const idAttr = `id="${highlightId(quote)}"`;
-                return locs.flatMap((loc) => {
-                    const width = loc.page_width || pageInfo.width || 1;
-                    const height = loc.page_height || pageInfo.height || 1;
-                    return (loc.rects || []).map((rect, ri) => {
+            const highlights = highlightLocations
+                .filter((location) => location.page === page)
+                .flatMap((location) => {
+                    const width = location.page_width || pageInfo.width || 1;
+                    const height = location.page_height || pageInfo.height || 1;
+                    return (location.rects || []).map((rect) => {
                         const left = (rect.x0 / width) * 100;
                         const top = (rect.y0 / height) * 100;
-                        const w = ((rect.x1 - rect.x0) / width) * 100;
-                        const h = ((rect.y1 - rect.y0) / height) * 100;
-                        // Anchor the scroll target / tag to the first rect only.
-                        const anchor = ri === 0 ? idAttr : "";
-                        const tag = ri === 0 ? `<span class="sf-pdf-hl__tag">${escapeHtml(quote.label)}</span>` : "";
-                        return `<span class="sf-pdf-hl sf-pdf-hl--${quote.doc} ${active}" ${anchor} data-quote="${escapeHtml(quote.id)}" style="left:${left}%;top:${top}%;width:${w}%;height:${h}%;">${tag}</span>`;
+                        const rectWidth = ((rect.x1 - rect.x0) / width) * 100;
+                        const rectHeight = ((rect.y1 - rect.y0) / height) * 100;
+                        return `<span class="${hlClass} is-active" style="left:${left}%; top:${top}%; width:${rectWidth}%; height:${rectHeight}%;"></span>`;
                     });
-                });
-            }).join("");
-            html += `<div class="sf-pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}</div>`;
+                }).join("");
+            html += `<div class="pdf-stage" data-page="${page}"><img src="${escapeHtml(src)}" alt="Page ${page}" loading="lazy">${highlights}</div>`;
         }
-        return `<div class="sf-doc__pdf">${html}</div>`;
-    }
-
-    function highlightId(quote) {
-        return `hl-${quote.doc}-${quote.id}`;
-    }
-
-    function bindHighlightClicks() {
-        els.views.querySelectorAll("[data-quote]").forEach((node) => {
-            if (!node.classList.contains("sf-hl") && !node.classList.contains("sf-pdf-hl")) return;
-            node.addEventListener("click", () => {
-                state.lastScrollSrc = "doc";
-                state.activeQuote = node.dataset.quote;
-                refreshTraceActive();
+        els.sourceCanvas.innerHTML = html;
+        state.currentPage = targetPage;
+        // Flick to the page that holds the highlight (or the current page).
+        const targetEl = els.sourceCanvas.querySelector(`.pdf-stage[data-page="${targetPage}"]`);
+        if (targetEl) {
+            window.requestAnimationFrame(() => {
+                targetEl.scrollIntoView({ block: "start", behavior: "smooth" });
             });
-        });
-    }
-
-    // Update active styling + stepper without rebuilding documents.
-    function refreshTraceActive() {
-        const dim = currentDim();
-        if (!dim) return;
-        els.views.querySelectorAll(".sf-hl, .sf-pdf-hl").forEach((node) => {
-            node.classList.toggle("is-active", node.dataset.quote === state.activeQuote);
-        });
-        renderStepper(dim);
-        if (state.lastScrollSrc !== "doc") {
-            scrollToActive(dim);
         }
     }
 
-    function renderStepper(dim) {
-        const stepper = els.views.querySelector("[data-stepper]");
-        if (!stepper) return;
-        const vis = visibleQuotes(dim);
-        if (!vis.length) {
-            stepper.innerHTML = `<span class="sf-stepper__empty">No retrieved quotes for this dimension.</span>`;
-            return;
-        }
-        const idx = vis.findIndex((q) => q.id === state.activeQuote);
-        const quote = vis[idx] || vis[0];
-        const prevDisabled = idx <= 0 ? "disabled" : "";
-        const nextDisabled = idx >= vis.length - 1 ? "disabled" : "";
-        stepper.innerHTML = `
-            <button type="button" class="sf-stepper__btn" data-qstep="-1" ${prevDisabled} aria-label="Previous quote">‹</button>
-            <span class="sf-stepper__label sf-quote__label--${quote.doc}">${escapeHtml(quote.label)}</span>
-            <span class="sf-stepper__sim">${escapeHtml(quote.score ? quote.score.toFixed(2) : "—")}</span>
-            <span class="sf-stepper__count">${idx + 1} of ${vis.length}</span>
-            <button type="button" class="sf-stepper__btn" data-qstep="1" ${nextDisabled} aria-label="Next quote">›</button>`;
-        stepper.querySelectorAll("[data-qstep]").forEach((btn) => {
-            btn.addEventListener("click", () => stepQuote(parseInt(btn.dataset.qstep, 10)));
-        });
-    }
-
-    function stepQuote(dir) {
-        const dim = currentDim();
-        if (!dim) return;
-        const vis = visibleQuotes(dim);
-        const idx = vis.findIndex((q) => q.id === state.activeQuote);
-        const next = idx + dir;
-        if (next < 0 || next >= vis.length) return;
-        state.lastScrollSrc = "step";
-        state.activeQuote = vis[next].id;
-        refreshTraceActive();
-    }
-
-    function scrollWithin(container, el, offset) {
-        if (!container || !el) return;
-        const cr = container.getBoundingClientRect();
-        const er = el.getBoundingClientRect();
-        container.scrollTo({
-            top: container.scrollTop + (er.top - cr.top) - (offset || 90),
-            behavior: prefersReducedMotion ? "auto" : "smooth",
-        });
-    }
-
-    function scrollToActive(dim) {
-        const vis = visibleQuotes(dim);
-        const quote = vis.find((q) => q.id === state.activeQuote);
-        if (!quote) return;
-        const scroll = els.views.querySelector(`[data-scroll="${quote.doc}"]`);
-        const el = document.getElementById(highlightId(quote));
-        scrollWithin(scroll, el, 90);
-    }
-
-    function scrollTraceColumns(dim) {
-        const vis = visibleQuotes(dim);
-        const active = vis.find((q) => q.id === state.activeQuote);
-        if (!active) return;
-        scrollToActive(dim);
-        // On entry, also bring the other document's first visible quote into view.
-        if (state.lastScrollSrc === "enter") {
-            const otherRole = active.doc === "reg" ? "ppr" : "reg";
-            const otherFirst = vis.find((q) => q.doc === otherRole);
-            if (otherFirst) {
-                const scroll = els.views.querySelector(`[data-scroll="${otherRole}"]`);
-                const el = document.getElementById(highlightId(otherFirst));
-                scrollWithin(scroll, el, 90);
-            }
+    async function renderTextSource(source, chunk) {
+        const renderData = await getRenderData(source.id);
+        const text = renderData && renderData.text ? renderData.text : "";
+        const location = chunk ? (firstLocation(chunk, "text") || firstLocation(chunk, "json")) : null;
+        const fallbackStart = chunk && chunk.text ? text.indexOf(chunk.text) : -1;
+        const start = location && Number.isFinite(location.start) ? location.start : fallbackStart;
+        const end = location && Number.isFinite(location.end) ? location.end : (fallbackStart >= 0 && chunk ? fallbackStart + chunk.text.length : -1);
+        const regClass = isRegistrationSource(source.id) ? " is-reg" : "";
+        els.sourceCanvas.innerHTML = `<div class="source-text${regClass}">${highlightText(text, start, end)}</div>`;
+        const mark = els.sourceCanvas.querySelector("mark");
+        if (mark) {
+            window.requestAnimationFrame(() => {
+                mark.scrollIntoView({ block: "center", behavior: "smooth" });
+            });
         }
     }
-
-    /* ── render-data / manifest fetch ────────────────────────────────────── */
 
     async function getRenderData(sourceId) {
         if (state.renderDataCache.has(sourceId)) return state.renderDataCache.get(sourceId);
-        try {
-            const response = await fetch(`/report/${state.taskId}/sources/${sourceId}/render-data`);
-            if (!response.ok) return null;
-            const data = await response.json();
-            state.renderDataCache.set(sourceId, data);
-            return data;
-        } catch (_error) {
-            return null;
-        }
+        const response = await fetch(`/report/${state.taskId}/sources/${sourceId}/render-data`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        state.renderDataCache.set(sourceId, data);
+        return data;
     }
 
-    async function loadManifest() {
-        try {
-            const response = await fetch(`/report/${state.taskId}/manifest`);
-            if (!response.ok) {
-                state.manifest = null;
-                state.manifestUnavailable = true;
-                return;
-            }
-            state.manifest = await response.json();
-            state.manifestUnavailable = false;
-        } catch (_error) {
-            state.manifest = state.manifest || null;
+    function highlightText(text, start, end) {
+        if (!text) return "";
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+            return escapeHtml(text);
         }
+        return [
+            escapeHtml(text.slice(0, start)),
+            "<mark>",
+            escapeHtml(text.slice(start, end)),
+            "</mark>",
+            escapeHtml(text.slice(end)),
+        ].join("");
     }
-
-    /* ── CSV / share ─────────────────────────────────────────────────────── */
 
     function csvEscape(value) {
         const text = (value === null || value === undefined ? "" : value).toString();
@@ -814,11 +559,10 @@
     }
 
     function quotesPlain(quotes) {
-        return parseQuotes(quotes || "")
-            .sort(sortByScore)
+        return sortedQuotes(parseQuotes(quotes || ""), "all")
             .map((quote) => {
                 const score = quote.score ? `, relevance_score=${quote.score.toFixed(3)}` : "";
-                return `[${quote.id}${score}] ${(quote.text || "").trim()}`;
+                return `[${quote.id}${score}] ${(quote.text || quote.raw || "").trim()}`;
             })
             .join("\n\n");
     }
@@ -874,7 +618,9 @@
                 copied = false;
             }
         }
-        if (els.copyLinkLabel) els.copyLinkLabel.textContent = copied ? "Copied" : "Copy failed";
+        if (els.copyLinkLabel) {
+            els.copyLinkLabel.textContent = copied ? "Copied" : "Copy failed";
+        }
         if (els.copyLink) els.copyLink.classList.toggle("is-copied", copied);
         showToast(copied ? "Report link copied to clipboard" : "Could not copy link");
         window.setTimeout(() => {
@@ -883,7 +629,21 @@
         }, 1800);
     }
 
-    /* ── loading: poll / demo ────────────────────────────────────────────── */
+    async function loadManifest() {
+        try {
+            const response = await fetch(`/report/${state.taskId}/manifest`);
+            if (!response.ok) {
+                state.manifest = null;
+                state.manifestUnavailable = true;
+                return;
+            }
+            state.manifest = await response.json();
+            state.manifestUnavailable = false;
+            renderSourceTabs();
+        } catch (_error) {
+            state.manifest = state.manifest || null;
+        }
+    }
 
     async function pollTaskStatus() {
         try {
@@ -896,16 +656,21 @@
             appendLog(data.status || "", counts);
             if (data.result && Array.isArray(data.result.items)) {
                 state.items = data.result.items;
-                if (state.dimIndex >= state.items.length) state.dimIndex = 0;
+                if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
-            if (data.evidence_available === false) {
+            if (data.evidence_available === true) {
+                await loadManifest();
+            } else if (data.evidence_available === false) {
                 state.manifest = null;
                 state.manifestUnavailable = data.state === "SUCCESS";
             } else {
                 await loadManifest();
             }
             render();
-            if (data.state === "SUCCESS" && els.log) els.log.classList.add("d-none");
+            autoShowTopEvidence();
+            if (data.state === "SUCCESS" && els.log) {
+                els.log.classList.add("d-none");
+            }
             if (data.state !== "SUCCESS" && data.state !== "FAILURE") {
                 state.pollHandle = window.setTimeout(pollTaskStatus, 3000);
             }
@@ -930,39 +695,129 @@
             setStatus("SUCCESS", "Sample report");
             if (els.statusText) els.statusText.textContent = "Sample report";
             render();
+            autoShowTopEvidence();
         } catch (_error) {
             setStatus("FAILURE", "Could not load the sample report");
         }
     }
 
-    /* ── global keyboard ─────────────────────────────────────────────────── */
+    function setupResizers() {
+        const rail = app.querySelector(".report-dimension-rail");
+        const detail = app.querySelector(".report-detail");
+        const source = app.querySelector(".source-viewer");
+        if (!rail || !detail || !source) return;
 
-    function onKey(event) {
-        if (event.target && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA")) return;
-        const dims = dimensions();
-        if (!dims.length) return;
-        const dim = currentDim(dims);
-        if (state.view === "poster") {
-            if (event.key === "ArrowLeft" && dim.index > 0) { event.preventDefault(); setDimIndex(dim.index - 1); }
-            else if (event.key === "ArrowRight" && dim.index < dims.length - 1) { event.preventDefault(); setDimIndex(dim.index + 1); }
-            else if (event.key === "Escape") { event.preventDefault(); setView("board"); }
-        } else if (state.view === "trace") {
-            if (event.key === "Escape") { event.preventDefault(); setView("poster"); }
-            else if (event.key === "ArrowLeft") { event.preventDefault(); stepQuote(-1); }
-            else if (event.key === "ArrowRight") { event.preventDefault(); stepQuote(1); }
+        const MIN_RAIL = 176, MAX_RAIL = 460, MIN_SOURCE = 300, MAX_SOURCE = 820, MIN_DETAIL = 320;
+        const RAIL_KEY = "regcheck.report.railW", SOURCE_KEY = "regcheck.report.sourceW";
+
+        const makeSplitter = (kind, label) => {
+            const el = document.createElement("div");
+            el.className = "report-splitter";
+            el.dataset.resize = kind;
+            el.setAttribute("role", "separator");
+            el.setAttribute("aria-orientation", "vertical");
+            el.setAttribute("tabindex", "0");
+            el.setAttribute("aria-label", label);
+            return el;
+        };
+        const railSplit = makeSplitter("rail", "Drag to resize the dimensions panel");
+        const sourceSplit = makeSplitter("source", "Drag to resize the source panel");
+        rail.after(railSplit);
+        detail.after(sourceSplit);
+
+        const isActive = () => getComputedStyle(railSplit).display !== "none";
+        const gutters = () => railSplit.offsetWidth + sourceSplit.offsetWidth;
+        const widthOf = (el) => el.getBoundingClientRect().width;
+
+        function applyRail(w) {
+            const maxRail = Math.min(MAX_RAIL, widthOf(app) - widthOf(source) - gutters() - MIN_DETAIL);
+            w = Math.max(MIN_RAIL, Math.min(w, Math.max(MIN_RAIL, maxRail)));
+            app.style.setProperty("--rail-w", Math.round(w) + "px");
         }
+        function applySource(w) {
+            const maxSource = Math.min(MAX_SOURCE, widthOf(app) - widthOf(rail) - gutters() - MIN_DETAIL);
+            w = Math.max(MIN_SOURCE, Math.min(w, Math.max(MIN_SOURCE, maxSource)));
+            app.style.setProperty("--source-w", Math.round(w) + "px");
+        }
+        function persist() {
+            if (!window.localStorage) return;
+            const r = app.style.getPropertyValue("--rail-w").trim();
+            const s = app.style.getPropertyValue("--source-w").trim();
+            if (r) window.localStorage.setItem(RAIL_KEY, r);
+            if (s) window.localStorage.setItem(SOURCE_KEY, s);
+        }
+        const hasCustom = () => !!app.style.getPropertyValue("--rail-w") || !!app.style.getPropertyValue("--source-w");
+
+        function startDrag(event, splitter, kind) {
+            if (!isActive()) return;
+            event.preventDefault();
+            splitter.classList.add("is-active");
+            document.body.classList.add("is-col-resizing");
+            const startX = event.clientX;
+            const startRail = widthOf(rail);
+            const startSource = widthOf(source);
+            const move = (ev) => {
+                const dx = ev.clientX - startX;
+                if (kind === "rail") applyRail(startRail + dx);
+                else applySource(startSource - dx);
+            };
+            const up = () => {
+                document.removeEventListener("pointermove", move);
+                document.removeEventListener("pointerup", up);
+                splitter.classList.remove("is-active");
+                document.body.classList.remove("is-col-resizing");
+                persist();
+            };
+            document.addEventListener("pointermove", move);
+            document.addEventListener("pointerup", up);
+        }
+        function onKey(event, kind) {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const step = (event.shiftKey ? 48 : 16) * (event.key === "ArrowRight" ? 1 : -1);
+            if (kind === "rail") applyRail(widthOf(rail) + step);
+            else applySource(widthOf(source) - step);
+            persist();
+        }
+        railSplit.addEventListener("pointerdown", (e) => startDrag(e, railSplit, "rail"));
+        sourceSplit.addEventListener("pointerdown", (e) => startDrag(e, sourceSplit, "source"));
+        railSplit.addEventListener("keydown", (e) => onKey(e, "rail"));
+        sourceSplit.addEventListener("keydown", (e) => onKey(e, "source"));
+        railSplit.addEventListener("dblclick", () => { app.style.removeProperty("--rail-w"); persist(); });
+        sourceSplit.addEventListener("dblclick", () => { app.style.removeProperty("--source-w"); persist(); });
+
+        if (window.localStorage) {
+            const r = window.localStorage.getItem(RAIL_KEY);
+            const s = window.localStorage.getItem(SOURCE_KEY);
+            if (r) app.style.setProperty("--rail-w", r);
+            if (s) app.style.setProperty("--source-w", s);
+        }
+        const reclamp = () => {
+            if (!isActive() || !hasCustom()) return;
+            if (app.style.getPropertyValue("--rail-w")) applyRail(widthOf(rail));
+            if (app.style.getPropertyValue("--source-w")) applySource(widthOf(source));
+        };
+        window.addEventListener("resize", reclamp);
+        reclamp();
     }
 
-    /* ── wire up ─────────────────────────────────────────────────────────── */
-
+    if (els.closeViewer) {
+        els.closeViewer.addEventListener("click", () => {
+            els.viewer.classList.remove("is-open");
+        });
+    }
     if (els.copyLink) els.copyLink.addEventListener("click", copyReportLink);
     if (els.csv) els.csv.addEventListener("click", downloadCsv);
-    window.addEventListener("keydown", onKey);
+
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
 
-    render();
-    if (state.demoSrc) loadDemo();
-    else pollTaskStatus();
+    setupResizers();
+
+    if (state.demoSrc) {
+        loadDemo();
+    } else {
+        pollTaskStatus();
+    }
 })();
