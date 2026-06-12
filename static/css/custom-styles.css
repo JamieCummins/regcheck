@@ -361,11 +361,12 @@ body:not(.results-page) .table-responsive tbody + tbody {
     color: inherit;
 }
 .footer-links {
-    display: inline-flex;
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    margin-top: 0.6rem;
 }
 .footer-sep {
     opacity: 0.5;
