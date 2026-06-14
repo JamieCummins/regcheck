@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    {% set static_version = '20260614-share1' %}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta name="robots" content="noindex,nofollow">
+    <title>No access &middot; RegCheck</title>
+    <style>
+      .auth-main {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1.5rem, 5vh, 4rem) 1rem;
+      }
+      .auth-card {
+        width: min(28rem, 100%);
+        background: var(--rc-surface);
+        border: 1px solid var(--rc-border);
+        border-radius: var(--rc-radius);
+        box-shadow: var(--rc-shadow-md);
+        padding: clamp(1.5rem, 4vw, 2.2rem);
+        text-align: center;
+      }
+      .auth-card h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+      .auth-card .auth-lede { color: var(--rc-muted); font-size: 0.92rem; line-height: 1.55; margin: 0 0 1.4rem; }
+      .auth-back { margin: 0.4rem 0 0; }
+      .auth-back a { color: var(--rc-accent-strong); font-size: 0.9rem; text-decoration: none; }
+      .auth-back a:hover { color: var(--rc-accent); }
+    </style>
+</head>
+<body class="text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+    <header class="mb-auto">
+      {% include '_partials/navbar.html' %}
+    </header>
+
+    <main class="auth-main">
+      <div class="auth-card">
+        <h1>This report is restricted</h1>
+        <p class="auth-lede">
+          You're signed in, but the owner hasn't shared this report with your
+          account. Ask them to grant access to your email address or ORCID iD.
+        </p>
+        <p class="auth-back"><a href="{{ url_for('compare') }}">Run a new comparison &rarr;</a></p>
+      </div>
+    </main>
+
+    {% include '_partials/footer.html' %}
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+</body>
+</html>

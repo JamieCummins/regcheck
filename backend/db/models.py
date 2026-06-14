@@ -125,7 +125,7 @@ class Report(Base):
     owner_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
     )
-    visibility: Mapped[str] = mapped_column(String(16), default="private", nullable=False)
+    visibility: Mapped[str] = mapped_column(String(16), default="unlisted", nullable=False)
     title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     comparison_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     source: Mapped[str] = mapped_column(String(16), default="ui", nullable=False)
@@ -134,3 +134,32 @@ class Report(Base):
     )
 
     owner: Mapped["User | None"] = relationship(back_populates="reports")
+    shares: Mapped[list["ReportShare"]] = relationship(
+        back_populates="report", cascade="all, delete-orphan"
+    )
+
+
+class ReportShare(Base):
+    """A grant of view access to a `restricted` report. Each row names one
+    grantee by verified email (Google) OR ORCID iD — exactly one is set. A
+    viewer is allowed when their account matches a grant (see
+    `services.sharing.user_can_view`). Owners are always allowed and need no row.
+    """
+
+    __tablename__ = "report_shares"
+    __table_args__ = (
+        UniqueConstraint("task_id", "grantee_email", name="uq_share_task_email"),
+        UniqueConstraint("task_id", "grantee_orcid", name="uq_share_task_orcid"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    task_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("reports.task_id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    grantee_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    grantee_orcid: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
+    )
+
+    report: Mapped["Report"] = relationship(back_populates="shares")

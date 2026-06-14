@@ -5,11 +5,13 @@ import json
 import logging
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from ..services import reports as reports_service
+from ..services import sharing as sharing_service
 from ..services.report_artifacts import manifest_key
 
 router = APIRouter()
@@ -74,6 +76,9 @@ def _status_field(data: dict, name: str) -> str | None:
 
 @router.get("/task_status/{task_id}")
 async def task_status(request: Request, task_id: str):
+    verdict = await sharing_service.ensure_viewable(request, task_id)
+    if not verdict.allowed:
+        return JSONResponse({"state": "FORBIDDEN", "status": "You do not have access to this report."}, status_code=403)
     redis_client = request.app.state.redis
     data = await _safe_hgetall(redis_client, task_id)
     if not data:
@@ -140,9 +145,21 @@ async def task_status(request: Request, task_id: str):
 
 @router.get("/result/{task_id}", response_class=HTMLResponse)
 async def result(request: Request, task_id: str):
+    templates = request.app.state.templates
+
+    verdict = await sharing_service.ensure_viewable(request, task_id)
+    if not verdict.allowed:
+        if verdict.needs_login:
+            login_url = request.url_for("login")
+            return RedirectResponse(url=f"{login_url}?next=/result/{task_id}", status_code=302)
+        return templates.TemplateResponse(
+            "report_no_access.html",
+            {"request": request, "task_id": task_id},
+            status_code=403,
+        )
+
     redis_client = request.app.state.redis
     data = await _safe_hgetall(redis_client, task_id)
-    templates = request.app.state.templates
 
     state = _decode(data.get("state")) if data else None
     total_dimensions = None
@@ -160,7 +177,10 @@ async def result(request: Request, task_id: str):
 
     # Ownership / naming context for the viewer (rename, visibility, delete).
     report_title = (_decode(data.get("title")) if data else None) or "RegCheck Report"
-    report_visibility = (_decode(data.get("visibility")) if data else None) or "public"
+    raw_visibility = _decode(data.get("visibility")) if data else None
+    # Anonymous/legacy reports (no stored visibility) are public; otherwise map to
+    # the current three-tier vocabulary (private -> unlisted).
+    report_visibility = reports_service.normalize_visibility(raw_visibility) if raw_visibility else "public"
     owner_id = _decode(data.get("owner_id")) if data else None
     user = getattr(request.state, "user", None)
     owned = request.session.get("owned_reports")
@@ -168,6 +188,16 @@ async def result(request: Request, task_id: str):
     is_owner = bool((user is not None and owner_id and user.id == owner_id) or owned_in_session)
     # The visibility toggle is an account feature (anonymous reports stay public).
     can_set_visibility = bool(user is not None and owner_id and user.id == owner_id)
+
+    # Owners managing a restricted report see the current allow-list.
+    shares_ctx: list[dict] = []
+    sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
+    if can_set_visibility and report_visibility == "restricted" and sessionmaker is not None:
+        async with sessionmaker() as db:
+            shares_ctx = [
+                {"id": s.id, "label": sharing_service.share_label(s), "type": "orcid" if s.grantee_orcid else "email"}
+                for s in await sharing_service.list_shares(db, task_id)
+            ]
 
     base_context = {
         "request": request,
@@ -178,6 +208,7 @@ async def result(request: Request, task_id: str):
         "report_visibility": report_visibility,
         "is_owner": is_owner,
         "can_set_visibility": can_set_visibility,
+        "shares": shares_ctx,
     }
 
     if state == "SUCCESS":
