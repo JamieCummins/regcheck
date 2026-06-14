@@ -6,6 +6,15 @@
     --report-pdf-bg: #f3f4f8;
     --doc-reg-rgb: 123, 160, 220;
     --doc-ppr-rgb: 220, 164, 92;
+    /* Quote colour-coding: registration = blue, paper = lemon-yellow.
+       Paper is deliberately a cooler/greener yellow than the amber "missing"
+       verdict so the two don't read as the same colour. */
+    --report-reg-ink: #9bb8e6;
+    --report-paper-ink: #e6cf6a;
+    --report-reg-bg: rgba(123, 160, 220, 0.12);
+    --report-paper-bg: rgba(244, 222, 120, 0.11);
+    --report-reg-bg-hover: rgba(123, 160, 220, 0.18);
+    --report-paper-bg-hover: rgba(244, 222, 120, 0.17);
 }
 
 .report-page,
@@ -162,6 +171,33 @@
 }
 
 .report-action-btn__icon { flex: 0 0 auto; }
+
+/* Icon-only action buttons (share / export / delete). */
+.report-action-btn--icon { padding: 0.45rem; min-width: 2.3rem; }
+
+/* Overview ⇄ Comparison segmented toggle (left of the report title). */
+.report-view-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    border: 1px solid var(--rc-border);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--rc-surface-2);
+}
+.report-view-btn {
+    border: none;
+    background: none;
+    color: var(--rc-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0.42rem 0.8rem;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+.report-view-btn + .report-view-btn { border-left: 1px solid var(--rc-border); }
+.report-view-btn.is-active { background: var(--rc-accent); color: #ffffff; }
+.report-view-btn:not(.is-active):hover { background: var(--rc-surface-3); color: var(--rc-text); }
 
 .report-action-btn--primary {
     color: #ffffff;
@@ -678,8 +714,8 @@ body.is-col-resizing * {
     letter-spacing: 0.06em;
 }
 
-.evidence-column__title--reg { color: var(--rc-accent-strong); }
-.evidence-column__title--paper { color: var(--rc-warn); }
+.evidence-column__title--reg { color: var(--report-reg-ink); }
+.evidence-column__title--paper { color: var(--report-paper-ink); }
 
 .evidence-list {
     display: flex;
@@ -771,6 +807,12 @@ body.is-col-resizing * {
     opacity: 1;
 }
 
+/* Quote cards tinted by role: registration light blue, paper light yellow. */
+.evidence-card--reg { background: var(--report-reg-bg); border-color: rgba(123, 160, 220, 0.30); }
+.evidence-card--ppr { background: var(--report-paper-bg); border-color: rgba(244, 222, 120, 0.32); }
+.evidence-card--reg:hover { background: var(--report-reg-bg-hover); border-color: rgba(123, 160, 220, 0.55); }
+.evidence-card--ppr:hover { background: var(--report-paper-bg-hover); border-color: rgba(244, 222, 120, 0.55); }
+
 /* Documents view (step 2) --------------------------------------------------- */
 .report-view--documents {
     display: flex;
@@ -856,8 +898,8 @@ body.is-col-resizing * {
     text-transform: uppercase;
 }
 
-.docs-tag--reg { color: var(--rc-accent-strong); }
-.docs-tag--ppr { color: var(--rc-warn); }
+.docs-tag--reg { color: var(--report-reg-ink); }
+.docs-tag--ppr { color: var(--report-paper-ink); }
 
 .docs-panel__scroll {
     flex: 1 1 auto;
@@ -916,7 +958,7 @@ body.is-col-resizing * {
 }
 
 .pdf-highlight.is-active {
-    box-shadow: 0 0 0 2px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
+    box-shadow: 0 0 0 1px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
 }
 
 /* Page-level fallback marker for quotes whose exact rects are unavailable. */
@@ -941,7 +983,7 @@ body.is-col-resizing * {
 .pdf-page-flag--ppr { background: var(--report-highlight); color: #2a2300; }
 
 .pdf-page-flag.is-active {
-    box-shadow: 0 0 0 2px var(--rc-accent), var(--rc-shadow-sm);
+    box-shadow: 0 0 0 1px var(--rc-accent), var(--rc-shadow-sm);
 }
 
 /* Quote cards that could not be anchored in the rendered documents. */
@@ -978,7 +1020,7 @@ body.is-col-resizing * {
 }
 
 .source-text mark.is-active {
-    box-shadow: 0 0 0 2px var(--rc-accent);
+    box-shadow: 0 0 0 1px var(--rc-accent);
 }
 
 /* Toast --------------------------------------------------------------------- */

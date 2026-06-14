@@ -40,6 +40,7 @@
         detail: document.getElementById("dimension-detail"),
         empty: document.getElementById("report-empty-state"),
         quotesPane: document.getElementById("quotes-pane"),
+        viewToggle: document.getElementById("report-view-toggle"),
         statusPill: document.getElementById("report-status-pill"),
         statusText: document.getElementById("report-status-text"),
         copyLink: document.getElementById("copy-report-link-btn"),
@@ -182,6 +183,9 @@
 
     function setStatus(stateValue, detailText, counts) {
         if (!els.statusPill) return;
+        // Once complete, drop the status pill entirely — the report itself is the
+        // signal. Keep it for processing/failed states.
+        els.statusPill.classList.toggle("d-none", stateValue === "SUCCESS");
         const running = stateValue !== "SUCCESS" && stateValue !== "FAILURE";
         els.statusPill.classList.toggle("is-running", running);
         els.statusPill.classList.toggle("is-done", stateValue === "SUCCESS");
@@ -294,6 +298,15 @@
         if (els.viewDecision) els.viewDecision.classList.toggle("d-none", inDocuments);
         if (els.viewDocuments) els.viewDocuments.classList.toggle("d-none", !inDocuments);
 
+        // Overview ⇄ Comparison toggle: only meaningful once the report has loaded.
+        if (els.viewToggle) {
+            els.viewToggle.classList.toggle("d-none", !hasItems);
+            els.viewToggle.querySelectorAll("[data-view]").forEach((btn) => {
+                const target = btn.dataset.view === "documents" ? "documents" : "decision";
+                btn.classList.toggle("is-active", target === state.view);
+            });
+        }
+
         renderDimensionList();
         renderDimensionDetail();
         renderQuotesPane();
@@ -321,8 +334,6 @@
         els.list.innerHTML = "";
         state.items.forEach((item, index) => {
             const info = judgementInfo(item.deviation_judgement);
-            const regCount = parseQuotes(item.registration_content_quotes || "").length;
-            const paperCount = parseQuotes(item.paper_content_quotes || "").length;
             const button = document.createElement("button");
             button.type = "button";
             button.className = `dimension-card ${index === state.activeIndex ? "is-active" : ""}`;
@@ -330,7 +341,6 @@
                 <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
                 <span class="dimension-card__meta">
                     <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
-                    <span class="dimension-card__count">${regCount + paperCount} quotes</span>
                 </span>
             `;
             button.addEventListener("click", () => {
@@ -911,6 +921,9 @@
                 });
             }
             setStatus("SUCCESS", "Sample report");
+            // The demo intentionally keeps a "Sample report" badge (setStatus hides
+            // the pill on SUCCESS for real reports).
+            if (els.statusPill) els.statusPill.classList.remove("d-none");
             if (els.statusText) els.statusText.textContent = "Sample report";
             render();
         } catch (_error) {
@@ -942,6 +955,16 @@
         });
     }
     if (els.csv) els.csv.addEventListener("click", downloadCsv);
+    if (els.viewToggle) {
+        els.viewToggle.querySelectorAll("[data-view]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const target = btn.dataset.view === "documents" ? "documents" : "decision";
+                if (target === state.view || !state.items.length) return;
+                state.view = target;   // Comparison view picks a default quote in renderDocumentsView
+                render();
+            });
+        });
+    }
     window.addEventListener("keydown", onKey);
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
