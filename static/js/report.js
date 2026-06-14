@@ -309,7 +309,7 @@
 
         renderDimensionList();
         renderDimensionDetail();
-        renderQuotesPane();
+        renderSummariesPane();
         if (inDocuments) renderDocumentsView();
 
         if (!state.decisionResizersDone && els.viewDecision) {
@@ -377,19 +377,38 @@
                 <div class="verdict-banner__head">
                     <span class="verdict-banner__label">${info.label}</span>
                 </div>
-                <p class="verdict-banner__body">${escapeHtml(item.deviation_information || "No deviation information found.")}</p>
-            </div>
-            <div class="summary-grid">
-                <div class="summary-box">
-                    <p class="section-title">Registration summary</p>
-                    <p>${escapeHtml(item.registration_content_summary || "No summary available.")}</p>
-                </div>
-                <div class="summary-box">
-                    <p class="section-title">Paper summary</p>
-                    <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
-                </div>
+                <p class="verdict-banner__body">${linkifyQuoteRefs(item.deviation_information || "No deviation information found.")}</p>
             </div>
         `;
+        // Quote references (PREREG_0001 / PAPER_0001) jump to the Evidence view.
+        els.detail.querySelectorAll(".quote-ref").forEach((btn) => {
+            btn.addEventListener("click", () => openQuoteRef(btn.dataset.quoteRef));
+        });
+    }
+
+    // Turn PREREG_0001 / PAPER_0001 tokens in the deviation text into buttons
+    // that open the Evidence view with that quote highlighted.
+    function linkifyQuoteRefs(text) {
+        return escapeHtml(text || "").replace(
+            /\b((?:PREREG|PAPER)_\d+)\b/g,
+            (id) => `<button type="button" class="quote-ref" data-quote-ref="${id}">${id}</button>`
+        );
+    }
+
+    function openQuoteRef(id) {
+        if (!id) return;
+        const item = currentItem();
+        if (!item) return;
+        const role = /^PREREG/i.test(id) ? "reg" : "ppr";
+        const all = parseQuotes(role === "reg" ? item.registration_content_quotes : item.paper_content_quotes);
+        if (!all.some((q) => q.id === id)) return;   // unknown reference — ignore
+        // Make sure the referenced quote is within the limited set shown in Evidence.
+        if (!sortedQuotes(all, state.evidenceLimit).some((q) => q.id === id)) {
+            persistEvidenceLimit("all");
+        }
+        state.view = "documents";
+        state.activeQuoteId = id;
+        render();   // documents view scrolls the active quote into view on render
     }
 
     /* ── decision view: right pane (quotes list) ─────────────────────────── */
@@ -417,7 +436,9 @@
         });
     }
 
-    function renderQuotesPane() {
+    // Overview right pane: registration + paper summaries (evidence quotes now
+    // live only on the Evidence view).
+    function renderSummariesPane() {
         if (!els.quotesPane) return;
         if (!state.items.length) {
             els.quotesPane.innerHTML = "";
@@ -425,24 +446,15 @@
         }
         const item = currentItem() || {};
         els.quotesPane.innerHTML = `
-            <div class="quotes-pane__header">
-                <p class="section-title">Evidence quotes</p>
-                ${limitControlHtml()}
+            <div class="summary-box">
+                <p class="section-title evidence-column__title--reg">Registration summary</p>
+                <p>${escapeHtml(item.registration_content_summary || "No summary available.")}</p>
             </div>
-            <div class="quotes-grid">
-                <div class="evidence-column">
-                    <p class="evidence-column__title evidence-column__title--reg">Registration</p>
-                    <div class="evidence-list" id="registration-evidence-list"></div>
-                </div>
-                <div class="evidence-column">
-                    <p class="evidence-column__title evidence-column__title--paper">Paper</p>
-                    <div class="evidence-list" id="paper-evidence-list"></div>
-                </div>
+            <div class="summary-box">
+                <p class="section-title evidence-column__title--paper">Paper summary</p>
+                <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
             </div>
         `;
-        bindLimitControl(els.quotesPane, renderQuotesPane);
-        renderQuoteList(document.getElementById("registration-evidence-list"), quotesForRole(item, "reg"), "reg");
-        renderQuoteList(document.getElementById("paper-evidence-list"), quotesForRole(item, "ppr"), "ppr");
     }
 
     function renderQuoteList(container, quotes, role, opts) {
@@ -507,7 +519,7 @@
             <div class="docs-bar">
                 <button type="button" class="docs-back" data-back>
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-                    Back to decision
+                    Back to overview
                 </button>
                 <span class="docs-bar__dim">${escapeHtml(item.dimension || "Dimension")}</span>
                 <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>

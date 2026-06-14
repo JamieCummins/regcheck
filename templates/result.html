@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-share3' %}
+    {% set static_version = '20260614-share4' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -71,7 +71,7 @@
                 <div class="report-topbar__lead">
                     <div class="report-view-toggle d-none" id="report-view-toggle" role="group" aria-label="Report view">
                         <button type="button" class="report-view-btn is-active" data-view="decision">Overview</button>
-                        <button type="button" class="report-view-btn" data-view="documents">Comparison</button>
+                        <button type="button" class="report-view-btn" data-view="documents">Evidence</button>
                     </div>
                     <h1 id="results-page-tagline" class="report-title">{{ report_title }}</h1>
                     {% if is_owner %}
@@ -147,7 +147,7 @@
                     <article id="dimension-detail" class="dimension-detail d-none"></article>
                 </section>
 
-                <aside class="report-quotes" aria-label="Evidence quotes">
+                <aside class="report-quotes" aria-label="Summaries">
                     <div id="quotes-pane" class="quotes-pane"></div>
                 </aside>
             </div>
