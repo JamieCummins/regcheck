@@ -15,6 +15,8 @@ from .core.oauth import build_oauth
 from .core.redis import create_redis_client
 from .db.session import create_engine_from_url, create_sessionmaker, init_models
 from .routes import auth, comparisons, pages, report, status
+from .routes import api as api_routes
+from .routes import reports as reports_routes
 from .routes import survey
 
 
@@ -78,6 +80,8 @@ def create_app() -> FastAPI:
 
     app.include_router(pages.router)
     app.include_router(auth.router)
+    app.include_router(reports_routes.router)
+    app.include_router(api_routes.router)
     app.include_router(comparisons.router)
     app.include_router(survey.router)
     app.include_router(report.router)

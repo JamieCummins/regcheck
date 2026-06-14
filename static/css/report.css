@@ -187,6 +187,63 @@
     border-color: var(--rc-border-strong);
 }
 
+.report-action-btn--danger {
+    color: var(--rc-flag);
+}
+
+.report-action-btn--danger:hover,
+.report-action-btn--danger:focus {
+    color: #fff;
+    background: var(--rc-flag);
+    border-color: var(--rc-flag);
+}
+
+/* Owner controls: rename pencil + visibility */
+.report-title-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-muted);
+    border-radius: 8px;
+    width: 1.9rem;
+    height: 1.9rem;
+    cursor: pointer;
+    transition: color 0.14s ease, border-color 0.14s ease;
+}
+
+.report-title-edit:hover {
+    color: var(--rc-text);
+    border-color: var(--rc-accent);
+}
+
+.report-visibility select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    border-radius: 999px;
+    padding: 0.22rem 1.4rem 0.22rem 0.7rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23828A9C' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+}
+
+.report-visibility-badge {
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-muted);
+    border-radius: 999px;
+    padding: 0.22rem 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
 /* Activity log (during generation) ------------------------------------------ */
 .report-log {
     display: flex;

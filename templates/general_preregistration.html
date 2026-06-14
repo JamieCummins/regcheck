@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260612-footer' %}
+    {% set static_version = '20260614-auth3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -198,6 +198,18 @@
                               </label>
                           </div>
                       </div>
+                      {% if current_user(request) %}
+                      <div class="field upload-visibility">
+                          <label class="field-label" for="visibility">Report visibility</label>
+                          <select class="form-control app-toggles" id="visibility" name="visibility">
+                              <option value="private" selected>Private — link only, not listed</option>
+                              <option value="public">Public — listed on your profile</option>
+                          </select>
+                          <p class="dropzone__note">Saved to your account; you can change this or delete the report later.</p>
+                      </div>
+                      {% else %}
+                      <p class="upload-visibility-note dropzone__note">Not signed in: this report is public, shareable by link, and auto-deletes after 7 days. <a href="{{ url_for('login') }}?next=/compare">Log in</a> to keep reports and control visibility.</p>
+                      {% endif %}
                   </section>
               </div>
 

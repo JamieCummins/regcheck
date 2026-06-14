@@ -798,10 +798,25 @@ async def _persist_evidence_manifest(
     )
 
 
-async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> int:
+async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> int | None:
+    """Resolve the TTL (seconds) that evidence artifacts should inherit.
+
+    Honors an explicit `retention` policy on the task hash: "persist" → None
+    (no expiry, for signed-in owners' reports); a digit string → that many
+    seconds (anonymous reports). Otherwise falls back to the task hash's own
+    TTL or the configured default.
+    """
     fallback_ttl = max(60, _env_int("TASK_TTL_SECONDS", 3 * 24 * 60 * 60))
     if not redis_client or not task_id:
         return fallback_ttl
+    try:
+        retention = await redis_client.hget(task_id, "retention")
+    except Exception:
+        retention = None
+    if retention == "persist":
+        return None
+    if isinstance(retention, str) and retention.isdigit():
+        return int(retention)
     try:
         ttl = await redis_client.ttl(task_id)
     except Exception:

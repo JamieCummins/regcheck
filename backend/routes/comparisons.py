@@ -12,9 +12,35 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
+from ..services import reports as reports_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Sentinel: distinguishes "owner not supplied (use the session user)" from an
+# explicit owner of None (anonymous).
+_UNSET = object()
+
+
+async def _compare_and_redirect(*args, **kwargs) -> RedirectResponse:
+    """UI wrapper: queue a comparison and redirect to the post-run survey."""
+    task_id = await _queue_comparison(*args, **kwargs)
+    return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
+
+
+def _session_track_report(request: Request, task_id: str) -> None:
+    """Record a report created in this browser session so the anonymous (or
+    signed-in) creator can manage it from the same browser. Capped to avoid
+    unbounded session-cookie growth."""
+    try:
+        owned = request.session.get("owned_reports")
+        if not isinstance(owned, list):
+            owned = []
+        if task_id not in owned:
+            owned.append(task_id)
+        request.session["owned_reports"] = owned[-50:]
+    except Exception:  # pragma: no cover - session is best-effort
+        pass
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
@@ -204,7 +230,10 @@ async def _queue_comparison(
     multiple_experiments: str | None = None,
     experiment_number: str | None = None,
     experiment_text: str | None = None,
-) -> RedirectResponse:
+    visibility: str | None = None,
+    owner_override: object = _UNSET,
+    source: str = "ui",
+) -> str:
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
     redis_client = request.app.state.redis
@@ -315,6 +344,24 @@ async def _queue_comparison(
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
+    # Ownership + retention: signed-in users own a persistent report (their
+    # chosen visibility); anonymous runs are public and auto-delete on a short
+    # TTL. Title is auto-generated and renamable later.
+    owner = getattr(request.state, "user", None) if owner_override is _UNSET else owner_override
+    report_title = reports_service.generate_default_title(
+        comparison_type=comparison_type,
+        paper_filename=getattr(paper, "filename", None),
+        registration_id=registration_id,
+    )
+    if owner is not None:
+        report_visibility = reports_service.normalize_visibility(visibility)
+        retention = "persist"
+        anon_ttl = None
+    else:
+        report_visibility = "public"
+        anon_ttl = int(getattr(settings, "anonymous_task_ttl_seconds", 7 * 24 * 60 * 60))
+        retention = str(anon_ttl)
+
     initial_payload = {
         "state": "PENDING",
         "status": "Task queued",
@@ -325,13 +372,43 @@ async def _queue_comparison(
         "comparison_type": comparison_type,
         "evidence_status": "pending",
         "evidence_error": "",
+        "title": report_title,
+        "visibility": report_visibility,
+        "owner_id": owner.id if owner is not None else "",
+        "retention": retention,
     }
     try:
         await _safe_hset(redis_client, task_id, initial_payload)
-        await redis_client.expire(task_id, settings.task_ttl_seconds)
+        if anon_ttl is not None:
+            await redis_client.expire(task_id, anon_ttl)
+        else:
+            # Signed-in reports persist until the owner deletes them.
+            await redis_client.persist(task_id)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
         raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
+
+    # Durable ownership record for signed-in users (anonymous runs are Redis-only).
+    if owner is not None:
+        sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
+        if sessionmaker is not None:
+            try:
+                async with sessionmaker() as db:
+                    await reports_service.create_report_row(
+                        db,
+                        task_id=task_id,
+                        owner_id=owner.id,
+                        visibility=report_visibility,
+                        title=report_title,
+                        comparison_type=comparison_type,
+                        source=source,
+                    )
+                    await db.commit()
+            except Exception as exc:  # pragma: no cover - don't fail the run on metadata
+                logger.error("Failed to persist report ownership row", exc_info=exc, extra={"task_id": task_id})
+
+    if source == "ui":
+        _session_track_report(request, task_id)
 
     job_payload = {
         "comparison_type": comparison_type,
@@ -389,7 +466,7 @@ async def _queue_comparison(
         )
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
-    return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
+    return task_id
 
 
 @router.post("/compare", name="compare_post")
@@ -407,11 +484,12 @@ async def compare_post(
     preregistration: UploadFile | None = File(None),
     paper: UploadFile | None = File(None),
     dimensions_data: str = Form(...),
+    visibility: str | None = Form(None),
 ):
     comparison_type: ComparisonType = (
         "clinical_trials" if _bool_from_yes(clinical_registration) else "general_preregistration"
     )
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type=comparison_type,
         parser_choice=parser_choice,
@@ -425,6 +503,7 @@ async def compare_post(
         preregistration=preregistration,
         paper=paper,
         dimensions_data=dimensions_data,
+        visibility=visibility,
     )
 
 
@@ -439,7 +518,7 @@ async def clinical_trials_post(
     paper: UploadFile = File(...),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="clinical_trials",
         parser_choice=parser_choice,
@@ -466,7 +545,7 @@ async def general_preregistration_post(
     paper: UploadFile = File(...),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="general_preregistration",
         parser_choice=parser_choice,
@@ -494,7 +573,7 @@ async def animals_trials_post(
     registration_csv: UploadFile | None = File(None),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="animals_trials",
         parser_choice=parser_choice,

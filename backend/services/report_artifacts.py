@@ -188,6 +188,24 @@ async def load_manifest(redis_client, task_id: str) -> dict[str, Any] | None:
     return json.loads(payload)
 
 
+async def delete_report_artifacts(redis_client, task_id: str) -> None:
+    """Delete a report's Redis evidence artifacts: the manifest and every
+    per-source render/raw blob it references."""
+    keys = [manifest_key(task_id)]
+    try:
+        manifest = await load_manifest(redis_client, task_id)
+    except Exception:
+        manifest = None
+    if manifest:
+        for source_id in (manifest.get("sources") or {}):
+            keys.append(_render_key(task_id, str(source_id)))
+            keys.append(_raw_key(task_id, str(source_id)))
+    try:
+        await redis_client.delete(*keys)
+    except Exception:  # pragma: no cover - best effort cleanup
+        pass
+
+
 async def load_artifact_bytes(redis_client, artifact: dict[str, Any] | None) -> bytes | None:
     if not artifact:
         return None

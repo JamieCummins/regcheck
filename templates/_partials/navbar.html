@@ -30,12 +30,6 @@
                 <li class="nav-item">
                     <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'research' else '' }}" href="https://arxiv.org/abs/2601.13330" target="_blank" rel="noopener noreferrer">Research</a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'contact' else '' }}" href="{{ url_for('contact') }}">Contact</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'faq' else '' }}" href="{{ url_for('faq') }}">FAQ</a>
-                </li>
                 {% set cu = current_user(request) %}
                 {% if cu %}
                 <li class="nav-item dropdown">
@@ -43,6 +37,7 @@
                         {{ cu.display_name or 'Account' }}
                     </a>
                     <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end" aria-labelledby="accountDropdown">
+                        <li><a class="dropdown-item {{ 'active' if nav_active == 'reports' else '' }}" href="{{ url_for('my_reports') }}">My reports</a></li>
                         <li><a class="dropdown-item {{ 'active' if nav_active == 'account' else '' }}" href="{{ url_for('profile') }}">Profile</a></li>
                         <li><hr class="dropdown-divider"></li>
                         <li>

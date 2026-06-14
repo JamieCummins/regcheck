@@ -142,3 +142,41 @@ async def update_profile(
         user.research_field = research_field.strip() or None
     await session.flush()
     return user
+
+
+# ── API keys ─────────────────────────────────────────────────────────────────
+from datetime import datetime, timezone  # noqa: E402
+
+from ..core import security  # noqa: E402
+
+
+async def create_api_key(session: AsyncSession, user: models.User, name: str | None):
+    """Create an API key for a user. Returns (ApiKey, plaintext) — the plaintext
+    is shown to the user exactly once and never stored."""
+    raw = security.generate_api_key()
+    key = models.ApiKey(
+        user_id=user.id,
+        name=(name or "").strip() or None,
+        prefix=security.api_key_display_prefix(raw),
+        key_hash=security.hash_api_key(raw),
+    )
+    session.add(key)
+    await session.flush()
+    return key, raw
+
+
+async def list_api_keys(session: AsyncSession, user_id: str) -> list[models.ApiKey]:
+    result = await session.execute(
+        select(models.ApiKey)
+        .where(models.ApiKey.user_id == user_id)
+        .order_by(models.ApiKey.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def revoke_api_key(session: AsyncSession, user_id: str, key_id: str) -> bool:
+    key = await session.get(models.ApiKey, key_id)
+    if key is None or key.user_id != user_id or key.revoked_at is not None:
+        return False
+    key.revoked_at = datetime.now(timezone.utc)
+    return True

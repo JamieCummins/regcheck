@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.oauth import available_providers, extract_identity
 from ..db.session import get_db
-from ..services.users import get_user, update_profile, upsert_oauth_user
+from ..services.users import (
+    create_api_key,
+    get_user,
+    list_api_keys,
+    revoke_api_key,
+    update_profile,
+    upsert_oauth_user,
+)
 from .survey import SURVEY_QUESTIONS
 
 router = APIRouter()
@@ -102,6 +109,9 @@ async def profile(request: Request, db: AsyncSession = Depends(get_db)):
     if state_user is None:
         return RedirectResponse(url=f"{request.url_for('login')}?next=/profile", status_code=302)
     user = await get_user(db, state_user.id)
+    keys = await list_api_keys(db, user.id)
+    # A freshly created key's plaintext is shown exactly once, then cleared.
+    new_key = request.session.pop("new_api_key", None)
     return request.app.state.templates.TemplateResponse(
         "profile.html",
         {
@@ -109,6 +119,8 @@ async def profile(request: Request, db: AsyncSession = Depends(get_db)):
             "user": user,
             "questions": SURVEY_QUESTIONS,
             "saved": request.query_params.get("saved") == "1",
+            "api_keys": keys,
+            "new_api_key": new_key,
         },
     )
 
@@ -140,3 +152,30 @@ async def profile_update(
     )
     await db.commit()
     return RedirectResponse(url=f"{request.url_for('profile')}?saved=1", status_code=303)
+
+
+@router.post("/profile/api-keys", name="api_key_create")
+async def api_key_create(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    name: str | None = Form(None),
+):
+    state_user = getattr(request.state, "user", None)
+    if state_user is None:
+        return RedirectResponse(url=request.url_for("login"), status_code=302)
+    user = await get_user(db, state_user.id)
+    _key, raw = await create_api_key(db, user, name)
+    await db.commit()
+    # Stash the plaintext for a one-time display on the profile page.
+    request.session["new_api_key"] = raw
+    return RedirectResponse(url=request.url_for("profile"), status_code=303)
+
+
+@router.post("/profile/api-keys/{key_id}/revoke", name="api_key_revoke")
+async def api_key_revoke(request: Request, key_id: str, db: AsyncSession = Depends(get_db)):
+    state_user = getattr(request.state, "user", None)
+    if state_user is None:
+        return RedirectResponse(url=request.url_for("login"), status_code=302)
+    await revoke_api_key(db, state_user.id, key_id)
+    await db.commit()
+    return RedirectResponse(url=request.url_for("profile"), status_code=303)

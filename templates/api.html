@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260612-footer' %}
+    {% set static_version = '20260614-auth3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -134,83 +134,85 @@
     <main class="legal-main">
       <article class="legal-doc">
         <h1>RegCheck API</h1>
-        <p class="legal-meta">HTTP API reference</p>
-        <p>RegCheck exposes a small HTTP API behind the same endpoints the web app uses. A comparison is submitted as a <code>multipart/form-data</code> request, runs asynchronously on a worker, and is then polled for status and results. This page documents the request fields, the polling response, and the report-artifact endpoints used to retrieve highlighted evidence.</p>
+        <p class="legal-meta">HTTP API reference · v1</p>
+        <p>The RegCheck API lets you submit comparisons programmatically, poll their status, and retrieve structured results. A comparison runs asynchronously on a worker; you submit it, poll until it finishes, then fetch the result.</p>
 
         <div class="api-note">
-          <p><strong>No API key is required.</strong> RegCheck holds its own model-provider credentials server-side; you choose which provider processes your documents with the <code>client</code> field. Please review the <a href="{{ url_for('privacy') }}">Privacy Policy</a> for how uploaded content and prompts are handled by each provider.</p>
+          <p><strong>Authentication is required.</strong> Every <code>/api/v1</code> request must send a RegCheck API key (issued by a signed-in account) as <code>Authorization: Bearer rc_live_…</code>. Create and manage keys on your <a href="{{ url_for('profile') }}">profile</a>. A key is shown once at creation; only its hash is stored. Reports created or read via the API are scoped to the owning account.</p>
         </div>
 
         <h2>1) Base URL &amp; flow</h2>
-        <p>All paths are relative to the site origin (for example <code>https://&lt;your-regcheck-host&gt;</code>). A typical run has three steps:</p>
+        <p>All paths are under the site origin, e.g. <code>https://&lt;your-regcheck-host&gt;/api/v1</code>. A typical run:</p>
         <ul>
-          <li><strong>Submit</strong> a comparison with <code>POST /compare</code> (or a comparison-type-specific endpoint). The response is a <code>302</code> redirect to <code>/survey/&lt;task_id&gt;</code> — the <code>task_id</code> is the final path segment of the <code>Location</code> header.</li>
-          <li><strong>Poll</strong> <code>GET /task_status/&lt;task_id&gt;</code> until <code>state</code> is <code>"SUCCESS"</code> or <code>"FAILURE"</code>.</li>
-          <li><strong>Retrieve</strong> the rendered report at <code>GET /result/&lt;task_id&gt;</code> (HTML) or pull the structured result and evidence artifacts via the JSON/report endpoints below.</li>
+          <li><strong>Submit</strong> <code>POST /api/v1/compare</code> → returns <code>202</code> with a JSON <code>task_id</code> and links.</li>
+          <li><strong>Poll</strong> <code>GET /api/v1/status/&lt;task_id&gt;</code> until <code>state</code> is <code>"SUCCESS"</code> or <code>"FAILURE"</code>.</li>
+          <li><strong>Fetch</strong> <code>GET /api/v1/reports/&lt;task_id&gt;</code> for the structured result (or open <code>view_url</code> for the interactive report).</li>
         </ul>
 
         <h2>2) Submit a comparison</h2>
-        <p class="api-endpoint"><span class="api-method">POST</span> <code>/compare</code></p>
-        <p>Content type: <code>multipart/form-data</code>. Use <code>clinical_registration=yes</code> with a <code>registration_id</code> for a ClinicalTrials.gov registration, or provide a <code>preregistration</code> file for a general preregistration comparison.</p>
+        <p class="api-endpoint"><span class="api-method">POST</span> <code>/api/v1/compare</code></p>
+        <p>Content type: <code>multipart/form-data</code>. Provide a <code>preregistration</code> file for a general comparison, or set <code>clinical_registration=yes</code> with a <code>registration_id</code> for a ClinicalTrials.gov registration.</p>
 
         <table>
           <thead><tr><th>Field</th><th>Required</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td><code>client</code></td><td>yes</td><td>Model provider: <code>openai</code>, <code>groq</code>, or <code>deepseek</code>.</td></tr>
-            <tr><td><code>parser_choice</code></td><td>yes</td><td>PDF parser: <code>grobid</code> (typeset journal PDFs), <code>dpt2</code> (less standard documents / OCR), or <code>pymupdf</code> (in-process; keeps all selectable text including author notes).</td></tr>
             <tr><td><code>dimensions_data</code></td><td>yes</td><td>JSON array of the dimensions to compare (see below).</td></tr>
             <tr><td><code>paper</code></td><td>yes</td><td>The published paper file (<code>.pdf</code> or <code>.docx</code>).</td></tr>
             <tr><td><code>preregistration</code></td><td>cond.</td><td>The preregistration file (<code>.pdf</code>, <code>.docx</code>, or <code>.txt</code>). Required unless <code>clinical_registration=yes</code>.</td></tr>
-            <tr><td><code>clinical_registration</code></td><td>no</td><td><code>yes</code>/<code>no</code> (default <code>no</code>). When <code>yes</code>, a ClinicalTrials.gov registration is fetched from <code>registration_id</code>.</td></tr>
+            <tr><td><code>clinical_registration</code></td><td>no</td><td><code>yes</code>/<code>no</code> (default <code>no</code>). When <code>yes</code>, fetches a ClinicalTrials.gov registration from <code>registration_id</code>.</td></tr>
             <tr><td><code>registration_id</code></td><td>cond.</td><td>ClinicalTrials.gov identifier (e.g. <code>NCT01234567</code>). Required when <code>clinical_registration=yes</code>.</td></tr>
-            <tr><td><code>reasoning_effort</code></td><td>no</td><td>Optional model reasoning-effort hint where supported.</td></tr>
-            <tr><td><code>append_previous_output</code></td><td>no</td><td><code>yes</code>/<code>no</code> (default <code>no</code>). When <code>yes</code>, earlier dimension responses are included as context for later dimensions.</td></tr>
-            <tr><td><code>multiple_experiments</code></td><td>no</td><td><code>yes</code>/<code>no</code>. When <code>yes</code>, the paper text is narrowed to one experiment.</td></tr>
-            <tr><td><code>experiment_number</code>, <code>experiment_text</code></td><td>no</td><td>Identify the target experiment when <code>multiple_experiments=yes</code>.</td></tr>
+            <tr><td><code>visibility</code></td><td>no</td><td><code>private</code> (default) or <code>public</code>. Public reports are listed on your public profile; both are link-shareable.</td></tr>
+            <tr><td><code>client</code></td><td>no</td><td>Model provider: <code>openai</code> (default), <code>groq</code>, or <code>deepseek</code>.</td></tr>
+            <tr><td><code>parser_choice</code></td><td>no</td><td><code>pymupdf</code> (default; in-process, keeps all text), <code>grobid</code> (typeset PDFs), or <code>dpt2</code> (OCR / non-standard docs).</td></tr>
+            <tr><td><code>reasoning_effort</code></td><td>no</td><td>Optional reasoning-effort hint where supported.</td></tr>
+            <tr><td><code>append_previous_output</code></td><td>no</td><td><code>yes</code>/<code>no</code>. When <code>yes</code>, earlier dimension responses are included as context for later ones.</td></tr>
+            <tr><td><code>multiple_experiments</code>, <code>experiment_number</code>, <code>experiment_text</code></td><td>no</td><td>Narrow the paper text to a single experiment.</td></tr>
           </tbody>
         </table>
 
-        <h3>Comparison-type endpoints</h3>
-        <p>These dedicated endpoints take the same fields and are equivalent to <code>POST /compare</code> with the matching mode:</p>
-        <ul>
-          <li><span class="api-method">POST</span> <code>/general_preregistration</code> — requires <code>preregistration</code> + <code>paper</code>.</li>
-          <li><span class="api-method">POST</span> <code>/clinical_trials</code> — requires <code>registration_id</code> + <code>paper</code>.</li>
-          <li><span class="api-method">POST</span> <code>/animals_trials</code> — preclinical/animal registrations: <code>registration_id</code> + <code>paper</code> + an optional <code>registration_csv</code> file.</li>
-        </ul>
-
         <h3>The <code>dimensions_data</code> field</h3>
-        <p>A JSON-encoded array of objects, each with a <code>dimension</code> name and an optional <code>definition</code>. Order is preserved. At least one dimension is required.</p>
+        <p>A JSON-encoded array of objects, each with a <code>dimension</code> name and an optional <code>definition</code>. Order is preserved; at least one is required.</p>
         <pre><code>[
   { "dimension": "Sample size", "definition": "The planned or realised number of participants…" },
   { "dimension": "Hypotheses", "definition": "The specific, directional predictions stated before data collection…" }
 ]</code></pre>
 
         <h3>Example</h3>
-        <pre><code>curl -i -X POST https://&lt;host&gt;/compare \
-  -F "client=openai" \
-  -F "parser_choice=grobid" \
+        <pre><code>curl -X POST https://&lt;host&gt;/api/v1/compare \
+  -H "Authorization: Bearer rc_live_xxxxxxxx" \
   -F 'dimensions_data=[{"dimension":"Sample size","definition":""}]' \
   -F "preregistration=@prereg.pdf" \
   -F "paper=@paper.pdf"
 
-# → HTTP/1.1 302 Found
-# → Location: /survey/&lt;task_id&gt;</code></pre>
+# → 202 Accepted
+# {
+#   "task_id": "…", "state": "PENDING",
+#   "status_url": "https://&lt;host&gt;/api/v1/status/…",
+#   "report_url": "https://&lt;host&gt;/api/v1/reports/…",
+#   "view_url":   "https://&lt;host&gt;/result/…"
+# }</code></pre>
 
-        <h2>3) Poll task status</h2>
-        <p class="api-endpoint"><span class="api-method api-method--get">GET</span> <code>/task_status/&lt;task_id&gt;</code></p>
-        <p>Returns the current state as JSON. Poll every few seconds until <code>state</code> is terminal.</p>
+        <h2>3) Poll status</h2>
+        <p class="api-endpoint"><span class="api-method api-method--get">GET</span> <code>/api/v1/status/&lt;task_id&gt;</code></p>
         <pre><code>{
-  "state": "SUCCESS",                  // PENDING | IN_PROGRESS | SUCCESS | FAILURE | UNKNOWN
-  "status": "Complete",                // human-readable progress message
+  "task_id": "…",
+  "state": "SUCCESS",            // PENDING | IN_PROGRESS | SUCCESS | FAILURE
+  "status": "Complete",
   "processed_dimensions": 5,
   "total_dimensions": 5,
-  "evidence_available": true,          // whether highlightable evidence artifacts exist
-  "evidence_status": "ready",
+  "title": "smith et al 2024",
+  "visibility": "private"
+}</code></pre>
+
+        <h2>4) Fetch the result</h2>
+        <p class="api-endpoint"><span class="api-method api-method--get">GET</span> <code>/api/v1/reports/&lt;task_id&gt;</code></p>
+        <pre><code>{
+  "task_id": "…", "title": "…", "visibility": "private", "state": "SUCCESS",
   "result": {
     "items": [
       {
         "dimension": "Sample size",
-        "deviation_judgement": "yes",  // "yes" | "no" | "missing"
+        "deviation_judgement": "yes",   // "yes" | "no" | "missing"
         "deviation_information": "…",
         "registration_content_summary": "…",
         "paper_content_summary": "…",
@@ -220,22 +222,20 @@
     ]
   }
 }</code></pre>
-        <p>Each quote string carries chunk IDs (e.g. <code>PREREG_0001</code>, <code>PAPER_0001</code>) and a cosine-similarity score; these IDs key into the evidence manifest below.</p>
 
-        <h2>4) Retrieve the report</h2>
+        <h2>5) Manage your reports</h2>
         <ul>
-          <li><span class="api-method api-method--get">GET</span> <code>/result/&lt;task_id&gt;</code> — the full interactive HTML report.</li>
-          <li><span class="api-method api-method--get">GET</span> <code>/report/&lt;task_id&gt;/manifest</code> — JSON manifest of source documents and retrieved chunks (IDs, text, page/character locations).</li>
-          <li><span class="api-method api-method--get">GET</span> <code>/report/&lt;task_id&gt;/sources/&lt;source_id&gt;/render-data</code> — the rendered text (and page offsets) for a source document.</li>
-          <li><span class="api-method api-method--get">GET</span> <code>/report/&lt;task_id&gt;/sources/&lt;source_id&gt;/pages/&lt;n&gt;.png</code> — a rendered PDF page image (PDF sources only).</li>
-          <li><span class="api-method api-method--get">GET</span> <code>/report/&lt;task_id&gt;/sources/&lt;source_id&gt;/raw</code> — the raw uploaded source, where available.</li>
+          <li><span class="api-method api-method--get">GET</span> <code>/api/v1/reports</code> — list your reports (id, title, visibility, type, created-at, links).</li>
+          <li><span class="api-method">DELETE</span> <code>/api/v1/reports/&lt;task_id&gt;</code> — permanently delete a report you own.</li>
+          <li>For the interactive, highlighted report, open <code>view_url</code> (<code>/result/&lt;task_id&gt;</code>) in a browser.</li>
         </ul>
 
-        <h2>5) Notes &amp; limits</h2>
+        <h2>6) Errors &amp; notes</h2>
         <ul>
-          <li>Processing is asynchronous and depends on a running worker, a Redis instance, and the selected model provider being configured. If <code>evidence_available</code> is <code>false</code> after <code>SUCCESS</code>, the report still renders but without in-document highlighting.</li>
-          <li>Reports are addressable by an unguessable <code>task_id</code> link and persist until deletion is requested (see the <a href="{{ url_for('privacy') }}">Privacy Policy</a>).</li>
-          <li>The API surface tracks the web app and may change. For source and issues, see the project on <a href="https://github.com/JamieCummins/regcheck" target="_blank" rel="noopener noreferrer">GitHub</a>.</li>
+          <li><code>401</code> — missing/invalid/revoked API key. Send <code>Authorization: Bearer rc_live_…</code>.</li>
+          <li><code>404</code> — the report does not exist or is not owned by your key's account.</li>
+          <li>Processing is asynchronous (worker + Redis + the selected model provider). Quote strings carry chunk IDs (<code>PREREG_0001</code>/<code>PAPER_0001</code>) with cosine-similarity scores.</li>
+          <li>Source &amp; issues: <a href="https://github.com/JamieCummins/regcheck" target="_blank" rel="noopener noreferrer">GitHub</a>. See also the <a href="{{ url_for('privacy') }}">Privacy Policy</a> for data handling and retention.</li>
         </ul>
       </article>
     </main>
