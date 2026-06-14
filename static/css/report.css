@@ -813,6 +813,24 @@ body.is-col-resizing * {
 .evidence-card--reg:hover { background: var(--report-reg-bg-hover); border-color: rgba(123, 160, 220, 0.55); }
 .evidence-card--ppr:hover { background: var(--report-paper-bg-hover); border-color: rgba(244, 222, 120, 0.55); }
 
+/* Clickable quote references inside the deviation text (PREREG_/PAPER_). */
+.quote-ref {
+    border: 1px solid transparent;
+    background: var(--report-reg-bg);
+    color: var(--report-reg-ink);
+    font-family: var(--rc-font-mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    padding: 0.02em 0.32em;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.14s ease, background 0.14s ease;
+}
+.quote-ref[data-quote-ref^="PAPER"] { background: var(--report-paper-bg); color: var(--report-paper-ink); }
+.quote-ref:hover,
+.quote-ref:focus-visible { border-color: currentColor; outline: none; }
+
 /* Documents view (step 2) --------------------------------------------------- */
 .report-view--documents {
     display: flex;
