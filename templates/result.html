@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-auth3' %}
+    {% set static_version = '20260614-share1' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -10,6 +10,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RegCheck Report</title>
     <link rel="stylesheet" href="{{ url_for('static', path='css/report.css') }}?v={{ static_version }}">
+    <style>
+      .report-share-panel {
+        margin: 0.6rem 0 0; padding: 0.85rem 1rem;
+        background: var(--rc-surface-2, #171b26); border: 1px solid var(--rc-border, rgba(190,200,230,.12));
+        border-radius: var(--rc-radius-sm, 8px);
+      }
+      .report-share-panel__head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.55rem; }
+      .report-share-panel__title { font-weight: 600; font-size: 0.9rem; color: var(--rc-text, #eef1fb); }
+      .report-share-panel__hint { color: var(--rc-faint, #8089a6); font-size: 0.78rem; }
+      .report-share-list { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .report-share-item {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        background: var(--rc-surface, #11141c); border: 1px solid var(--rc-border-strong, rgba(190,200,230,.2));
+        border-radius: 999px; padding: 0.22rem 0.3rem 0.22rem 0.7rem; font-size: 0.82rem; color: var(--rc-text, #eef1fb);
+      }
+      .report-share-item__remove {
+        border: none; background: none; color: var(--rc-faint, #8089a6); cursor: pointer;
+        font-size: 1.05rem; line-height: 1; width: 1.3rem; height: 1.3rem; border-radius: 999px;
+      }
+      .report-share-item__remove:hover { background: var(--rc-flag, #fb7185); color: #fff; }
+      .report-share-form { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+      .report-share-form input {
+        flex: 1 1 14rem; min-width: 0; background: var(--rc-surface, #11141c);
+        border: 1px solid var(--rc-border-strong, rgba(190,200,230,.2)); color: var(--rc-text, #eef1fb);
+        border-radius: var(--rc-radius-sm, 8px); padding: 0.4rem 0.65rem; font-size: 0.85rem;
+      }
+      .report-share-empty { color: var(--rc-faint, #8089a6); font-size: 0.8rem; margin: 0 0 0.6rem; }
+    </style>
 </head>
 <body class="text-bg-dark report-page page-shell">
     <div class="report-shell">
@@ -28,10 +56,11 @@
                         <span id="report-status-text">Processing</span>
                     </span>
                     {% if can_set_visibility %}
-                    <label class="report-visibility" title="Who can find this report">
+                    <label class="report-visibility" title="Who can see this report">
                         <select id="report-visibility-select" aria-label="Report visibility">
                             <option value="public" {{ 'selected' if report_visibility == 'public' else '' }}>Public</option>
-                            <option value="private" {{ 'selected' if report_visibility != 'public' else '' }}>Private</option>
+                            <option value="unlisted" {{ 'selected' if report_visibility == 'unlisted' else '' }}>Unlisted</option>
+                            <option value="restricted" {{ 'selected' if report_visibility == 'restricted' else '' }}>Restricted</option>
                         </select>
                     </label>
                     {% elif is_owner %}
@@ -62,6 +91,27 @@
                     </button>
                 </div>
             </div>
+            {% if can_set_visibility %}
+            <div id="report-share-panel" class="report-share-panel{{ '' if report_visibility == 'restricted' else ' d-none' }}">
+                <div class="report-share-panel__head">
+                    <span class="report-share-panel__title">Shared with</span>
+                    <span class="report-share-panel__hint">Only you and these people can open this report. Add by email or ORCID iD.</span>
+                </div>
+                <ul id="report-share-list" class="report-share-list">
+                    {% for s in shares %}
+                    <li class="report-share-item" data-share-id="{{ s.id }}">
+                        <span class="report-share-item__label">{{ s.label }}</span>
+                        <button type="button" class="report-share-item__remove" data-share-id="{{ s.id }}" aria-label="Remove {{ s.label }}">&times;</button>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <p id="report-share-empty" class="report-share-empty{{ ' d-none' if shares else '' }}">No one added yet — only you can see this report.</p>
+                <form id="report-share-form" class="report-share-form">
+                    <input type="text" id="report-share-input" name="grantee" placeholder="Email or ORCID iD" autocomplete="off" aria-label="Email or ORCID iD to grant access">
+                    <button type="submit" class="report-action-btn report-action-btn--primary">Add</button>
+                </form>
+            </div>
+            {% endif %}
             <div id="report-log" class="report-log d-none" aria-live="polite">
                 <div class="report-log__head">
                     <span class="report-log__title">
@@ -153,11 +203,89 @@
           });
         }
 
+        const sharePanel = document.getElementById("report-share-panel");
+        const shareList = document.getElementById("report-share-list");
+        const shareForm = document.getElementById("report-share-form");
+        const shareInput = document.getElementById("report-share-input");
+        const shareEmpty = document.getElementById("report-share-empty");
+
+        const VIS_MESSAGE = {
+          public: "Now public (listed on your profile)",
+          unlisted: "Now unlisted (anyone with the link)",
+          restricted: "Now restricted (only people you add)",
+        };
+
+        function refreshEmptyState() {
+          if (!shareEmpty || !shareList) return;
+          const hasAny = shareList.querySelector(".report-share-item") !== null;
+          shareEmpty.classList.toggle("d-none", hasAny);
+        }
+
+        function addShareItem(share) {
+          if (!shareList) return;
+          const li = document.createElement("li");
+          li.className = "report-share-item";
+          li.dataset.shareId = share.id;
+          const label = document.createElement("span");
+          label.className = "report-share-item__label";
+          label.textContent = share.label;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "report-share-item__remove";
+          btn.dataset.shareId = share.id;
+          btn.setAttribute("aria-label", "Remove " + share.label);
+          btn.innerHTML = "&times;";
+          li.append(label, btn);
+          shareList.appendChild(li);
+          refreshEmptyState();
+        }
+
         if (visSelect) {
           visSelect.addEventListener("change", () => {
-            post(`/reports/${encodeURIComponent(taskId)}/visibility`, { visibility: visSelect.value })
-              .then((data) => flash(data.visibility === "public" ? "Now public (listed on your profile)" : "Now private (link only)"))
+            const value = visSelect.value;
+            if (sharePanel) sharePanel.classList.toggle("d-none", value !== "restricted");
+            post(`/reports/${encodeURIComponent(taskId)}/visibility`, { visibility: value })
+              .then((data) => flash(VIS_MESSAGE[data.visibility] || "Visibility updated"))
               .catch(() => flash("Could not update visibility"));
+          });
+        }
+
+        if (shareForm && shareInput) {
+          shareForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const value = shareInput.value.trim();
+            if (!value) return;
+            try {
+              const res = await fetch(`/reports/${encodeURIComponent(taskId)}/shares`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({ grantee: value }),
+              });
+              const data = await res.json().catch(() => ({ ok: false }));
+              if (!data.ok) { flash(data.error || "Could not add that person"); return; }
+              if (!shareList.querySelector(`[data-share-id="${data.share.id}"]`)) addShareItem(data.share);
+              shareInput.value = "";
+              flash("Access granted to " + data.share.label);
+            } catch (err) {
+              flash("Could not add person");
+            }
+          });
+        }
+
+        if (shareList) {
+          shareList.addEventListener("click", (event) => {
+            const btn = event.target.closest(".report-share-item__remove");
+            if (!btn) return;
+            const id = btn.dataset.shareId;
+            post(`/reports/${encodeURIComponent(taskId)}/shares/${encodeURIComponent(id)}/delete`, {})
+              .then((data) => {
+                if (!data.ok) { flash("Could not remove"); return; }
+                const item = shareList.querySelector(`.report-share-item[data-share-id="${id}"]`);
+                if (item) item.remove();
+                refreshEmptyState();
+                flash("Access removed");
+              })
+              .catch(() => flash("Could not remove person"));
           });
         }
 

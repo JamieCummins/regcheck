@@ -19,8 +19,10 @@ from .report_artifacts import delete_report_artifacts
 
 logger = logging.getLogger(__name__)
 
-VISIBILITIES = {"public", "private"}
-DEFAULT_VISIBILITY = "private"
+VISIBILITIES = {"public", "unlisted", "restricted"}
+DEFAULT_VISIBILITY = "unlisted"
+# Legacy value: "private" historically meant "unlisted, link-only".
+_VISIBILITY_ALIASES = {"private": "unlisted"}
 
 
 def _clean_title(raw: str | None) -> str:
@@ -46,6 +48,7 @@ def generate_default_title(
 
 def normalize_visibility(value: str | None) -> str:
     v = (value or "").strip().lower()
+    v = _VISIBILITY_ALIASES.get(v, v)
     return v if v in VISIBILITIES else DEFAULT_VISIBILITY
 
 

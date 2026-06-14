@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import models
 from ..db.session import get_db
 from ..services import reports as reports_service
+from ..services import sharing as sharing_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -94,6 +95,60 @@ async def report_visibility(
     vis = await reports_service.set_report_visibility(request.app.state.redis, db, report, visibility)
     await db.commit()
     return JSONResponse({"ok": True, "visibility": vis})
+
+
+async def _owned_report_or_403(request: Request, task_id: str, db: AsyncSession) -> models.Report:
+    """Sharing is an account-owner feature (restricted reports always have a row)."""
+    user = _current_user(request)
+    report = await reports_service.get_report_row(db, task_id)
+    if user is None or report is None or report.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to manage sharing for this report")
+    return report
+
+
+def _share_payload(share: models.ReportShare) -> dict:
+    return {
+        "id": share.id,
+        "label": sharing_service.share_label(share),
+        "type": "orcid" if share.grantee_orcid else "email",
+    }
+
+
+@router.get("/reports/{task_id}/shares", name="report_shares_list")
+async def report_shares_list(request: Request, task_id: str, db: AsyncSession = Depends(get_db)):
+    await _owned_report_or_403(request, task_id, db)
+    shares = await sharing_service.list_shares(db, task_id)
+    return JSONResponse({"ok": True, "shares": [_share_payload(s) for s in shares]})
+
+
+@router.post("/reports/{task_id}/shares", name="report_share_add")
+async def report_share_add(
+    request: Request,
+    task_id: str,
+    grantee: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    await _owned_report_or_403(request, task_id, db)
+    try:
+        share = await sharing_service.add_share(db, task_id, grantee)
+    except sharing_service.ShareError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    await db.commit()
+    return JSONResponse({"ok": True, "share": _share_payload(share)})
+
+
+@router.post("/reports/{task_id}/shares/{share_id}/delete", name="report_share_delete")
+async def report_share_delete(
+    request: Request,
+    task_id: str,
+    share_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _owned_report_or_403(request, task_id, db)
+    removed = await sharing_service.remove_share(db, task_id, share_id)
+    if removed:
+        await db.commit()
+    return JSONResponse({"ok": removed})
 
 
 @router.post("/reports/{task_id}/delete", name="report_delete")

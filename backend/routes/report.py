@@ -6,6 +6,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from ..services import sharing as sharing_service
 from ..services.report_artifacts import load_artifact_bytes, load_manifest, public_manifest
 
 try:  # pragma: no cover - optional dependency
@@ -20,6 +21,13 @@ PRIVATE_HEADERS = {
     "Pragma": "no-cache",
     "X-Robots-Tag": "noindex, nofollow",
 }
+
+
+async def _ensure_access(request: Request, task_id: str) -> None:
+    """403 unless the viewer may see this report (restricted reports only)."""
+    verdict = await sharing_service.ensure_viewable(request, task_id)
+    if not verdict.allowed:
+        raise HTTPException(status_code=403, detail="You do not have access to this report")
 
 
 async def _manifest_or_404(request: Request, task_id: str) -> dict:
@@ -38,12 +46,14 @@ def _source_or_404(manifest: dict, source_id: str) -> dict:
 
 @router.get("/report/{task_id}/manifest")
 async def report_manifest(request: Request, task_id: str):
+    await _ensure_access(request, task_id)
     manifest = await _manifest_or_404(request, task_id)
     return JSONResponse(public_manifest(manifest, task_id), headers=PRIVATE_HEADERS)
 
 
 @router.get("/report/{task_id}/sources/{source_id}/render-data")
 async def report_source_render_data(request: Request, task_id: str, source_id: str):
+    await _ensure_access(request, task_id)
     manifest = await _manifest_or_404(request, task_id)
     source = _source_or_404(manifest, source_id)
     artifact = (source.get("_artifacts") or {}).get("render")
@@ -59,6 +69,7 @@ async def report_source_render_data(request: Request, task_id: str, source_id: s
 
 @router.get("/report/{task_id}/sources/{source_id}/raw")
 async def report_source_raw(request: Request, task_id: str, source_id: str):
+    await _ensure_access(request, task_id)
     manifest = await _manifest_or_404(request, task_id)
     source = _source_or_404(manifest, source_id)
     artifact = (source.get("_artifacts") or {}).get("raw")
@@ -81,6 +92,7 @@ async def report_source_page_png(request: Request, task_id: str, source_id: str,
     if page_number < 1:
         raise HTTPException(status_code=404, detail="Page not found")
 
+    await _ensure_access(request, task_id)
     manifest = await _manifest_or_404(request, task_id)
     source = _source_or_404(manifest, source_id)
     if source.get("kind") != "pdf":
