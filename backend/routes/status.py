@@ -158,6 +158,28 @@ async def result(request: Request, task_id: str):
                     total_dimensions = None
         processed_dimensions = _coerce_int(data.get("processed_dimensions"))
 
+    # Ownership / naming context for the viewer (rename, visibility, delete).
+    report_title = (_decode(data.get("title")) if data else None) or "RegCheck Report"
+    report_visibility = (_decode(data.get("visibility")) if data else None) or "public"
+    owner_id = _decode(data.get("owner_id")) if data else None
+    user = getattr(request.state, "user", None)
+    owned = request.session.get("owned_reports")
+    owned_in_session = isinstance(owned, list) and task_id in owned
+    is_owner = bool((user is not None and owner_id and user.id == owner_id) or owned_in_session)
+    # The visibility toggle is an account feature (anonymous reports stay public).
+    can_set_visibility = bool(user is not None and owner_id and user.id == owner_id)
+
+    base_context = {
+        "request": request,
+        "task_id": task_id,
+        "total_dimensions": total_dimensions or 0,
+        "processed_dimensions": processed_dimensions or 0,
+        "report_title": report_title,
+        "report_visibility": report_visibility,
+        "is_owner": is_owner,
+        "can_set_visibility": can_set_visibility,
+    }
+
     if state == "SUCCESS":
         result_json = data.get("result_json")
         parsed_result = None
@@ -169,27 +191,9 @@ async def result(request: Request, task_id: str):
                 # frontend poll for the final payload.
                 logger.warning("Invalid result_json for task; rendering empty result", extra={"task_id": task_id})
                 parsed_result = None
-        return templates.TemplateResponse(
-            "result.html",
-            {
-                "request": request,
-                "result": parsed_result,
-                "task_id": task_id,
-                "total_dimensions": total_dimensions or 0,
-                "processed_dimensions": processed_dimensions or 0,
-            },
-        )
+        return templates.TemplateResponse("result.html", {**base_context, "result": parsed_result})
 
-    return templates.TemplateResponse(
-        "result.html",
-        {
-            "request": request,
-            "result": [],
-            "task_id": task_id,
-            "total_dimensions": total_dimensions or 0,
-            "processed_dimensions": processed_dimensions or 0,
-        },
-    )
+    return templates.TemplateResponse("result.html", {**base_context, "result": []})
 
 
 @router.post("/append_result/{task_id}")

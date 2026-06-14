@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    {% set static_version = '20260614-auth3' %}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta name="description" content="Public RegCheck reports by {{ profile_user.display_name or 'a RegCheck user' }}."/>
+    <title>{{ profile_user.display_name or 'Profile' }} · RegCheck</title>
+    <style>
+      .reports-main { flex: 1; width: min(960px, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; text-align: left; }
+      .profile-head h1 { font-size: clamp(1.6rem, 2.6vw, 2.1rem); margin: 0 0 0.3rem; }
+      .profile-head p { color: var(--rc-muted); margin: 0 0 1.6rem; }
+      .reports-empty { color: var(--rc-muted); background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: var(--rc-radius); padding: 2rem; text-align: center; }
+      .report-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: var(--rc-radius); padding: 0.9rem 1.1rem; margin-bottom: 0.7rem; }
+      .report-row__title { color: var(--rc-text); font-weight: 600; font-size: 1.02rem; text-decoration: none; flex: 1 1 18rem; min-width: 0; }
+      .report-row__title:hover { color: var(--rc-accent-strong); }
+      .report-row__meta { color: var(--rc-faint); font-size: 0.8rem; }
+    </style>
+</head>
+{% set nav_active = '' %}
+<body class="text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+    <header class="mb-auto">{% include '_partials/navbar.html' %}</header>
+    <main class="reports-main">
+      <div class="profile-head">
+        <h1>{{ profile_user.display_name or 'RegCheck user' }}</h1>
+        <p>Public reports{% if profile_user.research_field %} · {{ profile_user.research_field }}{% endif %}</p>
+      </div>
+
+      {% if not reports %}
+      <div class="reports-empty"><p>No public reports yet.</p></div>
+      {% else %}
+      <div>
+        {% for r in reports %}
+        <div class="report-row">
+          <a class="report-row__title" href="{{ url_for('result', task_id=r.task_id) }}">{{ r.title or 'Untitled report' }}</a>
+          <span class="report-row__meta">{{ r.created_at.strftime('%d %b %Y') }}{% if r.comparison_type %} · {{ r.comparison_type.replace('_', ' ') }}{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </main>
+    {% include '_partials/footer.html' %}
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+</body>
+</html>

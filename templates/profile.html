@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260612-footer' %}
+    {% set static_version = '20260614-auth3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -38,6 +38,27 @@
         padding: 0.6rem 1.3rem; font-weight: 600; font-size: 0.95rem; cursor: pointer;
       }
       .save-btn:hover { background: var(--rc-accent-hover); }
+      .newkey {
+        background: var(--rc-accent-soft); border: 1px solid var(--rc-accent); border-radius: var(--rc-radius-sm);
+        padding: 0.8rem 0.95rem; margin: 0 0 1rem;
+      }
+      .newkey p { margin: 0 0 0.5rem; color: var(--rc-text); font-size: 0.85rem; }
+      .newkey code {
+        display: block; font-family: var(--rc-font-mono); font-size: 0.82rem; color: var(--rc-text);
+        background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: 6px;
+        padding: 0.5rem 0.6rem; word-break: break-all;
+      }
+      .key-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; border-top: 1px solid var(--rc-border); padding: 0.7rem 0; }
+      .key-row:first-of-type { border-top: none; }
+      .key-row__main { flex: 1 1 16rem; min-width: 0; }
+      .key-row__name { color: var(--rc-text); font-weight: 600; font-size: 0.92rem; }
+      .key-row__name.revoked { color: var(--rc-faint); text-decoration: line-through; }
+      .key-row__meta { color: var(--rc-faint); font-size: 0.76rem; margin-top: 0.2rem; }
+      .key-row__meta code { font-family: var(--rc-font-mono); }
+      .key-create { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+      .key-create input { flex: 1 1 14rem; background: var(--rc-surface-2); border: 1px solid var(--rc-border-strong); color: var(--rc-text); border-radius: var(--rc-radius-sm); padding: 0.5rem 0.7rem; font-size: 0.9rem; }
+      .key-revoke { background: none; border: 1px solid var(--rc-border-strong); color: var(--rc-flag); border-radius: var(--rc-radius-sm); padding: 0.35rem 0.7rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+      .key-revoke:hover { background: var(--rc-flag); color: #fff; border-color: var(--rc-flag); }
     </style>
 </head>
 {% set nav_active = 'account' %}
@@ -89,6 +110,46 @@
 
         <button type="submit" class="save-btn">Save profile</button>
       </form>
+
+      <div class="profile-card">
+        <h2>API keys</h2>
+        <p class="profile-meta">Use these to call the <a class="footer-link" href="{{ url_for('api_docs') }}">RegCheck API</a> with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
+
+        {% if new_api_key %}
+        <div class="newkey">
+          <p><strong>New key created.</strong> Copy it now — you won't be able to see it again.</p>
+          <code>{{ new_api_key }}</code>
+        </div>
+        {% endif %}
+
+        <div style="margin-top:1rem">
+          {% if api_keys %}
+          {% for k in api_keys %}
+          <div class="key-row">
+            <div class="key-row__main">
+              <div class="key-row__name {{ 'revoked' if not k.is_active else '' }}">{{ k.name or 'Unnamed key' }}{% if not k.is_active %} (revoked){% endif %}</div>
+              <div class="key-row__meta">
+                <code>{{ k.prefix }}…</code> · created {{ k.created_at.strftime('%d %b %Y') }} ·
+                {{ k.request_count }} request{{ '' if k.request_count == 1 else 's' }}{% if k.last_used_at %} · last used {{ k.last_used_at.strftime('%d %b %Y') }}{% endif %}
+              </div>
+            </div>
+            {% if k.is_active %}
+            <form method="post" action="{{ url_for('api_key_revoke', key_id=k.id) }}" onsubmit="return confirm('Revoke this API key? Any client using it will stop working.');">
+              <button type="submit" class="key-revoke">Revoke</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endfor %}
+          {% else %}
+          <p class="profile-meta">No API keys yet.</p>
+          {% endif %}
+        </div>
+
+        <form method="post" action="{{ url_for('api_key_create') }}" class="key-create">
+          <input type="text" name="name" placeholder="Key name (e.g. laptop, CI)" maxlength="120">
+          <button type="submit" class="save-btn">Create key</button>
+        </form>
+      </div>
     </main>
 
     {% include '_partials/footer.html' %}

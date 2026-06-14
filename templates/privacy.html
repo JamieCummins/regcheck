@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260612-footer' %}
+    {% set static_version = '20260614-auth3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -113,12 +113,17 @@
         <h3>E. Minimal operational and security data (logs)</h3>
         <p><strong>What:</strong> Basic server and application logs (e.g., timestamps, request paths, error traces; may include IP addresses and user-agent strings as part of standard web/server operation).</p>
         <p><strong>Why:</strong> Security, abuse prevention, debugging, and reliability.</p>
-        <p>We do not use third-party analytics. We do not use advertising cookies. We do not require user accounts.</p>
+        <p>We do not use third-party analytics. We do not use advertising cookies. Accounts are optional (see Section 3G) — you can use RegCheck without signing in.</p>
 
         <h3>F. Local storage (device preferences)</h3>
         <p><strong>What:</strong> Client-side local storage (e.g., UI preferences) and similar browser technologies.</p>
         <p><strong>Why:</strong> Convenience and usability.</p>
         <p>We do not use advertising cookies.</p>
+
+        <h3>G. Account data (optional sign-in)</h3>
+        <p><strong>What:</strong> If you choose to sign in with Google or ORCID, we receive and store a stable account identifier and, where the provider supplies it, your name and email address. We also store optional profile fields you enter (your role/use case, academic position, and research field) and any API keys you create — API keys are stored only as a hash and the full key is shown to you once.</p>
+        <p><strong>Why:</strong> To keep your reports across sessions, let you set their visibility (public/private) and delete them, maintain a profile, and authenticate to the API. ORCID returns an ORCID iD (and name) but, under the scope we request, does not return your email.</p>
+        <p>Signing in is optional and only needed for persistent or private reports and for API access. Authentication is handled via Google and ORCID as identity providers; review their privacy terms for how they process the sign-in.</p>
 
         <h2>4) Legal bases (GDPR/UK GDPR)</h2>
         <p>Where GDPR/UK GDPR applies, our legal bases are:</p>
@@ -145,11 +150,12 @@
         <h2>7) Retention</h2>
         <ul>
           <li><strong>Uploaded files in S3 (when used):</strong> stored only while the comparison process runs; deleted automatically when processing finishes.</li>
-          <li><strong>Reports and quotations in Redis:</strong> retained indefinitely to keep reports accessible and shareable until you request deletion.</li>
+          <li><strong>Reports and quotations (Redis):</strong> Reports generated <em>without</em> an account are automatically deleted about 7 days after creation. Reports generated while <em>signed in</em> are retained until you delete them (from the report, your dashboard, or the API) or delete your account.</li>
+          <li><strong>Account data (database):</strong> Your account, profile, and API keys are retained until you delete the relevant item (e.g. revoke a key) or delete your account; deleting your account also deletes your reports.</li>
           <li><strong>Survey responses:</strong> retained indefinitely unless you request deletion.</li>
           <li><strong>Server logs:</strong> retained for 1 day, then deleted.</li>
         </ul>
-        <p>Because we do not use user accounts, we may not be able to locate a specific report or survey record without the report link or other identifying details you provide.</p>
+        <p>For anonymous reports, we may not be able to locate a specific report without the report link or other identifying details you provide.</p>
 
         <h2>8) Security</h2>
         <p>We use reasonable technical and organisational measures, including:</p>

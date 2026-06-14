@@ -55,6 +55,32 @@ def _string_or_empty(value: str | None) -> str:
 @router.get("/survey/{task_id}", response_class=HTMLResponse, name="survey")
 async def survey(request: Request, task_id: str):
     redis_client = request.app.state.redis
+
+    # Signed-in users already provided these fields in their profile, so skip the
+    # per-run survey and record their profile answers for analytics.
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        submission = {
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "academic_position": _string_or_empty(getattr(user, "academic_position", None)),
+            "research_field": _string_or_empty(getattr(user, "research_field", None)),
+            "use_case": _string_or_empty(getattr(user, "use_case", None)),
+            "skipped": "0",
+            "from_profile": "1",
+            "user_id": user.id,
+        }
+        try:
+            await redis_client.hset(f"survey:{task_id}", mapping=submission)
+            await redis_client.lpush("survey:responses", json.dumps({"task_id": task_id, **submission}))
+            await redis_client.sadd("survey:task_ids", task_id)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Failed to record profile-based survey response", exc_info=exc)
+        try:
+            result_url = request.url_for("result", task_id=task_id)
+        except Exception:
+            result_url = f"/result/{task_id}"
+        return RedirectResponse(url=result_url, status_code=303)
+
     task_meta = {}
     try:
         task_meta = await redis_client.hgetall(task_id)
