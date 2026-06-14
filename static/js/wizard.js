@@ -516,7 +516,7 @@
 
         if (defaultModeButton) {
             defaultModeButton.addEventListener("click", function () {
-                if (parserSelect) parserSelect.value = "grobid";
+                if (parserSelect) parserSelect.value = "pymupdf";
                 if (modelSelect) modelSelect.value = "openai";
                 if (reasoningEffortSelect) reasoningEffortSelect.value = "medium";
                 if (appendSelect) appendSelect.value = "yes";
