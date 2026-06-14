@@ -930,7 +930,17 @@
 
     /* ── wire up ─────────────────────────────────────────────────────────── */
 
-    if (els.copyLink) els.copyLink.addEventListener("click", copyReportLink);
+    // The owner page may intercept the Share button (e.g. to open the restricted
+    // share dialog instead of copying the link). If the hook returns true it has
+    // handled the click; otherwise we fall back to copying the link.
+    window.regcheckCopyReportLink = copyReportLink;
+    if (els.copyLink) {
+        els.copyLink.addEventListener("click", () => {
+            const hook = window.regcheckShareClick;
+            if (typeof hook === "function" && hook() === true) return;
+            copyReportLink();
+        });
+    }
     if (els.csv) els.csv.addEventListener("click", downloadCsv);
     window.addEventListener("keydown", onKey);
     window.addEventListener("beforeunload", () => {

@@ -189,10 +189,11 @@ async def result(request: Request, task_id: str):
     # The visibility toggle is an account feature (anonymous reports stay public).
     can_set_visibility = bool(user is not None and owner_id and user.id == owner_id)
 
-    # Owners managing a restricted report see the current allow-list.
+    # Owners always get the current allow-list so the share dialog is accurate
+    # even before switching the report to restricted.
     shares_ctx: list[dict] = []
     sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
-    if can_set_visibility and report_visibility == "restricted" and sessionmaker is not None:
+    if can_set_visibility and sessionmaker is not None:
         async with sessionmaker() as db:
             shares_ctx = [
                 {"id": s.id, "label": sharing_service.share_label(s), "type": "orcid" if s.grantee_orcid else "email"}
