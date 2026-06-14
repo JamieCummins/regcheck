@@ -8,10 +8,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+from .core.auth_context import CurrentUserMiddleware
 from .core.config import get_settings
 from .core.logging import configure_logging
+from .core.oauth import build_oauth
 from .core.redis import create_redis_client
-from .routes import comparisons, pages, report, status
+from .db.session import create_engine_from_url, create_sessionmaker, init_models
+from .routes import auth, comparisons, pages, report, status
 from .routes import survey
 
 
@@ -23,6 +26,10 @@ def create_app() -> FastAPI:
         logger.warning("SESSION_SECRET not set; using an ephemeral session secret.")
 
     app = FastAPI()
+    # Middleware: the LAST added is outermost. CurrentUserMiddleware reads
+    # request.session, so it must run *inside* SessionMiddleware — i.e. added
+    # before it here so SessionMiddleware ends up the outer layer.
+    app.add_middleware(CurrentUserMiddleware)
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
     app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
     app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
@@ -30,6 +37,14 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.redis = create_redis_client(settings.redis_url)
     app.state.templates = Jinja2Templates(directory=settings.templates_dir)
+    app.state.oauth = build_oauth(settings)
+    app.state.db_engine = create_engine_from_url(settings.database_url)
+    app.state.db_sessionmaker = create_sessionmaker(app.state.db_engine)
+
+    # Expose the current user to all templates (navbar account menu, etc.).
+    app.state.templates.env.globals["current_user"] = (
+        lambda request: getattr(request.state, "user", None)
+    )
 
     @app.on_event("startup")
     async def warm_redis_connection() -> None:
@@ -38,7 +53,31 @@ def create_app() -> FastAPI:
         except Exception as exc:  # pragma: no cover - best-effort warmup
             logger.warning("Redis warmup ping failed; first request may be slower", exc_info=exc)
 
+    @app.on_event("startup")
+    async def prepare_database() -> None:
+        # Production schema is managed by Alembic (release phase). For local
+        # SQLite development, create tables on startup so the app is usable
+        # without running migrations.
+        if settings.database_url.startswith("sqlite"):
+            try:
+                await init_models(app.state.db_engine)
+            except Exception as exc:  # pragma: no cover - best-effort dev convenience
+                logger.warning("SQLite schema init failed", exc_info=exc)
+
+    @app.on_event("shutdown")
+    async def dispose_resources() -> None:
+        engine = getattr(app.state, "db_engine", None)
+        if engine is not None:
+            await engine.dispose()
+        redis_client = getattr(app.state, "redis", None)
+        if redis_client is not None:
+            try:
+                await redis_client.aclose()
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
+
     app.include_router(pages.router)
+    app.include_router(auth.router)
     app.include_router(comparisons.router)
     app.include_router(survey.router)
     app.include_router(report.router)

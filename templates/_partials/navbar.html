@@ -36,6 +36,27 @@
                 <li class="nav-item">
                     <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'faq' else '' }}" href="{{ url_for('faq') }}">FAQ</a>
                 </li>
+                {% set cu = current_user(request) %}
+                {% if cu %}
+                <li class="nav-item dropdown">
+                    <a class="nav-link fw-bold py-1 px-0 dropdown-toggle {{ 'active' if nav_active == 'account' else '' }}" href="#" id="accountDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        {{ cu.display_name or 'Account' }}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end" aria-labelledby="accountDropdown">
+                        <li><a class="dropdown-item {{ 'active' if nav_active == 'account' else '' }}" href="{{ url_for('profile') }}">Profile</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <form method="post" action="{{ url_for('logout') }}">
+                                <button type="submit" class="dropdown-item">Log out</button>
+                            </form>
+                        </li>
+                    </ul>
+                </li>
+                {% elif request.app.state.settings.auth_enabled %}
+                <li class="nav-item">
+                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'account' else '' }}" href="{{ url_for('login') }}">Log in</a>
+                </li>
+                {% endif %}
             </ul>
         </div>
     </div>

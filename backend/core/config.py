@@ -14,16 +14,36 @@ class Settings:
     """Application configuration values loaded from the environment."""
 
     redis_url: str
+    database_url: str
     session_secret: str
     task_ttl_seconds: int
+    anonymous_task_ttl_seconds: int
     max_queue_length: int
     static_dir: str
     templates_dir: str
     upload_dir: str
+    google_client_id: str
+    google_client_secret: str
+    orcid_client_id: str
+    orcid_client_secret: str
+    orcid_sandbox: bool
+    oauth_redirect_base_url: str
 
     def ensure_directories(self) -> None:
         """Ensure that directories required by the application exist."""
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def orcid_oauth_enabled(self) -> bool:
+        return bool(self.orcid_client_id and self.orcid_client_secret)
+
+    @property
+    def auth_enabled(self) -> bool:
+        return self.google_oauth_enabled or self.orcid_oauth_enabled
 
 
 @lru_cache()
@@ -64,19 +84,43 @@ def get_settings() -> Settings:
             return default
 
     task_ttl_seconds = _int_env("TASK_TTL_SECONDS", 3 * 24 * 60 * 60, minimum=60)
+    # Anonymous (not signed-in) reports auto-delete after this window.
+    anonymous_task_ttl_seconds = _int_env(
+        "ANONYMOUS_TASK_TTL_SECONDS", 7 * 24 * 60 * 60, minimum=60
+    )
     max_queue_length = _int_env("MAX_QUEUE_LENGTH", 200, minimum=1)
     static_dir = os.environ.get("STATIC_DIR", str(base_dir / "static"))
     templates_dir = os.environ.get("TEMPLATES_DIR", str(base_dir / "templates"))
     upload_dir = os.environ.get("UPLOAD_DIR", str(base_dir / "uploads"))
 
+    def _str_env(name: str) -> str:
+        return (os.environ.get(name) or "").strip()
+
+    def _bool_env(name: str) -> bool:
+        return _str_env(name).lower() in {"1", "true", "yes", "on"}
+
+    # Resolved lazily by the db layer; stored here so the value is logged/visible
+    # in one place. Imported here to avoid a hard dependency at module import.
+    from ..db.session import resolve_database_url
+
+    database_url = resolve_database_url()
+
     settings = Settings(
         redis_url=redis_url,
+        database_url=database_url,
         session_secret=session_secret,
         task_ttl_seconds=task_ttl_seconds,
+        anonymous_task_ttl_seconds=anonymous_task_ttl_seconds,
         max_queue_length=max_queue_length,
         static_dir=static_dir,
         templates_dir=templates_dir,
         upload_dir=upload_dir,
+        google_client_id=_str_env("GOOGLE_CLIENT_ID"),
+        google_client_secret=_str_env("GOOGLE_CLIENT_SECRET"),
+        orcid_client_id=_str_env("ORCID_CLIENT_ID"),
+        orcid_client_secret=_str_env("ORCID_CLIENT_SECRET"),
+        orcid_sandbox=_bool_env("ORCID_SANDBOX"),
+        oauth_redirect_base_url=_str_env("OAUTH_REDIRECT_BASE_URL"),
     )
     settings.ensure_directories()
     return settings
