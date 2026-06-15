@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-share4' %}
+    {% set static_version = '20260614-share6' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -122,9 +122,9 @@
 
         <h3>G. Account data (optional sign-in)</h3>
         <p><strong>What:</strong> If you choose to sign in with Google or ORCID, we receive and store a stable account identifier and, where the provider supplies it, your name and email address. We also store optional profile fields you enter (your role/use case, academic position, and research field) and any API keys you create — API keys are stored only as a hash and the full key is shown to you once.</p>
-        <p><strong>Why:</strong> To keep your reports across sessions, let you set their visibility (public, unlisted, or restricted) and delete them, maintain a profile, and authenticate to the API. ORCID returns an ORCID iD (and name) but, under the scope we request, does not return your email.</p>
-        <p><strong>Restricted reports:</strong> If you make a report <em>restricted</em>, we store the email addresses and/or ORCID iDs you grant access to. Those people can open the report once they sign in with a matching account; you can add or remove them at any time. We use these identifiers only to control access to that report.</p>
-        <p>Signing in is optional and only needed for persistent, unlisted, or restricted reports and for API access. Authentication is handled via Google and ORCID as identity providers; review their privacy terms for how they process the sign-in.</p>
+        <p><strong>Why:</strong> To keep your reports across sessions, let you set their visibility (public or private) and delete them, maintain a profile, and authenticate to the API. ORCID returns an ORCID iD (and name) but, under the scope we request, does not return your email.</p>
+        <p><strong>Private reports:</strong> If you make a report <em>private</em>, we store the email addresses and/or ORCID iDs you grant access to. Those people can open the report once they sign in with a matching account; you can add or remove them at any time. We use these identifiers only to control access to that report.</p>
+        <p>Signing in is optional and only needed for persistent or private reports and for API access. Authentication is handled via Google and ORCID as identity providers; review their privacy terms for how they process the sign-in.</p>
 
         <h2>4) Legal bases (GDPR/UK GDPR)</h2>
         <p>Where GDPR/UK GDPR applies, our legal bases are:</p>
@@ -147,17 +147,16 @@
         <h2>6) Sharing and access via report links</h2>
         <p>Each report has a long, random token link (an “unguessable URL”). How that link behaves depends on the report’s visibility:</p>
         <ul>
-          <li><strong>Public</strong> — anyone with the link can view it, and it is listed on your public profile page (if enabled).</li>
-          <li><strong>Unlisted</strong> — anyone with the link can view it, but it is not listed anywhere. Anyone the link is forwarded to can open it.</li>
-          <li><strong>Restricted</strong> — only you and the specific people you grant access to (by email or ORCID iD) can open it, and they must sign in. The link alone is not enough.</li>
+          <li><strong>Public</strong> — anyone with the link can view it, and it is listed on your public profile page (if enabled). Anyone the link is forwarded to can open it.</li>
+          <li><strong>Private</strong> — only you and the specific people you grant access to (by email or ORCID iD) can open it, and they must sign in. The link alone is not enough.</li>
         </ul>
-        <p>Reports created without an account are always public. For public and unlisted reports, do not share the link publicly or include sensitive information in uploads if you plan to share the resulting report.</p>
+        <p>Reports created without an account are always public. For public reports, do not share the link publicly or include sensitive information in uploads if you plan to share the resulting report.</p>
 
         <h2>7) Retention</h2>
         <ul>
           <li><strong>Uploaded files in S3 (when used):</strong> stored only while the comparison process runs; deleted automatically when processing finishes.</li>
           <li><strong>Reports and quotations (Redis):</strong> Reports generated <em>without</em> an account are automatically deleted about 7 days after creation. Reports generated while <em>signed in</em> are retained until you delete them (from the report, your dashboard, or the API) or delete your account.</li>
-          <li><strong>Account data (database):</strong> Your account, profile, API keys, and any access grants on restricted reports are retained until you delete the relevant item (e.g. revoke a key, remove someone’s access) or delete your account; deleting your account also deletes your reports and their access grants.</li>
+          <li><strong>Account data (database):</strong> Your account, profile, API keys, and any access grants on private reports are retained until you delete the relevant item (e.g. revoke a key, remove someone’s access) or delete your account; deleting your account also deletes your reports and their access grants.</li>
           <li><strong>Survey responses:</strong> retained indefinitely unless you request deletion.</li>
           <li><strong>Server logs:</strong> retained for 1 day, then deleted.</li>
         </ul>

@@ -3,9 +3,9 @@
     {
       "dimension": "Sample size",
       "registration_content_quotes": "[PREREG_0001, relevance_score=0.94]\nWe will recruit 200 participants from Prolific, and data collection will stop once 200 complete responses are obtained.",
-      "registration_content_summary": "A fixed sample of 200 participants is planned via Prolific, with a stopping rule at 200 complete responses.",
+      "registration_content_summary": "A fixed sample of 200 participants is planned via Prolific, with a stopping rule at 200 complete responses (PREREG_0001).",
       "paper_content_quotes": "[PAPER_0001, relevance_score=0.93]\nA total of 243 participants were recruited via Prolific. After exclusions, 218 participants remained in the final sample.",
-      "paper_content_summary": "243 participants were recruited and 218 were retained for analysis after exclusions.",
+      "paper_content_summary": "243 participants were recruited and 218 were retained for analysis after exclusions (PAPER_0001).",
       "deviation_judgement": "yes",
       "deviation_information": "The registration planned a fixed sample of 200 participants (PREREG_0001), but the paper recruited 243 and analysed 218 (PAPER_0001). The realised sample size deviates from the preregistered plan."
     },

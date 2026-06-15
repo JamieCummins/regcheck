@@ -624,6 +624,9 @@ body.is-col-resizing * {
     margin-top: 1.1rem;
 }
 
+/* In the Overview right pane the summaries sit on their own (no top margin). */
+.summary-grid--pane { margin-top: 0; }
+
 .summary-box {
     background: var(--rc-surface-2);
     border: 1px solid var(--rc-border);
@@ -918,6 +921,34 @@ body.is-col-resizing * {
 
 .docs-tag--reg { color: var(--report-reg-ink); }
 .docs-tag--ppr { color: var(--report-paper-ink); }
+
+/* Per-panel viewer toolbar: zoom / page nav / search / Page-Text toggle. */
+.docs-tools { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
+.docs-tool-group { display: inline-flex; align-items: center; gap: 0.15rem; }
+.docs-tool-btn {
+    border: 1px solid var(--rc-border); background: var(--rc-surface-2); color: var(--rc-muted);
+    border-radius: 6px; min-width: 1.55rem; height: 1.55rem; padding: 0 0.4rem;
+    font-size: 0.8rem; font-weight: 600; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.docs-tool-btn:hover { color: var(--rc-text); border-color: var(--rc-border-strong); }
+.docs-tool-btn.is-active { background: var(--rc-accent); color: #fff; border-color: var(--rc-accent); }
+.docs-page__ind { font-family: var(--rc-font-mono); font-size: 0.72rem; color: var(--rc-muted); min-width: 3.2rem; text-align: center; }
+.docs-search { gap: 0.25rem; }
+.docs-search__input {
+    width: 7rem; max-width: 26vw; background: var(--rc-surface-2); border: 1px solid var(--rc-border);
+    color: var(--rc-text); border-radius: 6px; padding: 0.15rem 0.45rem; font-size: 0.78rem; height: 1.55rem;
+}
+.docs-search__count { font-family: var(--rc-font-mono); font-size: 0.7rem; color: var(--rc-faint); min-width: 2.2rem; text-align: center; }
+
+/* Zoom scales page width / text size via --doc-zoom set on the scroll container. */
+.docs-panel__scroll .pdf-stage { width: calc(100% * var(--doc-zoom, 1)); max-width: none; }
+.docs-panel__scroll .source-text { font-size: calc(0.9rem * var(--doc-zoom, 1)); }
+
+/* In-document search highlights (CSS Custom Highlight API; text mode). */
+::highlight(rc-search-reg), ::highlight(rc-search-ppr) { background-color: rgba(251, 224, 138, 0.45); }
+::highlight(rc-search-active-reg), ::highlight(rc-search-active-ppr) { background-color: #fbe08a; color: #2a2300; }
 
 .docs-panel__scroll {
     flex: 1 1 auto;

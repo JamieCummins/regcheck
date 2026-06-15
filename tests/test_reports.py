@@ -39,12 +39,13 @@ def test_generate_default_title():
 
 def test_normalize_visibility():
     assert reports_service.normalize_visibility("public") == "public"
-    assert reports_service.normalize_visibility("restricted") == "restricted"
-    # Legacy "private" maps to the new "unlisted" tier.
-    assert reports_service.normalize_visibility("PRIVATE") == "unlisted"
-    assert reports_service.normalize_visibility("unlisted") == "unlisted"
-    assert reports_service.normalize_visibility("nonsense") == "unlisted"
-    assert reports_service.normalize_visibility(None) == "unlisted"
+    assert reports_service.normalize_visibility("private") == "private"
+    # Earlier vocabularies collapse into the two-tier model.
+    assert reports_service.normalize_visibility("restricted") == "private"
+    assert reports_service.normalize_visibility("unlisted") == "private"
+    assert reports_service.normalize_visibility("PRIVATE") == "private"
+    assert reports_service.normalize_visibility("nonsense") == "private"
+    assert reports_service.normalize_visibility(None) == "private"
 
 
 @pytest.mark.asyncio
@@ -104,8 +105,8 @@ async def test_rename_and_visibility_mirror_to_redis(tmp_path):
             vis = await reports_service.set_report_visibility(redis, s, report, "public")
             assert vis == "public" and report.visibility == "public"
             assert redis.hashes["t1"]["visibility"] == "public"
-            # Invalid visibility falls back to the default (unlisted).
-            assert await reports_service.set_report_visibility(redis, s, report, "weird") == "unlisted"
+            # Invalid visibility falls back to the default (private).
+            assert await reports_service.set_report_visibility(redis, s, report, "weird") == "private"
             await s.commit()
     finally:
         await engine.dispose()

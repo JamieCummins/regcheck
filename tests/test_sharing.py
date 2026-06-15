@@ -65,7 +65,7 @@ async def test_share_service_add_list_remove(tmp_path):
             s.add(owner)
             await s.flush()
             await reports_service.create_report_row(
-                s, task_id="rr", owner_id=owner.id, visibility="restricted", title="R", comparison_type=None
+                s, task_id="rr", owner_id=owner.id, visibility="private", title="R", comparison_type=None
             )
             await s.commit()
 
@@ -105,7 +105,7 @@ async def test_user_can_view_matrix(tmp_path):
             await s.flush()
             s.add(models.OAuthIdentity(user_id=by_orcid.id, provider="orcid", subject="0000-0002-1825-0097"))
             await reports_service.create_report_row(
-                s, task_id="rr", owner_id=owner.id, visibility="restricted", title="R", comparison_type=None
+                s, task_id="rr", owner_id=owner.id, visibility="private", title="R", comparison_type=None
             )
             await sharing_service.add_share(s, "rr", "grant@uni.edu")
             await sharing_service.add_share(s, "rr", "0000-0002-1825-0097")
@@ -143,7 +143,7 @@ def _cookie_for(uid: str) -> str:
     return signer.sign(base64.b64encode(json.dumps({"user_id": uid}).encode())).decode()
 
 
-def test_restricted_access_enforcement():
+def test_private_access_enforcement():
     from starlette.testclient import TestClient
 
     tmp = tempfile.mkdtemp()
@@ -157,7 +157,8 @@ def test_restricted_access_enforcement():
                 stranger = models.User(email="nope@uni.edu", display_name="Stranger")
                 s.add_all([owner, grantee, stranger])
                 await s.flush()
-                for tid, vis in (("rr", "restricted"), ("pp", "public"), ("uu", "unlisted")):
+                # "uu" stores a legacy "unlisted" value to confirm it now behaves as private.
+                for tid, vis in (("rr", "private"), ("pp", "public"), ("uu", "unlisted")):
                     await reports_service.create_report_row(
                         s, task_id=tid, owner_id=owner.id, visibility=vis, title=tid.upper(), comparison_type=None
                     )
@@ -167,7 +168,7 @@ def test_restricted_access_enforcement():
 
         owner_id, grantee_id, stranger_id = asyncio.get_event_loop().run_until_complete(seed())
         success = {"state": "SUCCESS", "result_json": json.dumps({"items": []}), "title": "RR"}
-        for tid, vis in (("rr", "restricted"), ("pp", "public"), ("uu", "unlisted")):
+        for tid, vis in (("rr", "private"), ("pp", "public"), ("uu", "unlisted")):
             app.state.redis.h[tid] = {**success, "visibility": vis, "owner_id": owner_id}
 
         def as_user(uid):
@@ -177,15 +178,15 @@ def test_restricted_access_enforcement():
         def as_anon():
             client.cookies.clear()
 
-        # Anonymous: public + unlisted open by link; restricted redirects to login.
+        # Anonymous: only public opens by link; private (and legacy unlisted) redirect to login.
         as_anon()
         assert client.get("/result/pp").status_code == 200
-        assert client.get("/result/uu").status_code == 200
+        assert client.get("/result/uu", follow_redirects=False).status_code == 302  # legacy unlisted now gated
         r = client.get("/result/rr", follow_redirects=False)
         assert r.status_code == 302 and "/login" in r.headers["location"]
         assert client.get("/task_status/rr").json()["state"] == "FORBIDDEN"
 
-        # Signed-in non-grantee: forbidden everywhere for the restricted report.
+        # Signed-in non-grantee: forbidden everywhere for the private report.
         as_user(stranger_id)
         assert client.get("/result/rr").status_code == 403
         assert client.get("/task_status/rr").status_code == 403
