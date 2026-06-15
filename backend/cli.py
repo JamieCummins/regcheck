@@ -204,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq"],
         help="LLM provider to use.",
     )
     general.add_argument(
@@ -268,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     clinical.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq"],
         help="LLM provider to use.",
     )
     clinical.add_argument(
@@ -323,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     animals.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq"],
         help="LLM provider to use.",
     )
     animals.add_argument(

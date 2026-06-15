@@ -408,10 +408,11 @@
         /* ---- reasoning effort --------------------------------------------- */
         function updateReasoningEffortVisibility() {
             if (!reasoningEffortGroup || !reasoningEffortSelect) return;
-            const isOpenAI = modelSelect && modelSelect.value === "openai";
-            reasoningEffortGroup.hidden = !isOpenAI;
-            reasoningEffortSelect.disabled = !isOpenAI;
-            if (isOpenAI && !reasoningEffortSelect.value) reasoningEffortSelect.value = "medium";
+            // OpenAI-family reasoning models (ChatGPT, GPT-OSS) take a reasoning effort.
+            const isReasoning = modelSelect && (modelSelect.value === "openai" || modelSelect.value === "gpt_oss");
+            reasoningEffortGroup.hidden = !isReasoning;
+            reasoningEffortSelect.disabled = !isReasoning;
+            if (isReasoning && !reasoningEffortSelect.value) reasoningEffortSelect.value = "medium";
         }
 
         /* ---- uploads ------------------------------------------------------ */

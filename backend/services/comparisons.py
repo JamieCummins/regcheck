@@ -49,8 +49,9 @@ load_dotenv()
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 DEFAULT_OPENAI_MODEL = "gpt-5"
+DEFAULT_GPT_OSS_MODEL = "gpt-oss-120b"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 DEFAULT_MAX_SEGMENTS = 1200
 DEFAULT_MAX_CONCURRENT_TASKS = 8
 
@@ -137,8 +138,22 @@ def _openai_model() -> str:
     return _env_str("OPENAI_COMPARISON_MODEL", _env_str("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
 
 
+def _gpt_oss_model() -> str:
+    return _env_str("GPT_OSS_MODEL", DEFAULT_GPT_OSS_MODEL)
+
+
 def _openai_experiment_model() -> str:
     return _env_str("OPENAI_EXPERIMENT_MODEL", _openai_model())
+
+
+# Client choices that run through the OpenAI SDK (gpt-oss is served via OpenAI too).
+_OPENAI_CLIENTS = {"openai", "gpt_oss"}
+
+
+def _openai_family_model(client_choice: str, *, experiment: bool = False) -> str:
+    if client_choice == "gpt_oss":
+        return _gpt_oss_model()
+    return _openai_experiment_model() if experiment else _openai_model()
 
 
 def _deepseek_model() -> str:
@@ -915,9 +930,9 @@ async def extract_experiment_specific_paper_text(
             },
             {"role": "user", "content": user_prompt},
         ]
-        if client_choice == "openai":
+        if client_choice in _OPENAI_CLIENTS:
             openai_client = get_openai_client()
-            model = _openai_experiment_model()
+            model = _openai_family_model(client_choice, experiment=True)
             normalized_effort = _normalize_reasoning_effort_value(
                 reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
             )
@@ -2111,9 +2126,9 @@ def run_comparison(
         {"role": "user", "content": master_prompt},
     ]
 
-    if client_choice == "openai":
+    if client_choice in _OPENAI_CLIENTS:
         openai_client = get_openai_client()
-        model = _openai_model()
+        model = _openai_family_model(client_choice)
         normalized_effort = (reasoning_effort or "medium").strip().lower()
         if normalized_effort not in {"low", "medium", "high"}:
             normalized_effort = "medium"
