@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-share6' %}
+    {% set static_version = '20260614-share7' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -162,7 +162,7 @@
             <tr><td><code>clinical_registration</code></td><td>no</td><td><code>yes</code>/<code>no</code> (default <code>no</code>). When <code>yes</code>, fetches a ClinicalTrials.gov registration from <code>registration_id</code>.</td></tr>
             <tr><td><code>registration_id</code></td><td>cond.</td><td>ClinicalTrials.gov identifier (e.g. <code>NCT01234567</code>). Required when <code>clinical_registration=yes</code>.</td></tr>
             <tr><td><code>visibility</code></td><td>no</td><td><code>private</code> (default) or <code>public</code>. Public reports are listed on your public profile and viewable by anyone with the link; private reports are viewable only by you and the people you grant access to by email or ORCID iD (manage grantees in the web app). The API only ever returns <em>your own</em> reports regardless of visibility.</td></tr>
-            <tr><td><code>client</code></td><td>no</td><td>Model provider: <code>openai</code> (default), <code>groq</code>, or <code>deepseek</code>.</td></tr>
+            <tr><td><code>client</code></td><td>no</td><td>Model: <code>openai</code> (ChatGPT, default), <code>gpt_oss</code> (GPT-OSS 120B via OpenAI), <code>groq</code> (Llama 4 Maverick), or <code>deepseek</code>.</td></tr>
             <tr><td><code>parser_choice</code></td><td>no</td><td><code>pymupdf</code> (default; in-process, keeps all text), <code>grobid</code> (typeset PDFs), or <code>dpt2</code> (OCR / non-standard docs).</td></tr>
             <tr><td><code>reasoning_effort</code></td><td>no</td><td>Optional reasoning-effort hint where supported.</td></tr>
             <tr><td><code>append_previous_output</code></td><td>no</td><td><code>yes</code>/<code>no</code>. When <code>yes</code>, earlier dimension responses are included as context for later ones.</td></tr>
