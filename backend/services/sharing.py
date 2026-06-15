@@ -1,13 +1,13 @@
-"""Per-person view access for ``restricted`` reports.
+"""Per-person view access for ``private`` reports.
 
-A restricted report is viewable only by its owner and the people the owner has
+A private report is viewable only by its owner and the people the owner has
 granted, named by **verified email** (Google sign-in) or **ORCID iD** (ORCID
 sign-in does not return an email). Grants live in the ``report_shares`` table;
 matching happens at view time against the signed-in viewer's account.
 
 This module also exposes the single access gate (:func:`ensure_viewable`) used by
-every endpoint that serves report content. Only ``restricted`` reports are gated
-— ``public`` and ``unlisted`` stay open-by-link exactly as before.
+every endpoint that serves report content. Only ``private`` reports are gated —
+``public`` reports stay open by link.
 """
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ async def user_can_view(
 @dataclass
 class ViewVerdict:
     allowed: bool
-    needs_login: bool = False  # restricted + anonymous: send to sign-in
+    needs_login: bool = False  # private + anonymous: send to sign-in
     report: models.Report | None = None
 
 
@@ -141,8 +141,8 @@ async def ensure_viewable(request, task_id: str) -> ViewVerdict:
 
     - No accounts DB configured → allowed (degrades to pre-accounts behavior).
     - No ``Report`` row (anonymous/legacy reports) → allowed (these are public).
-    - ``public`` / ``unlisted`` → allowed (open by link, unchanged).
-    - ``restricted`` → allowed only for the owner or a granted viewer; anonymous
+    - ``public`` → allowed (open by link).
+    - ``private`` → allowed only for the owner or a granted viewer; anonymous
       viewers get ``needs_login`` so the caller can redirect to sign-in.
     """
     sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
@@ -155,7 +155,7 @@ async def ensure_viewable(request, task_id: str) -> ViewVerdict:
             return ViewVerdict(allowed=True, report=None)
 
         visibility = reports_service.normalize_visibility(report.visibility)
-        if visibility != "restricted":
+        if visibility != "private":
             return ViewVerdict(allowed=True, report=report)
 
         user = getattr(request.state, "user", None)

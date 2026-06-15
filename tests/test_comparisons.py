@@ -35,6 +35,9 @@ class FakeRedis:
     async def hset(self, key, mapping):
         self.hashes.setdefault(key, {}).update(mapping)
 
+    async def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
     async def ttl(self, key):
         return self.ttl_value
 
@@ -302,6 +305,19 @@ async def test_current_task_ttl_sets_task_expiry_when_missing(monkeypatch):
 
     assert ttl == 1234
     assert redis.expiries["task-1"] == 1234
+
+
+@pytest.mark.asyncio
+async def test_current_task_ttl_honors_retention():
+    """Anonymous runs carry an explicit seconds retention so their evidence
+    artifacts inherit the same ~7-day expiry; signed-in runs persist."""
+    redis = FakeRedis(ttl_value=999)
+    redis.hashes["t-persist"] = {"retention": "persist"}
+    assert await comparisons._current_task_ttl(redis, "t-persist") is None
+
+    week = str(7 * 24 * 60 * 60)
+    redis.hashes["t-anon"] = {"retention": week}
+    assert await comparisons._current_task_ttl(redis, "t-anon") == int(week)
 
 
 @pytest.mark.parametrize(

@@ -19,10 +19,13 @@ from .report_artifacts import delete_report_artifacts
 
 logger = logging.getLogger(__name__)
 
-VISIBILITIES = {"public", "unlisted", "restricted"}
-DEFAULT_VISIBILITY = "unlisted"
-# Legacy value: "private" historically meant "unlisted, link-only".
-_VISIBILITY_ALIASES = {"private": "unlisted"}
+VISIBILITIES = {"public", "private"}
+DEFAULT_VISIBILITY = "private"
+# Two-tier model: public (listed + open by link) vs private (allow-list; only the
+# owner and people they grant, who must sign in). Earlier vocabularies collapse
+# here — "restricted" was the allow-list tier, "unlisted" was link-only (now
+# folded into private so nothing that wasn't public stays openly linkable).
+_VISIBILITY_ALIASES = {"restricted": "private", "unlisted": "private"}
 
 
 def _clean_title(raw: str | None) -> str:

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-share4' %}
+    {% set static_version = '20260614-share6' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
@@ -20,7 +20,7 @@
       }
       .report-title-edit.is-saving { color: var(--rc-ok, #34d399); }
 
-      /* Share dialog (restricted reports) */
+      /* Share dialog (private reports) */
       .report-share-modal {
         position: fixed; inset: 0; z-index: 1080;
         display: flex; align-items: center; justify-content: center;
@@ -87,8 +87,7 @@
                     <label class="report-visibility" title="Who can see this report">
                         <select id="report-visibility-select" aria-label="Report visibility">
                             <option value="public" {{ 'selected' if report_visibility == 'public' else '' }}>Public</option>
-                            <option value="unlisted" {{ 'selected' if report_visibility == 'unlisted' else '' }}>Unlisted</option>
-                            <option value="restricted" {{ 'selected' if report_visibility == 'restricted' else '' }}>Restricted</option>
+                            <option value="private" {{ 'selected' if report_visibility != 'public' else '' }}>Private</option>
                         </select>
                     </label>
                     {% elif is_owner %}
@@ -167,7 +166,7 @@
           <h2 id="report-share-title">Share this report</h2>
           <button type="button" class="report-share-dialog__close" id="report-share-close" aria-label="Close">&times;</button>
         </div>
-        <p class="report-share-dialog__hint">Only you and the people you add can open this restricted report. Add by email or ORCID iD; they'll need to sign in.</p>
+        <p class="report-share-dialog__hint">Only you and the people you add can open this private report. Add by email or ORCID iD; they'll need to sign in.</p>
         <form id="report-share-form" class="report-share-form">
           <input type="text" id="report-share-input" name="grantee" placeholder="Email or ORCID iD" autocomplete="off" aria-label="Email or ORCID iD to grant access">
           <button type="submit" class="report-action-btn report-action-btn--primary">Add</button>
@@ -284,7 +283,7 @@
           });
         }
 
-        // ── Visibility + restricted share dialog ────────────────────────────
+        // ── Visibility + private share dialog ───────────────────────────────
         const modal = document.getElementById("report-share-modal");
         const shareList = document.getElementById("report-share-list");
         const shareForm = document.getElementById("report-share-form");
@@ -293,12 +292,11 @@
 
         const VIS_MESSAGE = {
           public: "Now public (listed on your profile)",
-          unlisted: "Now unlisted (anyone with the link)",
-          restricted: "Now restricted (only people you add)",
+          private: "Now private (only you and people you add)",
         };
 
         function currentVisibility() {
-          return visSelect ? visSelect.value : "unlisted";
+          return visSelect ? visSelect.value : "private";
         }
         function openShareModal() {
           if (!modal) return;
@@ -309,10 +307,10 @@
           if (modal) modal.hidden = true;
         }
 
-        // The Share button (wired in report.js) defers to this: restricted reports
-        // open the dialog; public/unlisted just copy the link.
+        // The Share button (wired in report.js) defers to this: private reports
+        // open the dialog; public just copies the link.
         window.regcheckShareClick = () => {
-          if (currentVisibility() === "restricted") { openShareModal(); return true; }
+          if (currentVisibility() === "private") { openShareModal(); return true; }
           return false;
         };
 
@@ -360,8 +358,8 @@
             post(`/reports/${encodeURIComponent(taskId)}/visibility`, { visibility: value })
               .then((data) => flash(VIS_MESSAGE[data.visibility] || "Visibility updated"))
               .catch(() => flash("Could not update visibility"));
-            // Making it restricted? Open the dialog so they can add people now.
-            if (value === "restricted") openShareModal();
+            // Making it private? Open the dialog so they can add people now.
+            if (value === "private") openShareModal();
           });
         }
 

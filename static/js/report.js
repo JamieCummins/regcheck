@@ -30,6 +30,12 @@
         logSeen: "",
         pollHandle: null,
         decisionResizersDone: false,
+        // Per-source-panel viewer state in the Evidence view (persists across
+        // re-renders): mode "page" (PDF images) or "text", zoom factor, search query.
+        docPanelUI: {
+            reg: { mode: null, zoom: 1, query: "" },
+            ppr: { mode: null, zoom: 1, query: "" },
+        },
     };
 
     const els = {
@@ -381,9 +387,7 @@
             </div>
         `;
         // Quote references (PREREG_0001 / PAPER_0001) jump to the Evidence view.
-        els.detail.querySelectorAll(".quote-ref").forEach((btn) => {
-            btn.addEventListener("click", () => openQuoteRef(btn.dataset.quoteRef));
-        });
+        bindQuoteRefs(els.detail);
     }
 
     // Turn PREREG_0001 / PAPER_0001 tokens in the deviation text into buttons
@@ -409,6 +413,13 @@
         state.view = "documents";
         state.activeQuoteId = id;
         render();   // documents view scrolls the active quote into view on render
+    }
+
+    function bindQuoteRefs(scope) {
+        if (!scope) return;
+        scope.querySelectorAll(".quote-ref").forEach((btn) => {
+            btn.addEventListener("click", () => openQuoteRef(btn.dataset.quoteRef));
+        });
     }
 
     /* ── decision view: right pane (quotes list) ─────────────────────────── */
@@ -446,15 +457,18 @@
         }
         const item = currentItem() || {};
         els.quotesPane.innerHTML = `
-            <div class="summary-box">
-                <p class="section-title evidence-column__title--reg">Registration summary</p>
-                <p>${escapeHtml(item.registration_content_summary || "No summary available.")}</p>
-            </div>
-            <div class="summary-box">
-                <p class="section-title evidence-column__title--paper">Paper summary</p>
-                <p>${escapeHtml(item.paper_content_summary || "No summary available.")}</p>
+            <div class="summary-grid summary-grid--pane">
+                <div class="summary-box">
+                    <p class="section-title evidence-column__title--reg">Registration summary</p>
+                    <p>${linkifyQuoteRefs(item.registration_content_summary || "No summary available.")}</p>
+                </div>
+                <div class="summary-box">
+                    <p class="section-title evidence-column__title--paper">Paper summary</p>
+                    <p>${linkifyQuoteRefs(item.paper_content_summary || "No summary available.")}</p>
+                </div>
             </div>
         `;
+        bindQuoteRefs(els.quotesPane);
     }
 
     function renderQuoteList(container, quotes, role, opts) {
@@ -526,7 +540,10 @@
             </div>
             <div class="docs-body">
                 <section class="docs-panel docs-panel--doc">
-                    <div class="docs-panel__head"><span class="docs-tag docs-tag--reg">Registration</span></div>
+                    <div class="docs-panel__head">
+                        <span class="docs-tag docs-tag--reg">Registration</span>
+                        <div class="docs-tools" id="docs-reg-tools"></div>
+                    </div>
                     <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
                 </section>
                 <section class="docs-panel docs-panel--quotes">
@@ -537,7 +554,10 @@
                     <div class="docs-panel__scroll" id="docs-quotes"></div>
                 </section>
                 <section class="docs-panel docs-panel--doc">
-                    <div class="docs-panel__head"><span class="docs-tag docs-tag--ppr">Paper</span></div>
+                    <div class="docs-panel__head">
+                        <span class="docs-tag docs-tag--ppr">Paper</span>
+                        <div class="docs-tools" id="docs-ppr-tools"></div>
+                    </div>
                     <div class="docs-panel__scroll" id="docs-ppr-scroll"><div class="source-placeholder">Loading…</div></div>
                 </section>
             </div>
@@ -580,28 +600,244 @@
         renderQuoteList(document.getElementById("docs-ppr-quotes"), pprQuotes, "ppr", { compact: true, onPick: pick, activeId: state.activeQuoteId });
     }
 
+    function bindQuoteClicks(scroll) {
+        scroll.querySelectorAll("[data-quote]").forEach((node) => {
+            node.addEventListener("click", () => setActiveQuote(node.dataset.quote));
+        });
+    }
+
+    function applyDocZoom(scroll, zoom) {
+        if (scroll) scroll.style.setProperty("--doc-zoom", String(zoom || 1));
+    }
+
     async function renderDocPanel(item, role, quotes) {
         const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        const tools = els.viewDocuments.querySelector(`#docs-${role}-tools`);
         if (!scroll) return;
+        const ui = state.docPanelUI[role] || (state.docPanelUI[role] = { mode: null, zoom: 1, query: "" });
         const sourceId = roleSourceId(item, role);
         const source = sourceId ? manifestSources()[sourceId] : null;
+        if (tools) tools.innerHTML = "";
         if (state.manifestUnavailable || !source) {
             scroll.innerHTML = `<div class="source-placeholder">Source document unavailable.</div>`;
             return;
         }
-        if (source.kind === "pdf" && source.render_mode === "pdf") {
-            // Render text is also needed for the page-flag fallback (quotes
-            // whose rect-finding failed at ingestion).
-            const renderData = await getRenderData(source.id);
-            scroll.innerHTML = buildPdfDoc(source, quotes, role, renderData);
-        } else {
-            const renderData = await getRenderData(source.id);
-            const text = (renderData && renderData.text) || "";
+
+        const renderData = await getRenderData(source.id);
+        const text = (renderData && renderData.text) || "";
+        const canPdf = source.kind === "pdf" && source.render_mode === "pdf" && !!source.page_url_template;
+        const mode = canPdf ? (ui.mode || "page") : "text";
+        const pageCount = source.page_count || (source.pages || []).length || 1;
+
+        const renderText = () => {
             scroll.innerHTML = `<div class="source-text source-text--doc ${role === "reg" ? "is-reg" : ""}">${buildTextDoc(text, quotes)}</div>`;
+            scroll.dataset.mode = "text";
+        };
+
+        if (mode === "page") {
+            scroll.innerHTML = buildPdfDoc(source, quotes, role, renderData);
+            scroll.dataset.mode = "page";
+            // (ii) Fallback: if the server can't render page images, swap to text.
+            let fellBack = false;
+            scroll.querySelectorAll(".pdf-stage img").forEach((img) => {
+                img.addEventListener("error", () => {
+                    if (fellBack || !text) return;
+                    fellBack = true;
+                    ui.mode = "text";
+                    refreshDocPanel(role);
+                });
+            });
+        } else {
+            renderText();
         }
-        scroll.querySelectorAll("[data-quote]").forEach((node) => {
-            node.addEventListener("click", () => setActiveQuote(node.dataset.quote));
+
+        applyDocZoom(scroll, ui.zoom);
+        bindQuoteClicks(scroll);
+
+        // (iii) Per-panel viewer tools: zoom, page nav (page mode), search, Page/Text toggle.
+        if (tools) {
+            tools.innerHTML = buildDocToolbar(role, canPdf, scroll.dataset.mode, pageCount);
+            wireDocToolbar(role, scroll, pageCount);
+        }
+        if (scroll.dataset.mode === "page") setupPageNav(role, scroll, pageCount);
+        if (ui.query) applyDocSearch(role);
+    }
+
+    async function refreshDocPanel(role) {
+        const item = currentItem();
+        if (!item) return;
+        await renderDocPanel(item, role, quotesForRole(item, role));
+        refreshActiveHighlight();
+        markUnlocatedQuotes();
+        scrollActiveIntoView();
+    }
+
+    function buildDocToolbar(role, canPdf, mode, pageCount) {
+        const zoom = `<div class="docs-tool-group">
+                <button type="button" class="docs-tool-btn" data-doc-zoom="out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+                <button type="button" class="docs-tool-btn" data-doc-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+            </div>`;
+        const page = mode === "page" ? `<div class="docs-tool-group">
+                <button type="button" class="docs-tool-btn" data-doc-page="prev" title="Previous page" aria-label="Previous page">&lsaquo;</button>
+                <span class="docs-page__ind">1 / ${pageCount}</span>
+                <button type="button" class="docs-tool-btn" data-doc-page="next" title="Next page" aria-label="Next page">&rsaquo;</button>
+            </div>` : "";
+        const search = `<div class="docs-tool-group docs-search">
+                <input type="search" class="docs-search__input" placeholder="Search" aria-label="Search document">
+                <span class="docs-search__count"></span>
+                <button type="button" class="docs-tool-btn" data-doc-search="prev" title="Previous match" aria-label="Previous match">&lsaquo;</button>
+                <button type="button" class="docs-tool-btn" data-doc-search="next" title="Next match" aria-label="Next match">&rsaquo;</button>
+            </div>`;
+        const toggle = canPdf ? `<div class="docs-tool-group docs-mode">
+                <button type="button" class="docs-tool-btn ${mode === "page" ? "is-active" : ""}" data-doc-mode="page">Page</button>
+                <button type="button" class="docs-tool-btn ${mode === "text" ? "is-active" : ""}" data-doc-mode="text">Text</button>
+            </div>` : "";
+        return zoom + page + search + toggle;
+    }
+
+    function wireDocToolbar(role, scroll, pageCount) {
+        const tools = els.viewDocuments.querySelector(`#docs-${role}-tools`);
+        if (!tools) return;
+        const ui = state.docPanelUI[role];
+        tools.querySelectorAll("[data-doc-zoom]").forEach((b) => {
+            b.addEventListener("click", () => {
+                const dir = b.dataset.docZoom === "in" ? 1 : -1;
+                ui.zoom = Math.min(2.5, Math.max(0.6, Math.round((ui.zoom + dir * 0.15) * 100) / 100));
+                applyDocZoom(scroll, ui.zoom);
+            });
         });
+        tools.querySelectorAll("[data-doc-page]").forEach((b) => {
+            b.addEventListener("click", () => pageStep(role, b.dataset.docPage === "next" ? 1 : -1));
+        });
+        tools.querySelectorAll("[data-doc-mode]").forEach((b) => {
+            b.addEventListener("click", () => { ui.mode = b.dataset.docMode; refreshDocPanel(role); });
+        });
+        const input = tools.querySelector(".docs-search__input");
+        if (input) {
+            input.value = ui.query || "";
+            input.addEventListener("input", async () => {
+                ui.query = input.value;
+                if (scroll.dataset.mode !== "text") {
+                    ui.mode = "text";   // search needs a text layer to highlight
+                    await refreshDocPanel(role);
+                    const next = els.viewDocuments.querySelector(`#docs-${role}-tools .docs-search__input`);
+                    if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
+                } else {
+                    applyDocSearch(role);
+                }
+            });
+        }
+        tools.querySelectorAll("[data-doc-search]").forEach((b) => {
+            b.addEventListener("click", () => docSearchStep(role, b.dataset.docSearch === "next" ? 1 : -1));
+        });
+    }
+
+    function setupPageNav(role, scroll, pageCount) {
+        const ind = els.viewDocuments.querySelector(`#docs-${role}-tools .docs-page__ind`);
+        const stages = [...scroll.querySelectorAll(".pdf-stage")];
+        if (!stages.length) return;
+        const update = () => {
+            const cr = scroll.getBoundingClientRect();
+            let cur = 1;
+            stages.forEach((st) => {
+                if (st.getBoundingClientRect().top - cr.top <= cr.height * 0.4) {
+                    cur = parseInt(st.dataset.page, 10) || cur;
+                }
+            });
+            state.docPanelUI[role]._page = cur;
+            if (ind) ind.textContent = `${cur} / ${pageCount}`;
+        };
+        let raf = null;
+        scroll.addEventListener("scroll", () => {
+            if (raf) return;
+            raf = window.requestAnimationFrame(() => { raf = null; update(); });
+        });
+        update();
+    }
+
+    function pageStep(role, dir) {
+        const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        if (!scroll) return;
+        const stages = [...scroll.querySelectorAll(".pdf-stage")];
+        const cur = state.docPanelUI[role]._page || 1;
+        const target = Math.min(Math.max(cur + dir, 1), stages.length);
+        const st = stages.find((s) => parseInt(s.dataset.page, 10) === target);
+        if (st) st.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "start" });
+    }
+
+    /* ── document search (Custom Highlight API, text mode) ───────────────────── */
+    function findTextRanges(root, query) {
+        const ranges = [];
+        const needle = (query || "").toLowerCase();
+        if (!needle) return ranges;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            const hay = node.nodeValue.toLowerCase();
+            let from = 0;
+            let idx = hay.indexOf(needle, from);
+            while (idx !== -1) {
+                const range = document.createRange();
+                range.setStart(node, idx);
+                range.setEnd(node, idx + needle.length);
+                ranges.push(range);
+                from = idx + needle.length;
+                idx = hay.indexOf(needle, from);
+            }
+        }
+        return ranges;
+    }
+
+    function scrollRangeIntoView(scroll, range) {
+        const rect = range.getBoundingClientRect();
+        const cr = scroll.getBoundingClientRect();
+        if (!rect.height) return;
+        const top = scroll.scrollTop + (rect.top - cr.top) - (scroll.clientHeight / 2) + (rect.height / 2);
+        scroll.scrollTo({ top, behavior: prefersReducedMotion ? "auto" : "smooth" });
+    }
+
+    function highlightSupported() {
+        return !!(window.CSS && CSS.highlights && typeof Highlight !== "undefined");
+    }
+
+    function applyDocSearch(role) {
+        const ui = state.docPanelUI[role];
+        const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        const countEl = els.viewDocuments.querySelector(`#docs-${role}-tools .docs-search__count`);
+        if (!scroll) return;
+        const sourceText = scroll.querySelector(".source-text");
+        const ranges = sourceText ? findTextRanges(sourceText, (ui.query || "").trim()) : [];
+        ui._matches = ranges;
+        ui._matchIndex = 0;
+        if (highlightSupported()) {
+            CSS.highlights.delete(`rc-search-${role}`);
+            CSS.highlights.delete(`rc-search-active-${role}`);
+            if (ranges.length) CSS.highlights.set(`rc-search-${role}`, new Highlight(...ranges));
+        }
+        if (countEl) countEl.textContent = ranges.length ? `1/${ranges.length}` : ((ui.query || "").trim() ? "0" : "");
+        if (ranges.length) {
+            setSearchActive(role, 0);
+            scrollRangeIntoView(scroll, ranges[0]);
+        }
+    }
+
+    function setSearchActive(role, index) {
+        const ui = state.docPanelUI[role];
+        if (!ui._matches || !ui._matches.length) return;
+        ui._matchIndex = (index + ui._matches.length) % ui._matches.length;
+        const countEl = els.viewDocuments.querySelector(`#docs-${role}-tools .docs-search__count`);
+        if (countEl) countEl.textContent = `${ui._matchIndex + 1}/${ui._matches.length}`;
+        if (highlightSupported()) {
+            CSS.highlights.set(`rc-search-active-${role}`, new Highlight(ui._matches[ui._matchIndex]));
+        }
+    }
+
+    function docSearchStep(role, dir) {
+        const ui = state.docPanelUI[role];
+        if (!ui._matches || !ui._matches.length) return;
+        setSearchActive(role, ui._matchIndex + dir);
+        const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        scrollRangeIntoView(scroll, ui._matches[ui._matchIndex]);
     }
 
     function setActiveQuote(id) {
