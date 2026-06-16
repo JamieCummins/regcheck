@@ -1003,6 +1003,28 @@ body.is-col-resizing * {
 }
 .report-download-menu button:hover { background: var(--rc-surface-3); }
 
+/* Document fallback state (page render + text extraction both failed). */
+.source-placeholder--fallback {
+    flex-direction: column;
+    gap: 0.7rem;
+    padding: 1.5rem;
+    line-height: 1.5;
+}
+.source-placeholder--fallback p { margin: 0; max-width: 28ch; }
+.source-raw-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--rc-border-strong);
+    border-radius: var(--rc-radius-sm);
+    color: var(--rc-accent-strong);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+}
+.source-raw-link:hover { border-color: var(--rc-accent); color: var(--rc-accent); background: var(--rc-surface-2); }
+
 .docs-panel__scroll {
     flex: 1 1 auto;
     min-height: 0;
