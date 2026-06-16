@@ -610,57 +610,81 @@
         if (scroll) scroll.style.setProperty("--doc-zoom", String(zoom || 1));
     }
 
+    // Last-resort panel state: explain + offer the original file when we can
+    // neither render pages nor show extracted text.
+    function renderUnavailable(scroll, source, message) {
+        const raw = source && source.raw_url;
+        const link = raw
+            ? `<a class="source-raw-link" href="${escapeHtml(raw)}" target="_blank" rel="noopener">Open the original file &rsaquo;</a>`
+            : "";
+        scroll.innerHTML = `<div class="source-placeholder source-placeholder--fallback"><p>${escapeHtml(message)}</p>${link}</div>`;
+        scroll.dataset.mode = "unavailable";
+    }
+
     async function renderDocPanel(item, role, quotes) {
         const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
         const tools = els.viewDocuments.querySelector(`#docs-${role}-tools`);
         if (!scroll) return;
         const ui = state.docPanelUI[role] || (state.docPanelUI[role] = { mode: null, zoom: 1, query: "" });
+        if (tools) tools.innerHTML = "";
         const sourceId = roleSourceId(item, role);
         const source = sourceId ? manifestSources()[sourceId] : null;
-        if (tools) tools.innerHTML = "";
         if (state.manifestUnavailable || !source) {
-            scroll.innerHTML = `<div class="source-placeholder">Source document unavailable.</div>`;
+            renderUnavailable(scroll, source, "This document is unavailable.");
             return;
         }
 
         const renderData = await getRenderData(source.id);
         const text = (renderData && renderData.text) || "";
+        const hasText = !!text.trim();
         const canPdf = source.kind === "pdf" && source.render_mode === "pdf" && !!source.page_url_template;
         const mode = canPdf ? (ui.mode || "page") : "text";
         const pageCount = source.page_count || (source.pages || []).length || 1;
 
-        const renderText = () => {
-            scroll.innerHTML = `<div class="source-text source-text--doc ${role === "reg" ? "is-reg" : ""}">${buildTextDoc(text, quotes)}</div>`;
-            scroll.dataset.mode = "text";
+        const rebuildTools = () => {
+            if (!tools) return;
+            if (scroll.dataset.mode === "unavailable") { tools.innerHTML = ""; return; }
+            tools.innerHTML = buildDocToolbar(role, canPdf, scroll.dataset.mode, pageCount, ui.zoom);
+            wireDocToolbar(role, scroll, pageCount);
+        };
+
+        // Robust fallback chain: page images → extracted text → "open original".
+        const showText = () => {
+            if (!hasText) {
+                renderUnavailable(scroll, source, "We couldn’t extract readable text from this document.");
+            } else {
+                scroll.innerHTML = `<div class="source-text source-text--doc ${role === "reg" ? "is-reg" : ""}">${buildTextDoc(text, quotes)}</div>`;
+                scroll.dataset.mode = "text";
+            }
         };
 
         if (mode === "page") {
             scroll.innerHTML = buildPdfDoc(source, quotes, role, renderData);
             scroll.dataset.mode = "page";
-            // (ii) Fallback: if the server can't render page images, swap to text.
-            let fellBack = false;
-            scroll.querySelectorAll(".pdf-stage img").forEach((img) => {
-                img.addEventListener("error", () => {
-                    if (fellBack || !text) return;
+            const imgs = [...scroll.querySelectorAll(".pdf-stage img")];
+            const fallbackFromPage = () => {
+                if (hasText) { ui.mode = "text"; refreshDocPanel(role); }      // re-render in text mode
+                else { renderUnavailable(scroll, source, "This document couldn’t be rendered."); applyDocZoom(scroll, ui.zoom); rebuildTools(); }
+            };
+            if (!imgs.length) {
+                fallbackFromPage();
+            } else {
+                let fellBack = false;
+                imgs.forEach((img) => img.addEventListener("error", () => {
+                    if (fellBack) return;
                     fellBack = true;
-                    ui.mode = "text";
-                    refreshDocPanel(role);
-                });
-            });
+                    fallbackFromPage();
+                }));
+            }
         } else {
-            renderText();
+            showText();
         }
 
         applyDocZoom(scroll, ui.zoom);
         bindQuoteClicks(scroll);
-
-        // (iii) Per-panel viewer tools: zoom, page nav (page mode), search, Page/Text toggle.
-        if (tools) {
-            tools.innerHTML = buildDocToolbar(role, canPdf, scroll.dataset.mode, pageCount, ui.zoom);
-            wireDocToolbar(role, scroll, pageCount);
-        }
+        rebuildTools();
         if (scroll.dataset.mode === "page") setupPageNav(role, scroll, pageCount);
-        if (ui.query) applyDocSearch(role);
+        if (ui.query && scroll.dataset.mode === "text") applyDocSearch(role);
     }
 
     async function refreshDocPanel(role) {
@@ -1154,15 +1178,26 @@
             <footer>Generated by RegCheck — preregistration vs. paper comparison.</footer>
             </body></html>`;
 
+        // Print via an offscreen iframe. It MUST have real dimensions — a 0×0
+        // iframe lays out to nothing and prints a blank page.
         const iframe = document.createElement("iframe");
         iframe.setAttribute("aria-hidden", "true");
-        iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
-        iframe.onload = () => {
-            try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (_e) { /* ignore */ }
-            window.setTimeout(() => iframe.remove(), 1500);
-        };
+        iframe.style.cssText = "position:fixed; left:-10000px; top:0; width:816px; height:1056px; border:0;";
         document.body.appendChild(iframe);
-        iframe.srcdoc = html;
+        const win = iframe.contentWindow;
+        const doc = win.document;
+        doc.open();
+        doc.write(html);
+        doc.close();
+        let removed = false;
+        const cleanup = () => { if (!removed) { removed = true; iframe.remove(); } };
+        try { win.addEventListener("afterprint", () => window.setTimeout(cleanup, 200)); } catch (_e) { /* ignore */ }
+        // Let styles/layout settle, then print. print() blocks until the dialog
+        // closes in most browsers, so schedule a fallback cleanup too.
+        window.setTimeout(() => {
+            try { win.focus(); win.print(); } catch (_e) { /* ignore */ }
+            window.setTimeout(cleanup, 60000);
+        }, 350);
         showToast("Preparing PDF — choose “Save as PDF” in the print dialog");
     }
 
