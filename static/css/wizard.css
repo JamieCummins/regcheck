@@ -154,6 +154,33 @@
     max-width: 26rem;
 }
 
+/* Text inputs (e.g. the ClinicalTrials.gov ID) — force light text + dark field.
+   Some browsers otherwise render the input text black. */
+.wizard-page input.form-control,
+.wizard-page input[type="text"] {
+    color: var(--rc-text);
+    -webkit-text-fill-color: var(--rc-text);
+    caret-color: var(--rc-text);
+    background-color: var(--rc-surface-2);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: var(--rc-radius-sm);
+    padding: 0.55rem 0.75rem;
+}
+.wizard-page input.form-control::placeholder {
+    color: var(--rc-faint);
+    -webkit-text-fill-color: var(--rc-faint);
+    opacity: 1;
+}
+.wizard-page input.form-control:focus {
+    outline: none;
+    border-color: var(--rc-accent);
+    box-shadow: 0 0 0 1px var(--rc-border-strong);
+}
+.wizard-page input.form-control:disabled {
+    opacity: 0.55;
+    -webkit-text-fill-color: var(--rc-muted);
+}
+
 /* choice steps — two-column form row (question left, control right) --------- */
 .form-step.choice-step.active {
     display: grid;

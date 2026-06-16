@@ -51,7 +51,7 @@
         statusText: document.getElementById("report-status-text"),
         copyLink: document.getElementById("copy-report-link-btn"),
         copyLinkLabel: document.getElementById("copy-report-link-label"),
-        csv: document.getElementById("download-report-csv-btn"),
+        download: document.getElementById("report-download-btn"),
         toast: document.getElementById("report-toast"),
         log: document.getElementById("report-log"),
         logList: document.getElementById("report-log-list"),
@@ -542,8 +542,8 @@
                 <section class="docs-panel docs-panel--doc">
                     <div class="docs-panel__head">
                         <span class="docs-tag docs-tag--reg">Registration</span>
-                        <div class="docs-tools" id="docs-reg-tools"></div>
                     </div>
+                    <div class="docs-toolbar" id="docs-reg-tools"></div>
                     <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
                 </section>
                 <section class="docs-panel docs-panel--quotes">
@@ -556,8 +556,8 @@
                 <section class="docs-panel docs-panel--doc">
                     <div class="docs-panel__head">
                         <span class="docs-tag docs-tag--ppr">Paper</span>
-                        <div class="docs-tools" id="docs-ppr-tools"></div>
                     </div>
+                    <div class="docs-toolbar" id="docs-ppr-tools"></div>
                     <div class="docs-panel__scroll" id="docs-ppr-scroll"><div class="source-placeholder">Loading…</div></div>
                 </section>
             </div>
@@ -656,7 +656,7 @@
 
         // (iii) Per-panel viewer tools: zoom, page nav (page mode), search, Page/Text toggle.
         if (tools) {
-            tools.innerHTML = buildDocToolbar(role, canPdf, scroll.dataset.mode, pageCount);
+            tools.innerHTML = buildDocToolbar(role, canPdf, scroll.dataset.mode, pageCount, ui.zoom);
             wireDocToolbar(role, scroll, pageCount);
         }
         if (scroll.dataset.mode === "page") setupPageNav(role, scroll, pageCount);
@@ -672,27 +672,32 @@
         scrollActiveIntoView();
     }
 
-    function buildDocToolbar(role, canPdf, mode, pageCount) {
-        const zoom = `<div class="docs-tool-group">
-                <button type="button" class="docs-tool-btn" data-doc-zoom="out" title="Zoom out" aria-label="Zoom out">&minus;</button>
-                <button type="button" class="docs-tool-btn" data-doc-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
-            </div>`;
-        const page = mode === "page" ? `<div class="docs-tool-group">
-                <button type="button" class="docs-tool-btn" data-doc-page="prev" title="Previous page" aria-label="Previous page">&lsaquo;</button>
-                <span class="docs-page__ind">1 / ${pageCount}</span>
-                <button type="button" class="docs-tool-btn" data-doc-page="next" title="Next page" aria-label="Next page">&rsaquo;</button>
-            </div>` : "";
-        const search = `<div class="docs-tool-group docs-search">
-                <input type="search" class="docs-search__input" placeholder="Search" aria-label="Search document">
+    function buildDocToolbar(role, canPdf, mode, pageCount, zoom) {
+        const pct = Math.round((zoom || 1) * 100);
+        const sep = `<span class="docs-tb__sep" aria-hidden="true"></span>`;
+        const page = mode === "page" ? `<div class="docs-tb__grp">
+                <button type="button" class="docs-tb__btn" data-doc-page="prev" title="Previous page" aria-label="Previous page">&lsaquo;</button>
+                <span class="docs-tb__page"><span class="docs-page__ind">1</span><span class="docs-tb__page-sep">/</span>${pageCount}</span>
+                <button type="button" class="docs-tb__btn" data-doc-page="next" title="Next page" aria-label="Next page">&rsaquo;</button>
+            </div>${sep}` : "";
+        const zoomg = `<div class="docs-tb__grp">
+                <button type="button" class="docs-tb__btn" data-doc-zoom="out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+                <span class="docs-zoom__pct">${pct}%</span>
+                <button type="button" class="docs-tb__btn" data-doc-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+            </div>${sep}`;
+        const search = `<div class="docs-tb__grp docs-tb__search">
+                <svg class="docs-tb__icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                <input type="search" class="docs-search__input" placeholder="Search document" aria-label="Search document">
                 <span class="docs-search__count"></span>
-                <button type="button" class="docs-tool-btn" data-doc-search="prev" title="Previous match" aria-label="Previous match">&lsaquo;</button>
-                <button type="button" class="docs-tool-btn" data-doc-search="next" title="Next match" aria-label="Next match">&rsaquo;</button>
+                <button type="button" class="docs-tb__btn" data-doc-search="prev" title="Previous match" aria-label="Previous match">&lsaquo;</button>
+                <button type="button" class="docs-tb__btn" data-doc-search="next" title="Next match" aria-label="Next match">&rsaquo;</button>
             </div>`;
-        const toggle = canPdf ? `<div class="docs-tool-group docs-mode">
-                <button type="button" class="docs-tool-btn ${mode === "page" ? "is-active" : ""}" data-doc-mode="page">Page</button>
-                <button type="button" class="docs-tool-btn ${mode === "text" ? "is-active" : ""}" data-doc-mode="text">Text</button>
+        const modes = canPdf ? `<span class="docs-tb__spacer"></span>
+            <div class="docs-tb__seg-group" role="group" aria-label="View as">
+                <button type="button" class="docs-tb__seg ${mode === "page" ? "is-active" : ""}" data-doc-mode="page">Page</button>
+                <button type="button" class="docs-tb__seg ${mode === "text" ? "is-active" : ""}" data-doc-mode="text">Text</button>
             </div>` : "";
-        return zoom + page + search + toggle;
+        return page + zoomg + search + modes;
     }
 
     function wireDocToolbar(role, scroll, pageCount) {
@@ -704,6 +709,8 @@
                 const dir = b.dataset.docZoom === "in" ? 1 : -1;
                 ui.zoom = Math.min(2.5, Math.max(0.6, Math.round((ui.zoom + dir * 0.15) * 100) / 100));
                 applyDocZoom(scroll, ui.zoom);
+                const pct = tools.querySelector(".docs-zoom__pct");
+                if (pct) pct.textContent = `${Math.round(ui.zoom * 100)}%`;
             });
         });
         tools.querySelectorAll("[data-doc-page]").forEach((b) => {
@@ -745,7 +752,7 @@
                 }
             });
             state.docPanelUI[role]._page = cur;
-            if (ind) ind.textContent = `${cur} / ${pageCount}`;
+            if (ind) ind.textContent = String(cur);
         };
         let raf = null;
         scroll.addEventListener("scroll", () => {
@@ -1081,6 +1088,120 @@
         document.body.removeChild(link);
     }
 
+    /* ── PDF download (print-to-PDF of a tidy report layout) ─────────────────── */
+    function downloadPdf() {
+        if (!state.items.length) return;
+        const title = (document.getElementById("results-page-tagline")?.textContent || "RegCheck report").trim();
+        const counts = state.items.reduce((acc, it) => {
+            const t = judgementInfo(it.deviation_judgement).tone;
+            acc[t] = (acc[t] || 0) + 1; return acc;
+        }, {});
+        const summary = [
+            counts.flag ? `${counts.flag} deviation${counts.flag === 1 ? "" : "s"}` : null,
+            counts.warn ? `${counts.warn} missing` : null,
+            counts.ok ? `${counts.ok} consistent` : null,
+        ].filter(Boolean).join(" · ");
+
+        const quoteItems = (raw) => {
+            const qs = parseQuotes(raw || "");
+            if (!qs.length) return `<p class="muted">No evidence found.</p>`;
+            return `<ul class="quotes">${qs.map((q) =>
+                `<li><span class="qid">${escapeHtml(q.id)}</span>${escapeHtml(q.text || q.raw || "")}</li>`).join("")}</ul>`;
+        };
+        const sections = state.items.map((it, i) => {
+            const info = judgementInfo(it.deviation_judgement);
+            return `<section class="dim">
+                <div class="dim-head"><h2>${i + 1}. ${escapeHtml(it.dimension || "Dimension")}</h2>
+                    <span class="verdict verdict--${info.tone}">${escapeHtml(info.label)}</span></div>
+                <p class="rationale">${escapeHtml(it.deviation_information || "")}</p>
+                <div class="cols">
+                    <div class="col"><h3>Registration</h3><p>${escapeHtml(it.registration_content_summary || "—")}</p>${quoteItems(it.registration_content_quotes)}</div>
+                    <div class="col"><h3>Paper</h3><p>${escapeHtml(it.paper_content_summary || "—")}</p>${quoteItems(it.paper_content_quotes)}</div>
+                </div>
+            </section>`;
+        }).join("");
+
+        const css = `
+            * { box-sizing: border-box; }
+            body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 32px; line-height: 1.5; }
+            h1 { font-size: 20px; margin: 0 0 4px; }
+            .meta { color: #6b7280; font-size: 12px; margin: 0 0 2px; }
+            .counts { color: #374151; font-size: 12px; font-weight: 600; margin: 0 0 18px; }
+            .dim { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin: 0 0 14px; break-inside: avoid; }
+            .dim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+            .dim-head h2 { font-size: 14px; margin: 0; }
+            .verdict { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+            .verdict--flag { color: #9f1239; background: #ffe4e6; }
+            .verdict--warn { color: #92400e; background: #fef3c7; }
+            .verdict--ok { color: #065f46; background: #d1fae5; }
+            .rationale { font-size: 12.5px; margin: 0 0 10px; }
+            .cols { display: flex; gap: 16px; }
+            .col { flex: 1; min-width: 0; }
+            .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 3px; }
+            .col p { font-size: 12px; margin: 0 0 6px; }
+            ul.quotes { margin: 0; padding: 0; list-style: none; }
+            ul.quotes li { font-size: 11px; color: #374151; border-left: 2px solid #d1d5db; padding: 2px 0 2px 8px; margin: 0 0 5px; }
+            .qid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; color: #6b7280; display: block; }
+            .muted { color: #9ca3af; font-size: 11px; font-style: italic; margin: 0; }
+            footer { margin-top: 18px; color: #9ca3af; font-size: 10px; text-align: center; }
+            @page { margin: 16mm; }
+        `;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${css}</style></head>
+            <body><h1>${escapeHtml(title)}</h1>
+            <p class="meta">RegCheck comparison report · ${state.items.length} dimensions · generated ${new Date().toLocaleDateString()}</p>
+            ${summary ? `<p class="counts">${escapeHtml(summary)}</p>` : ""}
+            ${sections}
+            <footer>Generated by RegCheck — preregistration vs. paper comparison.</footer>
+            </body></html>`;
+
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("aria-hidden", "true");
+        iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+        iframe.onload = () => {
+            try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch (_e) { /* ignore */ }
+            window.setTimeout(() => iframe.remove(), 1500);
+        };
+        document.body.appendChild(iframe);
+        iframe.srcdoc = html;
+        showToast("Preparing PDF — choose “Save as PDF” in the print dialog");
+    }
+
+    /* ── download menu (CSV / PDF) ───────────────────────────────────────────── */
+    function setupDownloadMenu() {
+        const trigger = els.download;
+        if (!trigger) return;
+        let menu = null;
+        const close = () => {
+            if (!menu) return;
+            menu.remove(); menu = null;
+            document.removeEventListener("click", onDocClick, true);
+            window.removeEventListener("keydown", onKeyDown, true);
+            trigger.setAttribute("aria-expanded", "false");
+        };
+        const onDocClick = (e) => { if (menu && !menu.contains(e.target) && e.target !== trigger) close(); };
+        const onKeyDown = (e) => { if (e.key === "Escape") close(); };
+        const open = () => {
+            menu = document.createElement("div");
+            menu.className = "report-download-menu";
+            menu.innerHTML = `
+                <button type="button" data-dl="pdf">RegCheck report (PDF)</button>
+                <button type="button" data-dl="csv">Data table (CSV)</button>`;
+            document.body.appendChild(menu);
+            const r = trigger.getBoundingClientRect();
+            menu.style.top = `${Math.round(r.bottom + 6)}px`;
+            menu.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+            menu.querySelector('[data-dl="pdf"]').addEventListener("click", () => { close(); downloadPdf(); });
+            menu.querySelector('[data-dl="csv"]').addEventListener("click", () => { close(); downloadCsv(); });
+            trigger.setAttribute("aria-expanded", "true");
+            // Defer listener attach so this opening click doesn't immediately close it.
+            window.setTimeout(() => {
+                document.addEventListener("click", onDocClick, true);
+                window.addEventListener("keydown", onKeyDown, true);
+            }, 0);
+        };
+        trigger.addEventListener("click", () => (menu ? close() : open()));
+    }
+
     async function copyReportLink() {
         let copied = false;
         try {
@@ -1202,7 +1323,7 @@
             copyReportLink();
         });
     }
-    if (els.csv) els.csv.addEventListener("click", downloadCsv);
+    setupDownloadMenu();
     if (els.viewToggle) {
         els.viewToggle.querySelectorAll("[data-view]").forEach((btn) => {
             btn.addEventListener("click", () => {

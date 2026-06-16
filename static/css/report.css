@@ -922,25 +922,52 @@ body.is-col-resizing * {
 .docs-tag--reg { color: var(--report-reg-ink); }
 .docs-tag--ppr { color: var(--report-paper-ink); }
 
-/* Per-panel viewer toolbar: zoom / page nav / search / Page-Text toggle. */
-.docs-tools { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; }
-.docs-tool-group { display: inline-flex; align-items: center; gap: 0.15rem; }
-.docs-tool-btn {
-    border: 1px solid var(--rc-border); background: var(--rc-surface-2); color: var(--rc-muted);
-    border-radius: 6px; min-width: 1.55rem; height: 1.55rem; padding: 0 0.4rem;
-    font-size: 0.8rem; font-weight: 600; line-height: 1; cursor: pointer;
+/* Per-panel viewer toolbar — a slim, inline bar like a standard PDF viewer. */
+.docs-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.docs-toolbar::-webkit-scrollbar { display: none; }
+.docs-toolbar:empty { display: none; }
+.docs-tb__grp { display: inline-flex; align-items: center; gap: 0.1rem; flex: 0 0 auto; }
+.docs-tb__sep { width: 1px; align-self: stretch; margin: 0.15rem 0.15rem; background: var(--rc-border); flex: 0 0 auto; }
+.docs-tb__spacer { flex: 1 1 auto; }
+.docs-tb__btn {
+    border: none; background: none; color: var(--rc-muted);
+    border-radius: 5px; min-width: 1.5rem; height: 1.5rem; padding: 0 0.3rem;
+    font-size: 0.95rem; line-height: 1; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
-    transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+    transition: color 0.12s ease, background 0.12s ease;
 }
-.docs-tool-btn:hover { color: var(--rc-text); border-color: var(--rc-border-strong); }
-.docs-tool-btn.is-active { background: var(--rc-accent); color: #fff; border-color: var(--rc-accent); }
-.docs-page__ind { font-family: var(--rc-font-mono); font-size: 0.72rem; color: var(--rc-muted); min-width: 3.2rem; text-align: center; }
-.docs-search { gap: 0.25rem; }
+.docs-tb__btn:hover { color: var(--rc-text); background: var(--rc-surface-3); }
+.docs-tb__icon { color: var(--rc-faint); flex: 0 0 auto; margin-right: 0.1rem; }
+.docs-tb__page, .docs-zoom__pct {
+    font-family: var(--rc-font-mono); font-size: 0.72rem; color: var(--rc-text);
+    min-width: 2.6rem; text-align: center; font-variant-numeric: tabular-nums;
+}
+.docs-tb__page-sep { color: var(--rc-faint); margin: 0 0.15rem; }
+.docs-tb__search { flex: 1 1 auto; min-width: 0; }
 .docs-search__input {
-    width: 7rem; max-width: 26vw; background: var(--rc-surface-2); border: 1px solid var(--rc-border);
-    color: var(--rc-text); border-radius: 6px; padding: 0.15rem 0.45rem; font-size: 0.78rem; height: 1.55rem;
+    flex: 1 1 5rem; min-width: 0; background: transparent; border: none;
+    color: var(--rc-text); padding: 0.1rem 0.2rem; font-size: 0.78rem; height: 1.4rem; outline: none;
 }
-.docs-search__count { font-family: var(--rc-font-mono); font-size: 0.7rem; color: var(--rc-faint); min-width: 2.2rem; text-align: center; }
+.docs-search__input::placeholder { color: var(--rc-faint); }
+.docs-search__count { font-family: var(--rc-font-mono); font-size: 0.68rem; color: var(--rc-faint); min-width: 2rem; text-align: center; }
+.docs-tb__seg-group { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--rc-border); border-radius: 6px; overflow: hidden; }
+.docs-tb__seg {
+    border: none; background: none; color: var(--rc-muted);
+    font-size: 0.72rem; font-weight: 600; padding: 0.25rem 0.55rem; cursor: pointer; line-height: 1;
+}
+.docs-tb__seg + .docs-tb__seg { border-left: 1px solid var(--rc-border); }
+.docs-tb__seg.is-active { background: var(--rc-accent); color: #fff; }
+.docs-tb__seg:not(.is-active):hover { background: var(--rc-surface-3); color: var(--rc-text); }
 
 /* Zoom scales page width / text size via --doc-zoom set on the scroll container. */
 .docs-panel__scroll .pdf-stage { width: calc(100% * var(--doc-zoom, 1)); max-width: none; }
@@ -949,6 +976,32 @@ body.is-col-resizing * {
 /* In-document search highlights (CSS Custom Highlight API; text mode). */
 ::highlight(rc-search-reg), ::highlight(rc-search-ppr) { background-color: rgba(251, 224, 138, 0.45); }
 ::highlight(rc-search-active-reg), ::highlight(rc-search-active-ppr) { background-color: #fbe08a; color: #2a2300; }
+
+/* Download menu (CSV / PDF) anchored under the Download button. */
+.report-download-menu {
+    position: fixed;
+    z-index: 1090;
+    min-width: 13rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.3rem;
+    background: var(--rc-surface);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: var(--rc-radius-sm);
+    box-shadow: var(--rc-shadow-md);
+}
+.report-download-menu button {
+    border: none;
+    background: none;
+    color: var(--rc-text);
+    text-align: left;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.report-download-menu button:hover { background: var(--rc-surface-3); }
 
 .docs-panel__scroll {
     flex: 1 1 auto;
