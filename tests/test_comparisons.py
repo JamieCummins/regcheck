@@ -17,6 +17,20 @@ from backend.services.comparisons import (  # noqa: E402
 )
 
 
+def _run_coro(coro):
+    """Run a coroutine on a private loop WITHOUT nulling the global current loop.
+    (asyncio.run() sets the current loop to None on exit, which breaks the legacy
+    tests that still call asyncio.get_event_loop() — test_sharing/test_api — when
+    this module runs before them.)"""
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 class FakeRedis:
     def __init__(self, ttl_value=3600):
         self.values = {}
@@ -234,6 +248,49 @@ def test_groq_response_format_error_retries_without_json_mode(monkeypatch):
     assert result is response
     assert "response_format" in calls[0]
     assert "response_format" not in calls[1]
+
+
+def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
+    import numpy as np
+
+    calls = []
+
+    def fake_embed(segments, model):
+        calls.append(list(segments))
+        return np.zeros((len(segments), 4), dtype=np.float32)
+
+    monkeypatch.setattr(comparisons, "openai_embed_segments", fake_embed)
+    dims = [
+        {"dimension": "Sample size", "definition": "n"},
+        {"dimension": "Outcomes", "definition": ""},
+        {"name": "Blinding", "definition": "masking"},
+        "junk",                 # non-dict -> skipped
+        {"dimension": "   "},   # blank name -> skipped
+    ]
+
+    cache = _run_coro(comparisons._prebuild_query_embeddings(dims, embedding_model="m"))
+
+    # ONE batched embedding call containing exactly the valid augmented queries.
+    assert len(calls) == 1
+    assert calls[0] == ["Sample size. n", "Outcomes", "Blinding. masking"]
+    # Keys must match what run_comparison computes for the same query.
+    assert comparisons._query_embedding_key("Sample size. n") in cache
+    assert comparisons._query_embedding_key("Blinding. masking") in cache
+    assert len(cache) == 3
+
+
+def test_prebuild_query_embeddings_degrades_to_empty_on_failure(monkeypatch):
+    def boom(segments, model):
+        raise RuntimeError("embedding API down")
+
+    monkeypatch.setattr(comparisons, "openai_embed_segments", boom)
+    # On failure it returns {} so each dimension falls back to its own embedding.
+    cache = _run_coro(
+        comparisons._prebuild_query_embeddings(
+            [{"dimension": "X", "definition": "y"}], embedding_model="m"
+        )
+    )
+    assert cache == {}
 
 
 @pytest.mark.asyncio

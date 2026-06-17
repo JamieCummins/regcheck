@@ -26,6 +26,7 @@ from .embeddings import (
     build_corpus,
     build_corpus_from_segments,
     get_embedding,
+    openai_embed_segments,
     retrieve_relevant_chunks,
 )
 from .evidence import (
@@ -220,6 +221,42 @@ def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k:
 
 def _corpus_cache_key(role: str, text: str) -> str:
     return f"{role}:{hashlib.sha256((text or '').encode('utf-8')).hexdigest()}"
+
+
+def _augmented_dimension_query(dimension_query: str, dimension_definition: str | None) -> str:
+    """The retrieval query for a dimension: its name plus definition (if any).
+    Used identically when batch pre-embedding queries and inside run_comparison,
+    so the pre-embedded vector keys match what run_comparison looks up."""
+    definition = (dimension_definition or "").strip()
+    return f"{dimension_query}. {definition}" if definition else dimension_query
+
+
+def _query_embedding_key(augmented_query: str) -> str:
+    return hashlib.sha256(augmented_query.encode("utf-8")).hexdigest()
+
+
+async def _prebuild_query_embeddings(
+    dimensions: list[dict[str, str]], *, embedding_model: str
+) -> dict[str, Any]:
+    """Embed every dimension's retrieval query in ONE batched call (instead of
+    one tiny embedding request per dimension). Returns {query_key: vector} for
+    run_comparison to consume; on any failure returns {} so each dimension just
+    falls back to its own get_embedding (no correctness impact)."""
+    queries: list[str] = []
+    for item in dimensions:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("dimension") or item.get("name") or "").strip()
+        if name:
+            queries.append(_augmented_dimension_query(name, item.get("definition")))
+    if not queries:
+        return {}
+    try:
+        matrix = await asyncio.to_thread(openai_embed_segments, queries, embedding_model)
+    except Exception as exc:  # pragma: no cover - degrades to per-dimension embedding
+        logger.warning("Batch query pre-embedding failed; falling back per dimension", exc_info=exc)
+        return {}
+    return {_query_embedding_key(q): vec for q, vec in zip(queries, matrix)}
 
 
 def _add_evidence_corpus_to_cache(
@@ -639,6 +676,7 @@ async def general_preregistration_comparison(
 
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    query_embedding_cache: dict[str, Any] = {}
     evidence_manifest: dict[str, Any] | None = None
     evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
     if task_id and redis_client:
@@ -745,6 +783,11 @@ async def general_preregistration_comparison(
         )
 
     try:
+        if runner is run_comparison:
+            # Embed every dimension's retrieval query in one batched call up front.
+            query_embedding_cache = await _prebuild_query_embeddings(
+                dimensions_to_compare, embedding_model=_embedding_model()
+            )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
             if not isinstance(dimension_info, dict):
                 continue
@@ -780,6 +823,7 @@ async def general_preregistration_comparison(
                 dimension_name,
                 dimension_definition=dimension_definition,
                 corpus_cache=corpus_cache,
+                query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="preregistration",
@@ -929,6 +973,7 @@ async def clinical_trial_comparison(
         )
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    query_embedding_cache: dict[str, Any] = {}
     evidence_manifest: dict[str, Any] | None = None
     evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
     if task_id and redis_client:
@@ -982,6 +1027,11 @@ async def clinical_trial_comparison(
             ttl_seconds=evidence_ttl_seconds,
         )
     try:
+        if runner is run_comparison:
+            # Embed every dimension's retrieval query in one batched call up front.
+            query_embedding_cache = await _prebuild_query_embeddings(
+                dimensions_to_compare, embedding_model=_embedding_model()
+            )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
             dimension = dimension_info.get("dimension", "").strip()
             if not dimension:
@@ -1008,6 +1058,7 @@ async def clinical_trial_comparison(
                 dimension,
                 dimension_definition=dimension_definition,
                 corpus_cache=corpus_cache,
+                query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="clinical_trial",
@@ -1155,6 +1206,7 @@ async def animals_trial_comparison(
 
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
+    query_embedding_cache: dict[str, Any] = {}
     evidence_manifest: dict[str, Any] | None = None
     evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
     if task_id and redis_client:
@@ -1212,6 +1264,11 @@ async def animals_trial_comparison(
             ttl_seconds=evidence_ttl_seconds,
         )
     try:
+        if runner is run_comparison:
+            # Embed every dimension's retrieval query in one batched call up front.
+            query_embedding_cache = await _prebuild_query_embeddings(
+                dimensions_to_compare, embedding_model=_embedding_model()
+            )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
             dimension = dimension_info.get("dimension", "").strip()
             if not dimension:
@@ -1238,6 +1295,7 @@ async def animals_trial_comparison(
                 dimension,
                 dimension_definition=dimension_definition,
                 corpus_cache=corpus_cache,
+                query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
                 comparison_context="clinical_trial",
@@ -1416,6 +1474,7 @@ def run_comparison(
     reasoning_effort: str | None = None,
     comparison_context: ComparisonContext = "clinical_trial",
     evidence_manifest: dict[str, Any] | None = None,
+    query_embedding_cache: dict[str, Any] | None = None,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -1468,12 +1527,19 @@ def run_comparison(
     # Definitions are resolved by the caller (_resolve_dimensions): explicitly
     # selected defaults or user-specified values. No name-based fallback here.
     definition_for_query = (dimension_definition or "").strip()
-    augmented_query = f"{dimension_query}. {definition_for_query}" if definition_for_query else dimension_query
+    augmented_query = _augmented_dimension_query(dimension_query, dimension_definition)
 
     prereg_top_k = top_k if top_k is not None else _compute_top_k(len(prereg_corpus.segments))
     paper_top_k = top_k if top_k is not None else _compute_top_k(len(paper_corpus.segments))
 
-    query_embedding = get_embedding(augmented_query, model=embedding_model)
+    # Use a pre-embedded query vector when the caller batched them (see
+    # _prebuild_query_embeddings); otherwise embed this one query now.
+    _qcache = query_embedding_cache if query_embedding_cache is not None else {}
+    _qkey = _query_embedding_key(augmented_query)
+    query_embedding = _qcache.get(_qkey)
+    if query_embedding is None:
+        query_embedding = get_embedding(augmented_query, model=embedding_model)
+        _qcache[_qkey] = query_embedding
 
     candidate_factor = 3
     prereg_candidate_k = min(
