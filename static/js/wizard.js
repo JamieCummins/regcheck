@@ -615,6 +615,11 @@
 
         if (form) {
             form.addEventListener("submit", function (event) {
+                // Re-assert the prereg-source field state right before submission:
+                // inactive branches are excluded by being `disabled`, and disabled
+                // inputs are never sent — so this guarantees the active source's
+                // field (e.g. the OSF link) is enabled and actually submitted.
+                setPreregSource(selectedSource());
                 if (!dimensionsDataInput) return;
                 const out = dimensions
                     .map((d) => ({ dimension: (d.name || "").trim(), definition: (d.definition || "").trim() }))
