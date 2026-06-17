@@ -428,8 +428,8 @@
         /* ---- reasoning effort --------------------------------------------- */
         function updateReasoningEffortVisibility() {
             if (!reasoningEffortGroup || !reasoningEffortSelect) return;
-            // ChatGPT (OpenAI reasoning models) takes a reasoning effort; GPT-OSS runs via Groq without one.
-            const isReasoning = modelSelect && modelSelect.value === "openai";
+            // ChatGPT and GPT-OSS are reasoning models that take a reasoning effort.
+            const isReasoning = modelSelect && (modelSelect.value === "openai" || modelSelect.value === "gpt_oss");
             reasoningEffortGroup.hidden = !isReasoning;
             reasoningEffortSelect.disabled = !isReasoning;
             if (isReasoning && !reasoningEffortSelect.value) reasoningEffortSelect.value = "medium";

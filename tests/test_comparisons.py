@@ -534,9 +534,10 @@ async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
 
     captured = {}
 
-    def fake_groq(*, model, messages, use_json_mode):
+    def fake_groq(*, model, messages, use_json_mode, reasoning_effort=None):
         captured["model"] = model
         captured["use_json_mode"] = use_json_mode
+        captured["reasoning_effort"] = reasoning_effort
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="INTRO ... EXPERIMENT 2 ... DISCUSSION"))]
         )
@@ -547,7 +548,9 @@ async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
         "Full paper text spanning several experiments.",
         "2",
         client_choice="gpt_oss",
+        reasoning_effort="high",
     )
     assert "EXPERIMENT 2" in out
     assert captured["model"] == "openai/gpt-oss-120b"
     assert captured["use_json_mode"] is False
+    assert captured["reasoning_effort"] == "high"  # GPT-OSS forwards the effort to Groq
