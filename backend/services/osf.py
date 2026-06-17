@@ -43,6 +43,15 @@ def _headers() -> dict[str, str]:
     return headers
 
 
+def _download_headers() -> dict[str, str]:
+    """Headers for binary file downloads. This must NOT request JSON — OSF's file
+    server (WaterButler) content-negotiates, so an `Accept: application/vnd.api+json`
+    can make it return JSON *metadata* instead of the file bytes (which then isn't a
+    valid PDF/DOCX and breaks parsing). Only auth is forwarded."""
+    token = (os.environ.get("OSF_TOKEN") or "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def extract_osf_guid(url_or_id: str) -> str | None:
     """Pull the OSF GUID from a URL (osf.io/<guid>, .../<guid>/download,
     osf.io/download/<guid>, …) or accept a bare GUID. Returns None if absent."""
@@ -107,8 +116,16 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
     links = data.get("links", {}) or {}
     name = attrs.get("name") or ""
     download_url = links.get("download") or f"https://osf.io/{guid}/download"
-    resp = requests.get(download_url, headers=_headers(), timeout=_TIMEOUT, allow_redirects=True)
+    resp = requests.get(download_url, headers=_download_headers(), timeout=_TIMEOUT, allow_redirects=True)
     resp.raise_for_status()
+
+    # Guard against content negotiation returning JSON metadata instead of the file.
+    resp_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if resp_type in ("application/json", "application/vnd.api+json"):
+        raise ValueError(
+            "OSF returned file metadata instead of the file itself. Use the file's "
+            "direct link (or its download URL) and ensure the file is public."
+        )
 
     ext = Path(name).suffix.lower()
     if not ext:
