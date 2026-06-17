@@ -30,6 +30,10 @@
         logSeen: "",
         pollHandle: null,
         decisionResizersDone: false,
+        // Signature of the inputs the Evidence (documents) view is built from, so
+        // background polling doesn't needlessly rebuild it — a rebuild resets the
+        // reader's scroll and re-triggers the scroll-to-active-quote every tick.
+        docsSignature: null,
         // Per-source-panel viewer state in the Evidence view (persists across
         // re-renders): mode "page" (PDF images) or "text", zoom factor, search query.
         docPanelUI: {
@@ -316,7 +320,24 @@
         renderDimensionList();
         renderDimensionDetail();
         renderSummariesPane();
-        if (inDocuments) renderDocumentsView();
+        if (inDocuments) {
+            // Only (re)build the Evidence view when its inputs actually change.
+            // render() also runs on every status poll (~3s); rebuilding then would
+            // reset the reader's scroll and re-pull the page to the active quote.
+            const item = currentItem();
+            const sig = [
+                state.activeIndex,
+                item ? item.dimension : "",
+                state.evidenceLimit,
+                state.manifestUnavailable ? "x" : (state.manifest ? "m" : "0"),
+            ].join("::");
+            if (sig !== state.docsSignature) {
+                state.docsSignature = sig;
+                renderDocumentsView();
+            }
+        } else {
+            state.docsSignature = null;
+        }
 
         if (!state.decisionResizersDone && els.viewDecision) {
             const panels = [

@@ -54,7 +54,7 @@ load_dotenv()
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 DEFAULT_OPENAI_MODEL = "gpt-5"
-DEFAULT_GPT_OSS_MODEL = "gpt-oss-120b"
+DEFAULT_GPT_OSS_MODEL = "openai/gpt-oss-120b"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
@@ -152,13 +152,12 @@ def _openai_experiment_model() -> str:
     return _env_str("OPENAI_EXPERIMENT_MODEL", _openai_model())
 
 
-# Client choices that run through the OpenAI SDK (gpt-oss is served via OpenAI too).
-_OPENAI_CLIENTS = {"openai", "gpt_oss"}
+# Client choices that run through the OpenAI SDK. (GPT-OSS is an open-weight
+# model that OpenAI's hosted API does not serve — it is routed via Groq below.)
+_OPENAI_CLIENTS = {"openai"}
 
 
 def _openai_family_model(client_choice: str, *, experiment: bool = False) -> str:
-    if client_choice == "gpt_oss":
-        return _gpt_oss_model()
     return _openai_experiment_model() if experiment else _openai_model()
 
 
@@ -1024,6 +1023,14 @@ async def extract_experiment_specific_paper_text(
                 messages=messages,
                 reasoning_effort=normalized_effort,
             )
+        if client_choice == "gpt_oss":
+            # GPT-OSS-120B is served via Groq, not OpenAI's hosted API.
+            response = _groq_chat_completion(
+                model=_gpt_oss_model(),
+                messages=messages,
+                use_json_mode=False,
+            )
+            return _message_content_to_text(response.choices[0].message)
         if client_choice == "deepseek":
             deepseek_client = get_deepseek_client()
             response = deepseek_client.chat.completions.create(
@@ -2241,6 +2248,15 @@ def run_comparison(
                 messages=messages,
                 reasoning_effort=normalized_effort,
             )
+    elif client_choice == "gpt_oss":
+        # GPT-OSS-120B is an open-weight model served via Groq (OpenAI's hosted
+        # API does not offer it); it runs through the Groq client like Llama.
+        response = _groq_chat_completion(
+            model=_gpt_oss_model(),
+            messages=messages,
+            use_json_mode=True,
+        )
+        result_json = _message_content_to_text(response.choices[0].message)
     elif client_choice == "deepseek":
         deepseek_client = get_deepseek_client()
         response = deepseek_client.chat.completions.create(

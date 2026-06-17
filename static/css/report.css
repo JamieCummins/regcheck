@@ -1120,9 +1120,9 @@ body.is-col-resizing * {
 
 .source-text {
     white-space: pre-wrap;
-    color: var(--rc-text);
-    background: var(--rc-surface-2);
-    border: 1px solid var(--rc-border);
+    color: #1a1a1a;
+    background: #ffffff;
+    border: 1px solid #d0d0d8;
     border-radius: 10px;
     padding: 0.95rem;
     line-height: 1.7;
