@@ -250,6 +250,43 @@ def test_groq_response_format_error_retries_without_json_mode(monkeypatch):
     assert "response_format" not in calls[1]
 
 
+def test_is_response_format_error_matches_groq_json_validate_failed():
+    err = RuntimeError(
+        "Error code: 400 - {'error': {'message': \"Failed to validate JSON. Please "
+        "adjust your prompt.\", 'type': 'invalid_request_error', 'code': 'json_validate_failed'}}"
+    )
+    assert llm._is_response_format_error(err)
+
+
+def test_groq_json_validate_failed_retries_without_json_mode(monkeypatch):
+    calls = []
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))]
+    )
+
+    def fake_create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError(
+                "Error code: 400 - {'error': {'code': 'json_validate_failed', "
+                "'message': 'Failed to validate JSON'}}"
+            )
+        return response
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
+
+    result = llm._groq_chat_completion(
+        model="qwen/qwen3.6-27b",
+        messages=[{"role": "user", "content": "x"}],
+        use_json_mode=True,
+    )
+
+    assert result is response
+    assert "response_format" in calls[0]      # first attempt used strict JSON mode
+    assert "response_format" not in calls[1]   # retry dropped it and succeeded
+
+
 def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
     import numpy as np
 
