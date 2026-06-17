@@ -95,6 +95,31 @@ def _connect_args(url: str) -> dict:
     return {}
 
 
+def _int_env(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int((os.environ.get(name) or "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pool_kwargs(url: str) -> dict:
+    """Connection-pool sizing. Only applied to managed Postgres — SQLite uses its
+    own pool and ignores these. Defaults are modest so multiple web workers stay
+    under a small Heroku Postgres connection cap; tune via env per plan.
+
+    Each web process holds up to ``pool_size + max_overflow`` connections, so
+    total ≈ that × WEB_CONCURRENCY. Defaults: (5 + 5) × 2 = 20.
+    """
+    if not url.startswith("postgresql"):
+        return {}
+    return {
+        "pool_size": _int_env("DB_POOL_SIZE", 5, minimum=1),
+        "max_overflow": _int_env("DB_MAX_OVERFLOW", 5, minimum=0),
+        "pool_timeout": _int_env("DB_POOL_TIMEOUT", 30, minimum=1),
+        "pool_recycle": _int_env("DB_POOL_RECYCLE", 1800, minimum=60),
+    }
+
+
 def create_engine_from_url(url: str | None = None) -> AsyncEngine:
     resolved = url or resolve_database_url()
     engine = create_async_engine(
@@ -102,6 +127,7 @@ def create_engine_from_url(url: str | None = None) -> AsyncEngine:
         pool_pre_ping=True,
         connect_args=_connect_args(resolved),
         future=True,
+        **_pool_kwargs(resolved),
     )
     if resolved.startswith("sqlite"):
         # Enforce foreign-key constraints (incl. ON DELETE CASCADE) on SQLite so

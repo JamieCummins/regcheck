@@ -588,24 +588,10 @@
 
         if (modelSelect) modelSelect.addEventListener("change", updateReasoningEffortVisibility);
 
-        // Auto-advance to the next step when a choice is made, except when the
-        // selection reveals more controls on the same step (reasoning effort,
-        // experiment number). Native selects can't fire on re-picking the same
-        // value, so the Back/Next buttons stay available as a fallback.
-        function autoAdvance(select, stayWhen) {
-            if (!select) return;
-            select.addEventListener("change", function () {
-                if (select.disabled) return;
-                if (typeof stayWhen === "function" && stayWhen(select.value)) return;
-                window.setTimeout(function () { goToNext(); }, 240);
-            });
-        }
-        autoAdvance(parserSelect);
-        autoAdvance(modelSelect, function (v) { return v === "openai"; });
-        autoAdvance(reasoningEffortSelect);
-        autoAdvance(appendSelect);
-        autoAdvance(multipleExperimentsSelect, function (v) { return v === "yes"; });
-        autoAdvance(comparisonSelect);
+        // Progression is manual: making a selection never advances the step on
+        // its own — only the Next button (and the explicit defaults/customize
+        // buttons) moves the wizard forward. Selection handlers below only
+        // reveal/update controls on the current step.
 
         if (multipleExperimentsSelect) {
             multipleExperimentsSelect.addEventListener("change", function () {

@@ -9,6 +9,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 os.environ.setdefault("CLAUDE_API_KEY", "test")
 
 import backend.services.comparisons as comparisons  # noqa: E402
+import backend.services.llm as llm  # noqa: E402
 from backend.services.comparisons import (  # noqa: E402
     ComparisonResult,
     clinical_trial_comparison,
@@ -196,14 +197,11 @@ def test_groq_auth_error_is_not_retried(monkeypatch):
         calls.append(kwargs)
         raise AuthError("invalid_api_key")
 
-    monkeypatch.setattr(
-        comparisons,
-        "groq_client",
-        SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))),
-    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
 
     with pytest.raises(RuntimeError, match="Groq authentication failed"):
-        comparisons._groq_chat_completion(
+        llm._groq_chat_completion(
             model="llama-test",
             messages=[{"role": "user", "content": "x"}],
             use_json_mode=True,
@@ -224,13 +222,10 @@ def test_groq_response_format_error_retries_without_json_mode(monkeypatch):
             raise RuntimeError("response_format is not supported")
         return response
 
-    monkeypatch.setattr(
-        comparisons,
-        "groq_client",
-        SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))),
-    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
 
-    result = comparisons._groq_chat_completion(
+    result = llm._groq_chat_completion(
         model="llama-test",
         messages=[{"role": "user", "content": "x"}],
         use_json_mode=True,
@@ -475,12 +470,12 @@ def test_claude_chat_sends_system_separately_and_returns_text(monkeypatch):
             )
 
     monkeypatch.setattr(
-        comparisons,
+        llm,
         "get_claude_client",
         lambda: SimpleNamespace(messages=_FakeMessages()),
     )
 
-    out = comparisons._claude_chat(
+    out = llm._claude_chat(
         model="claude-opus-4-8",
         messages=[
             {"role": "system", "content": "sys prompt"},
@@ -506,13 +501,13 @@ def test_claude_chat_maps_auth_error_to_friendly_message(monkeypatch):
             raise _AuthBoom("invalid x-api-key")
 
     monkeypatch.setattr(
-        comparisons,
+        llm,
         "get_claude_client",
         lambda: SimpleNamespace(messages=_FakeMessages()),
     )
 
     with pytest.raises(RuntimeError, match="CLAUDE_API_KEY"):
-        comparisons._claude_chat(
+        llm._claude_chat(
             model="claude-opus-4-8",
             messages=[{"role": "user", "content": "hi"}],
         )

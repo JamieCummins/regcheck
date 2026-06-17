@@ -38,6 +38,11 @@ def _int_env(name: str, default: int) -> int:
 # dead-letter beyond that.
 _MAX_JOB_ATTEMPTS = _int_env("MAX_JOB_ATTEMPTS", 3)
 
+# Backpressure: cap concurrently in-flight jobs so the dequeue loop can't drain
+# the whole queue into 'comparison:processing'/memory faster than it runs them.
+# Matches the comparison concurrency limit so dequeue tracks actual capacity.
+_MAX_INFLIGHT_JOBS = _int_env("MAX_CONCURRENT_COMPARISON_TASKS", 8)
+
 
 async def _recover_stalled_jobs(
     redis_client, *, max_attempts: int, task_ttl_seconds: int
@@ -289,6 +294,8 @@ async def worker_loop() -> None:
     except Exception as exc:  # pragma: no cover - defensive recovery
         logger.warning("Failed to recover stalled jobs", exc_info=exc)
 
+    inflight = asyncio.Semaphore(_MAX_INFLIGHT_JOBS)
+
     while True:
         now = time.time()
         last_cleanup = getattr(worker_loop, "_last_report_cleanup", 0.0)
@@ -298,13 +305,19 @@ async def worker_loop() -> None:
                 await cleanup_expired_s3_artifacts(redis_client)
             except Exception as exc:  # pragma: no cover - best-effort cleanup
                 logger.warning("Report artifact cleanup failed", exc_info=exc)
+
+        # Block here (not on the queue) when at capacity, so jobs stay queued
+        # rather than being drained into 'processing'/memory.
+        await inflight.acquire()
         try:
             raw_job = await redis_client.brpoplpush("comparison:queue", "comparison:processing", timeout=5)
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Worker BRPOP failed; retrying", exc_info=exc)
+            inflight.release()
             await asyncio.sleep(5)
             continue
         if raw_job is None:
+            inflight.release()
             continue
 
         try:
@@ -315,9 +328,10 @@ async def worker_loop() -> None:
                 await redis_client.lrem("comparison:processing", 1, raw_job)
             except Exception:
                 logger.warning("Failed to remove undecodable job from processing queue", exc_info=exc)
+            inflight.release()
             continue
 
-        # Fire-and-forget under semaphore
+        # Fire-and-forget; the in-flight slot is released when the job finishes.
         async def _run_and_ack(payload: dict[str, Any], raw_payload: str) -> None:
             try:
                 await _dispatch_job(payload, redis_client)
@@ -326,6 +340,7 @@ async def worker_loop() -> None:
                     await redis_client.lrem("comparison:processing", 1, raw_payload)
                 except Exception as exc:  # pragma: no cover - best-effort ack cleanup
                     logger.warning("Failed to remove job from processing queue", exc_info=exc)
+                inflight.release()
 
         asyncio.create_task(_run_and_ack(job, raw_job))
 
