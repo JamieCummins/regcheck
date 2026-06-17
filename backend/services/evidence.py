@@ -611,7 +611,7 @@ def build_file_evidence_source(
             embedding_model=embedding_model,
         )
 
-    if ext in {".docx", ".txt"}:
+    if ext in {".docx", ".txt", ".html", ".htm"}:
         rendered_pdf = _build_rendered_text_pdf_evidence_source(
             source_id=source_id,
             label=label,

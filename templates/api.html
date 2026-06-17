@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260617-feedback3' %}
+    {% set static_version = '20260617-feedback4' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -157,8 +157,9 @@
           <thead><tr><th>Field</th><th>Required</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><code>dimensions_data</code></td><td>yes</td><td>JSON array of the dimensions to compare (see below).</td></tr>
-            <tr><td><code>paper</code></td><td>yes</td><td>The published paper file (<code>.pdf</code> or <code>.docx</code>).</td></tr>
-            <tr><td><code>preregistration</code></td><td>cond.</td><td>The preregistration file (<code>.pdf</code>, <code>.docx</code>, or <code>.txt</code>). Required unless <code>clinical_registration=yes</code>.</td></tr>
+            <tr><td><code>paper</code></td><td>yes</td><td>The published paper file (<code>.pdf</code>, <code>.docx</code>, <code>.txt</code>, or <code>.html</code>).</td></tr>
+            <tr><td><code>preregistration</code></td><td>cond.</td><td>The preregistration file (<code>.pdf</code>, <code>.docx</code>, <code>.txt</code>, or <code>.html</code>). Required unless <code>clinical_registration=yes</code> or an <code>osf_url</code> is given.</td></tr>
+            <tr><td><code>osf_url</code></td><td>cond.</td><td>An OSF link (e.g. <code>https://osf.io/abc12/</code>) used as the preregistration instead of a file — resolves either an OSF registration (its form responses) or a hosted file (downloaded &amp; processed).</td></tr>
             <tr><td><code>clinical_registration</code></td><td>no</td><td><code>yes</code>/<code>no</code> (default <code>no</code>). When <code>yes</code>, fetches a ClinicalTrials.gov registration from <code>registration_id</code>.</td></tr>
             <tr><td><code>registration_id</code></td><td>cond.</td><td>ClinicalTrials.gov identifier (e.g. <code>NCT01234567</code>). Required when <code>clinical_registration=yes</code>.</td></tr>
             <tr><td><code>visibility</code></td><td>no</td><td><code>private</code> (default) or <code>public</code>. Public reports are listed on your public profile and viewable by anyone with the link; private reports are viewable only by you and the people you grant access to by email or ORCID iD (manage grantees in the web app). The API only ever returns <em>your own</em> reports regardless of visibility.</td></tr>

@@ -29,14 +29,16 @@
         const experimentNumberInput = document.getElementById("experiment_number");
         const experimentTextInput = document.getElementById("experiment_text");
 
-        const comparisonSelect = document.getElementById("clinical_registration");
+        const comparisonSelect = document.getElementById("prereg_source");
         const comparisonTypeInput = document.getElementById("comparison_type");
         const generalPane = document.getElementById("general-upload");
         const clinicalPane = document.getElementById("clinical-upload");
+        const osfPane = document.getElementById("osf-upload");
 
         const preregFileInput = document.getElementById("prereg_file");
         const paperFileInput = document.getElementById("paper_file");
         const registrationInput = document.getElementById("registration_id");
+        const osfUrlInput = document.getElementById("osf_url");
 
         const dimensionsDataInput = document.getElementById("dimensions-data");
 
@@ -469,7 +471,7 @@
             if (allowed.length && allowed.indexOf(ext) === -1) {
                 const display = fileDisplay(input);
                 if (display) {
-                    display.textContent = "Unsupported file (" + (ext || "no extension") + "). Use PDF, DOCX, or TXT.";
+                    display.textContent = "Unsupported file (" + (ext || "no extension") + "). Use PDF, DOCX, TXT, or HTML.";
                     display.removeAttribute("title");
                 }
                 if (dropzone) { dropzone.classList.add("has-error"); dropzone.classList.remove("has-file"); }
@@ -511,18 +513,22 @@
             });
         }
 
-        function isClinicalSelected() {
-            return comparisonSelect && comparisonSelect.value === "yes";
+        function selectedSource() {
+            return comparisonSelect ? comparisonSelect.value : "upload";
         }
 
-        function setComparisonMode(isClinical) {
+        function setPreregSource(source) {
+            const isClinical = source === "clinical";
+            const isOsf = source === "osf";
             if (comparisonTypeInput) {
                 comparisonTypeInput.value = isClinical ? "clinical_trials" : "general_preregistration";
             }
-            if (generalPane) generalPane.hidden = isClinical;
+            if (generalPane) generalPane.hidden = isClinical || isOsf;
             if (clinicalPane) clinicalPane.hidden = !isClinical;
-            if (preregFileInput) preregFileInput.disabled = isClinical;
+            if (osfPane) osfPane.hidden = !isOsf;
+            if (preregFileInput) preregFileInput.disabled = isClinical || isOsf;
             if (registrationInput) registrationInput.disabled = !isClinical;
+            if (osfUrlInput) osfUrlInput.disabled = !isOsf;
             if (!dimensionsTouched) {
                 applyPreset(isClinical ? "clinical" : "psychology", false);
             }
@@ -532,9 +538,12 @@
         function checkFiles() {
             if (!submitButton) return;
             const hasPaper = paperFileInput && paperFileInput.files.length > 0;
+            const source = selectedSource();
             let ready;
-            if (isClinicalSelected()) {
+            if (source === "clinical") {
                 ready = registrationInput && registrationInput.value.trim().length > 0 && hasPaper;
+            } else if (source === "osf") {
+                ready = osfUrlInput && osfUrlInput.value.trim().length > 0 && hasPaper;
             } else {
                 ready = preregFileInput && preregFileInput.files.length > 0 && hasPaper;
             }
@@ -609,10 +618,11 @@
 
         if (comparisonSelect) {
             comparisonSelect.addEventListener("change", function () {
-                setComparisonMode(isClinicalSelected());
+                setPreregSource(selectedSource());
             });
         }
         if (registrationInput) registrationInput.addEventListener("input", checkFiles);
+        if (osfUrlInput) osfUrlInput.addEventListener("input", checkFiles);
 
         setupDropzone(preregFileInput);
         setupDropzone(paperFileInput);
@@ -637,7 +647,7 @@
         buildPresetMenu();
         applyPreset(activeDiscipline, false);
         updateReasoningEffortVisibility();
-        setComparisonMode(isClinicalSelected());
+        setPreregSource(selectedSource());
         goToStep(1);
     });
 })();
