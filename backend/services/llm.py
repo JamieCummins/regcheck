@@ -299,9 +299,12 @@ def _groq_chat_completion(
     }
     if use_json_mode:
         kwargs["response_format"] = {"type": "json_object"}
-    # GPT-OSS is a reasoning model on Groq and accepts an effort hint; Llama does not.
+    # GPT-OSS is a reasoning model on Groq and accepts an effort hint; Llama does
+    # not. The pinned Groq SDK doesn't type `reasoning_effort`, so forward it via
+    # extra_body (it reaches the API as a request-body field) instead of as a
+    # top-level kwarg, which the SDK rejects with a TypeError.
     if reasoning_effort:
-        kwargs["reasoning_effort"] = reasoning_effort
+        kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
     try:
         return get_groq_client().chat.completions.create(**kwargs)
     except Exception as exc:
@@ -315,7 +318,7 @@ def _groq_chat_completion(
         )
         retry_kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0}
         if reasoning_effort:
-            retry_kwargs["reasoning_effort"] = reasoning_effort
+            retry_kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
         try:
             return get_groq_client().chat.completions.create(**retry_kwargs)
         except Exception as retry_exc:

@@ -287,6 +287,30 @@ def test_groq_json_validate_failed_retries_without_json_mode(monkeypatch):
     assert "response_format" not in calls[1]   # retry dropped it and succeeded
 
 
+def test_groq_passes_reasoning_effort_via_extra_body(monkeypatch):
+    captured = {}
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return response
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
+
+    llm._groq_chat_completion(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": "x"}],
+        use_json_mode=False,
+        reasoning_effort="high",
+    )
+
+    # The pinned Groq SDK rejects a top-level `reasoning_effort` kwarg, so it must
+    # be forwarded via extra_body instead.
+    assert "reasoning_effort" not in captured
+    assert captured["extra_body"] == {"reasoning_effort": "high"}
+
+
 def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
     import numpy as np
 
