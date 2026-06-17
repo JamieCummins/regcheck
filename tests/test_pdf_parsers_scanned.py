@@ -195,3 +195,55 @@ async def test_extract_pdf_text_rejects_unknown_parser(tmp_path):
     _make_text_pdf(str(pdf), "body")
     with pytest.raises(ValueError):
         await extract_pdf_text(str(pdf), parser_choice="nope")
+
+
+def test_extract_external_text_reconstructs_sections_and_paragraphs():
+    from backend.services.pdf_parsers import extract_external_text
+
+    payload = {
+        "section": [
+            {"section_id": 1, "header": "Method"},
+            {"section_id": 2, "header": "Results"},
+        ],
+        "text": [
+            {"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "We recruited 200 people."},
+            {"text_id": 2, "section_id": 1, "paragraph_id": 1, "text": "Data collection stopped at 200."},
+            {"text_id": 3, "section_id": 2, "paragraph_id": 2, "text": "The effect was significant."},
+        ],
+    }
+    out = extract_external_text(payload)
+    assert "Method" in out and "Results" in out
+    # sentences in the same paragraph join on one line; paragraphs/sections separate
+    assert "We recruited 200 people. Data collection stopped at 200." in out
+    assert "The effect was significant." in out
+    assert extract_external_text({}) == ""
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_external_primary(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "ignored — external parser is injected")
+
+    async def fake_external(_path: str):
+        return {
+            "section": [{"section_id": 1, "header": "Introduction"}],
+            "text": [{"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "Hello from the parser."}],
+        }
+
+    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=fake_external)
+    assert used == "external"
+    assert "Hello from the parser." in text
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_external_failure_falls_back(tmp_path, monkeypatch):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "Selectable body text for PyMuPDF fallback.")
+
+    async def broken_external(_path: str):
+        raise RuntimeError("Missing EXTERNAL_PARSER_URL")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "pymupdf")
+    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=broken_external)
+    assert used == "pymupdf_fallback"
+    assert "Selectable body text" in text

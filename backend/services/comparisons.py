@@ -17,6 +17,11 @@ from groq import Groq
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError, field_validator
 
+try:  # Optional provider SDK; only required when client_choice == "claude".
+    from anthropic import Anthropic
+except ImportError:  # pragma: no cover - dependency optional at runtime
+    Anthropic = None  # type: ignore[assignment]
+
 from .documents import (
     extract_text_from_docx,
     read_file,
@@ -52,6 +57,7 @@ DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_GPT_OSS_MODEL = "gpt-oss-120b"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 DEFAULT_MAX_SEGMENTS = 1200
 DEFAULT_MAX_CONCURRENT_TASKS = 8
 
@@ -162,6 +168,14 @@ def _deepseek_model() -> str:
 
 def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def _claude_model() -> str:
+    return _env_str("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL)
+
+
+def _claude_max_tokens(default: int = 16000) -> int:
+    return _env_int("CLAUDE_MAX_TOKENS", default)
 
 
 def _max_embedding_segments() -> int:
@@ -299,6 +313,74 @@ def get_deepseek_client() -> OpenAI:
             "Missing DEEPSEEK_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+
+
+def get_claude_client() -> "Anthropic":
+    if Anthropic is None:
+        raise RuntimeError(
+            "The anthropic SDK is not installed. Add 'anthropic' to requirements.txt."
+        )
+    api_key = os.environ.get("CLAUDE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing CLAUDE_API_KEY. Please contact administrators."
+        )
+    return Anthropic(api_key=api_key)
+
+
+def _split_system_for_anthropic(
+    messages: list[dict[str, str]]
+) -> tuple[str, list[dict[str, str]]]:
+    """Anthropic takes the system prompt as a separate argument, so pull any
+    'system'-role messages out of the OpenAI-style messages list."""
+    system_parts = [
+        str(m.get("content") or "") for m in messages if m.get("role") == "system"
+    ]
+    convo = [
+        {"role": m.get("role", "user"), "content": str(m.get("content") or "")}
+        for m in messages
+        if m.get("role") != "system"
+    ]
+    return "\n\n".join(p for p in system_parts if p).strip(), convo
+
+
+def _claude_response_text(response: Any) -> str:
+    parts: list[str] = []
+    for block in getattr(response, "content", None) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+def _claude_chat(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int | None = None,
+) -> str:
+    """Call Claude (Anthropic Messages API) and return the concatenated text.
+
+    Mirrors the synchronous client pattern used for Groq/DeepSeek. Reasoning
+    effort is OpenAI-family-specific and intentionally not forwarded here."""
+    client = get_claude_client()
+    system, convo = _split_system_for_anthropic(messages)
+    # NB: no `temperature` — Opus 4.8 (the default) rejects it as deprecated, and
+    # it is optional for every Claude model, so omitting it is universally safe.
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens or _claude_max_tokens(),
+        "messages": convo or [{"role": "user", "content": ""}],
+    }
+    if system:
+        kwargs["system"] = system
+    try:
+        response = client.messages.create(**kwargs)
+    except Exception as exc:
+        if _is_provider_auth_error(exc):
+            _raise_provider_auth_error("Claude", "CLAUDE_API_KEY", exc)
+        raise
+    return _claude_response_text(response)
 
 
 # Canonical default comparison dimensions. Dimensions and their definitions
@@ -958,6 +1040,13 @@ async def extract_experiment_specific_paper_text(
                 use_json_mode=False,
             )
             return _message_content_to_text(response.choices[0].message)
+        if client_choice == "claude":
+            # Long extraction output; allow a larger token budget than the comparison call.
+            return _claude_chat(
+                model=_claude_model(),
+                messages=messages,
+                max_tokens=_claude_max_tokens(32000),
+            )
         raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
     content = await asyncio.to_thread(_invoke_llm)
@@ -2199,6 +2288,11 @@ def run_comparison(
             use_json_mode=True,
         )
         result_json = _message_content_to_text(response.choices[0].message)
+    elif client_choice == "claude":
+        result_json = _claude_chat(
+            model=_claude_model(),
+            messages=messages,
+        )
     else:
         raise ValueError("Invalid client selection")
 

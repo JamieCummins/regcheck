@@ -1116,66 +1116,115 @@
     function downloadPdf() {
         if (!state.items.length) return;
         const title = (document.getElementById("results-page-tagline")?.textContent || "RegCheck report").trim();
-        const counts = state.items.reduce((acc, it) => {
+        const items = state.items;
+        const sources = (state.manifest && state.manifest.sources) || {};
+        const chunks = (state.manifest && state.manifest.chunks) || {};
+
+        const counts = items.reduce((acc, it) => {
             const t = judgementInfo(it.deviation_judgement).tone;
             acc[t] = (acc[t] || 0) + 1; return acc;
         }, {});
-        const summary = [
+        const tally = [
             counts.flag ? `${counts.flag} deviation${counts.flag === 1 ? "" : "s"}` : null,
             counts.warn ? `${counts.warn} missing` : null,
             counts.ok ? `${counts.ok} consistent` : null,
         ].filter(Boolean).join(" · ");
 
-        const quoteItems = (raw) => {
-            const qs = parseQuotes(raw || "");
-            if (!qs.length) return `<p class="muted">No evidence found.</p>`;
-            return `<ul class="quotes">${qs.map((q) =>
-                `<li><span class="qid">${escapeHtml(q.id)}</span>${escapeHtml(q.text || q.raw || "")}</li>`).join("")}</ul>`;
+        // Strip the inline PREREG_/PAPER_ citations from the prose — evidence is listed separately.
+        const cleanRationale = (txt) => (txt || "")
+            .replace(/\s*\((?:(?:PREREG|PAPER)_\d+(?:\s*,\s*)?)+\)/g, "")
+            .replace(/\b(?:PREREG|PAPER)_\d+\b/g, "")
+            .replace(/\(\s*\)/g, "")
+            .replace(/\s+([.,;:])/g, "$1")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+        const snippet = (s, n = 180) => {
+            s = (s || "").replace(/\s+/g, " ").trim();
+            return s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s;
         };
-        const sections = state.items.map((it, i) => {
+        // A page number is only meaningful for a genuine PDF the reader holds — not
+        // for a registration we converted from .docx/CT.gov text.
+        const sourcePage = (id) => {
+            const c = chunks[id];
+            const src = c && sources[c.source_id];
+            if (!src || src.kind !== "pdf" || (src.metadata && src.metadata.rendered_from_text)) return null;
+            const loc = (c.locations || []).find((l) => l.kind === "pdf" && Number.isFinite(l.page));
+            return loc ? loc.page : null;
+        };
+        const evidenceFor = (it) => {
+            const ids = [];
+            (it.deviation_information || "").replace(/\b(?:PREREG|PAPER)_\d+\b/g, (m) => {
+                if (!ids.includes(m)) ids.push(m); return m;
+            });
+            if (!ids.length) return "";
+            const qmap = {};
+            parseQuotes(it.registration_content_quotes || "").forEach((q) => { qmap[q.id] = q; });
+            parseQuotes(it.paper_content_quotes || "").forEach((q) => { qmap[q.id] = q; });
+            const rows = ids.map((id) => {
+                const q = qmap[id];
+                const text = q && (q.text || q.raw || "");
+                if (!text) return "";
+                const side = /^PREREG/.test(id) ? "Registration" : "Paper";
+                const page = sourcePage(id);
+                const loc = page ? ` <span class="ev-loc">(p.${page})</span>` : "";
+                return `<li><span class="ev-side">${side}</span> “${escapeHtml(snippet(text))}”${loc}</li>`;
+            }).filter(Boolean);
+            return rows.length ? `<div class="ev"><p class="ev-cap">Evidence</p><ul>${rows.join("")}</ul></div>` : "";
+        };
+
+        const overviewRows = items.map((it, i) => {
+            const info = judgementInfo(it.deviation_judgement);
+            return `<tr><td>${i + 1}. ${escapeHtml(it.dimension || "Dimension")}</td><td><span class="verdict verdict--${info.tone}">${escapeHtml(info.label)}</span></td></tr>`;
+        }).join("");
+        const overview = `<table class="overview"><thead><tr><th>Dimension</th><th>Verdict</th></tr></thead><tbody>${overviewRows}</tbody></table>`;
+
+        const sections = items.map((it, i) => {
             const info = judgementInfo(it.deviation_judgement);
             return `<section class="dim">
                 <div class="dim-head"><h2>${i + 1}. ${escapeHtml(it.dimension || "Dimension")}</h2>
                     <span class="verdict verdict--${info.tone}">${escapeHtml(info.label)}</span></div>
-                <p class="rationale">${escapeHtml(it.deviation_information || "")}</p>
-                <div class="cols">
-                    <div class="col"><h3>Registration</h3><p>${escapeHtml(it.registration_content_summary || "—")}</p>${quoteItems(it.registration_content_quotes)}</div>
-                    <div class="col"><h3>Paper</h3><p>${escapeHtml(it.paper_content_summary || "—")}</p>${quoteItems(it.paper_content_quotes)}</div>
-                </div>
+                <p class="rationale">${escapeHtml(cleanRationale(it.deviation_information) || "No deviation information provided.")}</p>
+                ${evidenceFor(it)}
             </section>`;
         }).join("");
 
         const css = `
             * { box-sizing: border-box; }
-            body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 32px; line-height: 1.5; }
-            h1 { font-size: 20px; margin: 0 0 4px; }
-            .meta { color: #6b7280; font-size: 12px; margin: 0 0 2px; }
-            .counts { color: #374151; font-size: 12px; font-weight: 600; margin: 0 0 18px; }
-            .dim { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin: 0 0 14px; break-inside: avoid; }
-            .dim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
-            .dim-head h2 { font-size: 14px; margin: 0; }
-            .verdict { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+            body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 28px; line-height: 1.5; }
+            h1 { font-size: 19px; margin: 0 0 3px; }
+            .meta { color: #6b7280; font-size: 11.5px; margin: 0 0 2px; }
+            .tally { color: #374151; font-size: 12px; font-weight: 600; margin: 0 0 14px; }
+            table.overview { width: 100%; border-collapse: collapse; margin: 0; font-size: 12px; }
+            table.overview th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; border-bottom: 1px solid #d1d5db; padding: 0 0 4px; }
+            table.overview td { padding: 4px 0; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+            table.overview td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+            .sec-title { font-size: 13px; margin: 18px 0 10px; padding-top: 10px; border-top: 2px solid #e5e7eb; }
+            .verdict { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
             .verdict--flag { color: #9f1239; background: #ffe4e6; }
             .verdict--warn { color: #92400e; background: #fef3c7; }
             .verdict--ok { color: #065f46; background: #d1fae5; }
-            .rationale { font-size: 12.5px; margin: 0 0 10px; }
-            .cols { display: flex; gap: 16px; }
-            .col { flex: 1; min-width: 0; }
-            .col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 0 0 3px; }
-            .col p { font-size: 12px; margin: 0 0 6px; }
-            ul.quotes { margin: 0; padding: 0; list-style: none; }
-            ul.quotes li { font-size: 11px; color: #374151; border-left: 2px solid #d1d5db; padding: 2px 0 2px 8px; margin: 0 0 5px; }
-            .qid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; color: #6b7280; display: block; }
-            .muted { color: #9ca3af; font-size: 11px; font-style: italic; margin: 0; }
-            footer { margin-top: 18px; color: #9ca3af; font-size: 10px; text-align: center; }
-            @page { margin: 16mm; }
+            .dim { padding: 0 0 11px; margin: 0 0 12px; border-bottom: 1px solid #eef0f3; break-inside: avoid; }
+            .dim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+            .dim-head h2 { font-size: 13.5px; margin: 0; }
+            .rationale { font-size: 12.5px; margin: 0 0 8px; }
+            .ev { margin: 0; }
+            .ev-cap { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin: 0 0 3px; }
+            .ev ul { margin: 0; padding: 0; list-style: none; }
+            .ev li { font-size: 11px; color: #374151; padding: 2px 0 2px 9px; border-left: 2px solid #d1d5db; margin: 0 0 4px; }
+            .ev-side { font-weight: 700; color: #111827; margin-right: 3px; }
+            .ev-loc { color: #6b7280; }
+            footer { margin-top: 16px; color: #9ca3af; font-size: 10px; text-align: center; }
+            @page { margin: 14mm; }
         `;
         const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${css}</style></head>
-            <body><h1>${escapeHtml(title)}</h1>
-            <p class="meta">RegCheck comparison report · ${state.items.length} dimensions · generated ${new Date().toLocaleDateString()}</p>
-            ${summary ? `<p class="counts">${escapeHtml(summary)}</p>` : ""}
+            <body>
+            <h1>${escapeHtml(title)}</h1>
+            <p class="meta">RegCheck comparison report · ${items.length} dimensions · generated ${new Date().toLocaleDateString()}</p>
+            ${tally ? `<p class="tally">${escapeHtml(tally)}</p>` : ""}
+            ${overview}
+            <h2 class="sec-title">Findings</h2>
             ${sections}
-            <footer>Generated by RegCheck — preregistration vs. paper comparison.</footer>
+            <footer>Generated by RegCheck — a concise guide to read alongside the registration and paper.</footer>
             </body></html>`;
 
         // Print via an offscreen iframe. It MUST have real dimensions — a 0×0
