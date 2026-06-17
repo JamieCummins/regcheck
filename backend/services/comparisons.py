@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - dependency optional at runtime
 
 from .documents import (
     extract_text_from_docx,
+    extract_text_from_html,
     read_file,
     read_file_as_pdf,
 )
@@ -1136,8 +1137,12 @@ async def general_preregistration_comparison(
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
+        elif paper_ext in (".html", ".htm"):
+            extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".txt":
+            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
         else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
         if task_id and redis_client:
             await redis_client.hset(
@@ -1468,8 +1473,12 @@ async def clinical_trial_comparison(
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
+        elif paper_ext in (".html", ".htm"):
+            extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".txt":
+            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
         else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(
@@ -1690,8 +1699,12 @@ async def animals_trial_comparison(
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
+        elif paper_ext in (".html", ".htm"):
+            extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".txt":
+            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
         else:
-            raise ValueError("Problem parsing paper input - try a .pdf for optimal results.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(

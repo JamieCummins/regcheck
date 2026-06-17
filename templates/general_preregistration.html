@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260617-feedback3' %}
+    {% set static_version = '20260617-feedback4' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -155,15 +155,16 @@
 
                   <section class="form-step choice-step" data-step="7">
                       <div class="choice-step__text">
-                          <h2 class="step-heading">Is the study on ClinicalTrials.gov?</h2>
-                          <p class="step-sub">If yes, we fetch the registration directly from ClinicalTrials.gov. Otherwise, you upload a preregistration file.</p>
+                          <h2 class="step-heading">Where is your preregistration?</h2>
+                          <p class="step-sub">Upload a file, fetch a ClinicalTrials.gov registration by ID, or paste an OSF link — an OSF registration (its responses) or a file hosted on OSF.</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
-                              <label class="field-label" for="clinical_registration">Registered on ClinicalTrials.gov</label>
-                              <select class="form-control app-toggles" id="clinical_registration" name="clinical_registration">
-                                  <option value="no" selected>No</option>
-                                  <option value="yes">Yes</option>
+                              <label class="field-label" for="prereg_source">Preregistration source</label>
+                              <select class="form-control app-toggles" id="prereg_source" name="prereg_source">
+                                  <option value="upload" selected>Upload a file</option>
+                                  <option value="clinical">ClinicalTrials.gov</option>
+                                  <option value="osf">OSF link</option>
                               </select>
                           </div>
                       </div>
@@ -171,12 +172,12 @@
 
                   <section class="form-step" data-step="8">
                       <h2 class="step-heading">Upload your files</h2>
-                      <p class="step-sub">Supported file types: PDF, DOCX, TXT.</p>
+                      <p class="step-sub">Supported file types: PDF, DOCX, TXT, HTML.</p>
                       <div class="upload-grid">
                           <div class="upload-slot" id="registration-slot">
                               <div id="general-upload" class="upload-branch">
                                   <label class="dropzone" for="prereg_file" data-target="prereg_file">
-                                      <input type="file" class="dropzone__input" id="prereg_file" name="preregistration" accept=".txt,.docx,.pdf">
+                                      <input type="file" class="dropzone__input" id="prereg_file" name="preregistration" accept=".txt,.docx,.pdf,.html,.htm">
                                       <svg class="dropzone__icon" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
                                       <span class="dropzone__title">Preregistration</span>
                                       <span class="dropzone__hint">Drop a file or click to browse</span>
@@ -190,11 +191,18 @@
                                       <p class="dropzone__note">Enter a valid ClinicalTrials.gov identifier or URL.</p>
                                   </div>
                               </div>
+                              <div id="osf-upload" class="upload-branch" hidden>
+                                  <div class="clinical-input">
+                                      <label class="field-label" for="osf_url">OSF link</label>
+                                      <input type="text" class="form-control" id="osf_url" name="osf_url" placeholder="https://osf.io/abc12/" disabled>
+                                      <p class="dropzone__note">Paste a link to an OSF registration or a file hosted on OSF.</p>
+                                  </div>
+                              </div>
                           </div>
 
                           <div class="upload-slot">
                               <label class="dropzone" for="paper_file" data-target="paper_file">
-                                  <input type="file" class="dropzone__input" id="paper_file" name="paper" accept=".txt,.docx,.pdf">
+                                  <input type="file" class="dropzone__input" id="paper_file" name="paper" accept=".txt,.docx,.pdf,.html,.htm">
                                   <svg class="dropzone__icon" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
                                   <span class="dropzone__title">Paper</span>
                                   <span class="dropzone__hint">Drop a file or click to browse</span>

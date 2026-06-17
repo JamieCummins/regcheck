@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 from ..services import reports as reports_service
+from ..services.osf import extract_osf_guid
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -227,6 +228,7 @@ async def _queue_comparison(
     dimensions_data: str,
     registration_id: str | None = None,
     preregistration: UploadFile | None = None,
+    osf_url: str | None = None,
     paper: UploadFile | None = None,
     registration_csv: UploadFile | None = None,
     multiple_experiments: str | None = None,
@@ -299,26 +301,35 @@ async def _queue_comparison(
                 status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
             )
     elif comparison_type == "general_preregistration":
-        if preregistration is None:
+        if osf_url and osf_url.strip():
+            # Preregistration comes from an OSF link; validate it here and fetch
+            # it in the worker (no file to store).
+            if extract_osf_guid(osf_url) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enter a valid OSF link, e.g. https://osf.io/abc12/.",
+                )
+        elif preregistration is None:
             raise HTTPException(
-                status_code=400, detail="Preregistration upload is required for this option"
+                status_code=400, detail="Provide a preregistration file or an OSF link."
             )
-        stored_prereg_path, prereg_ext = await _save_upload(
-            upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
-        )
-        prereg_redis_key = f"upload:{task_id}:prereg"
-        if get_s3_config() is not None:
-            s3_keys["prereg"] = await _store_upload_to_s3(task_id, stored_prereg_path, label="prereg")
-            try:
-                Path(stored_prereg_path).unlink(missing_ok=True)
-            except Exception:
-                pass
         else:
-            await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
-            try:
-                Path(stored_prereg_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            stored_prereg_path, prereg_ext = await _save_upload(
+                upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
+            )
+            prereg_redis_key = f"upload:{task_id}:prereg"
+            if get_s3_config() is not None:
+                s3_keys["prereg"] = await _store_upload_to_s3(task_id, stored_prereg_path, label="prereg")
+                try:
+                    Path(stored_prereg_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            else:
+                await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
+                try:
+                    Path(stored_prereg_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
             raise HTTPException(status_code=400, detail="Registration ID is required for this option")
@@ -438,6 +449,7 @@ async def _queue_comparison(
             {
                 "prereg_path": stored_prereg_path,
                 "prereg_ext": prereg_ext or "",
+                "osf_url": (osf_url or "").strip() or None,
                 "paper_path": paper_path,
                 "paper_ext": paper_ext,
                 "multiple_experiments": multiple_experiments_flag,
@@ -482,14 +494,20 @@ async def compare_post(
     experiment_number: str | None = Form(None),
     experiment_text: str | None = Form(None),
     clinical_registration: str = Form("no"),
+    prereg_source: str = Form("upload"),
     registration_id: str | None = Form(None),
     preregistration: UploadFile | None = File(None),
+    osf_url: str | None = Form(None),
     paper: UploadFile | None = File(None),
     dimensions_data: str = Form(...),
     visibility: str | None = Form(None),
 ):
+    # Preregistration source: a file upload, a ClinicalTrials.gov registration, or
+    # an OSF link. (clinical_registration kept for backward compatibility.)
+    source = (prereg_source or "upload").strip().lower()
+    is_clinical = source == "clinical" or _bool_from_yes(clinical_registration)
     comparison_type: ComparisonType = (
-        "clinical_trials" if _bool_from_yes(clinical_registration) else "general_preregistration"
+        "clinical_trials" if is_clinical else "general_preregistration"
     )
     return await _compare_and_redirect(
         request,
@@ -503,6 +521,7 @@ async def compare_post(
         experiment_text=experiment_text,
         registration_id=registration_id,
         preregistration=preregistration,
+        osf_url=osf_url,
         paper=paper,
         dimensions_data=dimensions_data,
         visibility=visibility,

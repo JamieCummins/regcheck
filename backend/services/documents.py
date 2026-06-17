@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from html.parser import HTMLParser
 from pathlib import Path
 
 import docx
@@ -11,6 +12,7 @@ from fpdf import FPDF
 __all__ = [
     "extract_text_from_docx",
     "extract_text_from_pdf",
+    "extract_text_from_html",
     "convert_txt_to_pdf",
     "clean_document_text",
     "read_file",
@@ -55,6 +57,50 @@ def convert_txt_to_pdf(txt_path: str) -> str:
     return str(output_path)
 
 
+class _HTMLTextExtractor(HTMLParser):
+    """Collect readable text from HTML, skipping script/style and inserting line
+    breaks on block-level tags so paragraph structure survives."""
+
+    _SKIP = {"script", "style", "head", "noscript", "template"}
+    _BLOCK = {
+        "p", "br", "div", "li", "ul", "ol", "tr", "table", "section", "article",
+        "header", "footer", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip_depth += 1
+        elif tag in self._BLOCK:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag in self._BLOCK:
+            self._parts.append("\n")
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
+def extract_text_from_html(file_path: str) -> str:
+    """Extract readable text from an HTML document (stdlib parser; no JS execution)."""
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as handle:
+        markup = handle.read()
+    extractor = _HTMLTextExtractor()
+    extractor.feed(markup)
+    return extractor.text()
+
+
 REFERENCE_PATTERN = re.compile(
     r"(?:^|\n)([A-Z\s]*\bReferences\b|Bibliography|Cited Works)[\s]*\n",
     re.IGNORECASE,
@@ -95,9 +141,11 @@ def read_file(file_path: str, file_extension: str) -> str:
         text = extract_text_from_docx(file_path)
     elif file_extension == ".pdf":
         text = extract_text_from_pdf(file_path)
+    elif file_extension in (".html", ".htm"):
+        text = extract_text_from_html(file_path)
     else:
         raise ValueError(
-            f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, or TXT file."
+            f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, or HTML file."
         )
     return clean_document_text(text)
 
@@ -107,11 +155,16 @@ def read_file_as_pdf(filename: str, file_extension: str) -> str:
     file_extension = file_extension.lower()
     if file_extension == ".txt":
         return convert_txt_to_pdf(filename)
-    if file_extension == ".docx":
+    if file_extension in (".docx", ".html", ".htm"):
+        # Text is extracted separately and re-rendered to PDF pages by the
+        # evidence layer (build_file_evidence_source); keep the original file
+        # so its bytes remain available for the "open original" fallback.
         return filename
     if file_extension == ".pdf":
         return filename
-    raise ValueError("Unsupported file type")
+    raise ValueError(
+        f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, or HTML file."
+    )
 
 
 def _normalize_whitespace(text: str) -> str:

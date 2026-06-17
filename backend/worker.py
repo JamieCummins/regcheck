@@ -19,6 +19,7 @@ from backend.services.comparisons import (
     general_preregistration_comparison,
     run_with_concurrency_limit,
 )
+from backend.services.osf import fetch_osf_preregistration
 from backend.services.report_artifacts import cleanup_expired_s3_artifacts
 
 logger = logging.getLogger(__name__)
@@ -111,9 +112,18 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 append_previous_output=job.get("append_previous_output", False),
             )
         elif comparison_type == "general_preregistration":
+            prereg_path = job.get("prereg_path", "") or ""
+            prereg_ext = job.get("prereg_ext", "") or ""
+            osf_url = job.get("osf_url")
+            if osf_url:
+                # Resolve the OSF link to a local prereg file (registration → text,
+                # or hosted file → download). Sync requests, off the event loop.
+                prereg_path, prereg_ext = await asyncio.to_thread(
+                    fetch_osf_preregistration, osf_url, dest_dir=settings.upload_dir
+                )
             await general_preregistration_comparison(
-                job.get("prereg_path", ""),
-                job.get("prereg_ext", ""),
+                prereg_path,
+                prereg_ext,
                 job.get("paper_path", ""),
                 job.get("paper_ext", ""),
                 job.get("client", "openai"),
