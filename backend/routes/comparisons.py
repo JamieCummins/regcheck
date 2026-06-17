@@ -59,6 +59,9 @@ def _upload_limit() -> int:
 
 MAX_UPLOAD_BYTES = _upload_limit()
 
+# Document types the comparison pipeline can read (mirrors documents.read_file).
+_SUPPORTED_PREREG_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
+
 ComparisonType = Literal[
     "clinical_trials",
     "general_preregistration",
@@ -309,9 +312,17 @@ async def _queue_comparison(
                     status_code=400,
                     detail="Enter a valid OSF link, e.g. https://osf.io/abc12/.",
                 )
-        elif preregistration is None:
+        elif preregistration is None or not (getattr(preregistration, "filename", "") or "").strip():
+            # An empty file input (e.g. the OSF source was active but its link
+            # field was disabled/not submitted) arrives as an UploadFile with a
+            # blank filename — not None — so guard on the filename, not identity.
             raise HTTPException(
                 status_code=400, detail="Provide a preregistration file or an OSF link."
+            )
+        elif _file_ext(preregistration.filename) not in _SUPPORTED_PREREG_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported preregistration file type. Upload a PDF, DOCX, TXT, or HTML file, or paste an OSF link.",
             )
         else:
             stored_prereg_path, prereg_ext = await _save_upload(
