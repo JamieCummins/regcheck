@@ -79,9 +79,9 @@
 
     function judgementInfo(value) {
         const normalized = (value || "").toString().trim().toLowerCase();
-        if (normalized === "yes") return { label: "Deviation", tone: "flag" };
-        if (normalized === "no") return { label: "No deviation", tone: "ok" };
-        return { label: "Missing", tone: "warn" };
+        if (normalized === "yes") return { label: "Deviation", tone: "flag", desc: "The paper deviates from what was registered for this dimension." };
+        if (normalized === "no") return { label: "No deviation", tone: "ok", desc: "The paper matches what was registered for this dimension." };
+        return { label: "Insufficient evidence", tone: "warn", desc: "Not enough information in the provided text to judge this dimension reliably." };
     }
 
     function parseQuotes(quotes) {
@@ -210,6 +210,12 @@
         if (detailText && detailText !== state.lastWorkflowStatus) {
             state.lastWorkflowStatus = detailText;
             els.statusPill.title = detailText;
+        }
+        // Downloads (CSV / PDF) are only meaningful once the report is complete.
+        if (els.download) {
+            const done = stateValue === "SUCCESS";
+            els.download.disabled = !done;
+            els.download.title = done ? "Download" : "Available once the report finishes";
         }
     }
 
@@ -347,7 +353,7 @@
             ].filter(Boolean);
             if (panels.length === 3) {
                 installResizers(els.viewDecision, panels, "regcheck.report.decisionCols",
-                    [150, 280, 320], [1, 2, 2.5]);
+                    [150, 360, 300], [1, 2.7, 2]);
                 state.decisionResizersDone = true;
             }
         }
@@ -367,7 +373,7 @@
             button.innerHTML = `
                 <span class="dimension-card__title">${escapeHtml(item.dimension || `Dimension ${index + 1}`)}</span>
                 <span class="dimension-card__meta">
-                    <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
+                    <span class="judgement-chip judgement-chip--${info.tone}" title="${escapeHtml(info.desc || "")}">${info.label}</span>
                 </span>
             `;
             button.addEventListener("click", () => {
@@ -511,7 +517,7 @@
             button.innerHTML = `
                 <span class="evidence-card__head">
                     <span class="evidence-card__id">${escapeHtml(quote.id || "Evidence")}</span>
-                    <span class="evidence-card__score" title="Relevance score">${hasScore ? quote.score.toFixed(2) : "&mdash;"}</span>
+                    <span class="evidence-card__score" title="Relevance to this dimension (0–1; higher means more relevant)">${hasScore ? quote.score.toFixed(2) : "&mdash;"}</span>
                 </span>
                 <span class="evidence-card__text">${escapeHtml((chunk && chunk.text) || quote.text || quote.raw || "")}</span>
                 ${opts.compact ? "" : `<span class="evidence-card__cue">Open in documents &rsaquo;</span>`}
@@ -572,6 +578,7 @@
                         <span class="section-title">Quotes</span>
                         ${limitControlHtml()}
                     </div>
+                    <p class="docs-quotes-hint">Click a quote to locate and highlight it in the document.</p>
                     <div class="docs-panel__scroll" id="docs-quotes"></div>
                 </section>
                 <section class="docs-panel docs-panel--doc">

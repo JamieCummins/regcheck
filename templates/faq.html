@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260617-gptoss1' %}
+    {% set static_version = '20260617-feedback3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -103,7 +103,7 @@
               <ul>
                 <li><span class="faq-verdict-dot" style="background: var(--rc-flag);"></span><strong>Deviation:</strong> the model judged that the paper diverges from the registered plan for that dimension.</li>
                 <li><span class="faq-verdict-dot" style="background: var(--rc-ok);"></span><strong>No deviation:</strong> the model judged that the paper is consistent with the registration for that dimension.</li>
-                <li><span class="faq-verdict-dot" style="background: var(--rc-warn);"></span><strong>Missing:</strong> there was not enough evidence in the provided text to make a reliable judgement.</li>
+                <li><span class="faq-verdict-dot" style="background: var(--rc-warn);"></span><strong>Insufficient evidence:</strong> the model judged that there wasn&rsquo;t enough information in the provided text to make a reliable call for that dimension.</li>
               </ul>
             </div>
           </div>
@@ -157,6 +157,32 @@
           <div id="faq-q5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
             <div class="accordion-body">
               See the <a href="{{ url_for('privacy') }}">Privacy Policy</a> for storage, retention, and deletion details.
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q6" aria-expanded="false" aria-controls="faq-q6">
+              Why can I choose a &lsquo;reasoning effort&rsquo;, and which should I pick?
+            </button>
+          </h2>
+          <div id="faq-q6" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              For the ChatGPT model you can set how much &lsquo;thinking&rsquo; it does before answering. <strong>Higher</strong> effort is more thorough and can be more accurate on hard comparisons, but is slower and costs more; <strong>lower</strong> effort is faster and cheaper. It is not simply &ldquo;higher is always better&rdquo; — medium is a sensible default, and lower is often fine for straightforward documents. This setting applies to ChatGPT only; other models ignore it.
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q7" aria-expanded="false" aria-controls="faq-q7">
+              Which exact models does RegCheck use?
+            </button>
+          </h2>
+          <div id="faq-q7" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              The model menu lists families; the exact default models are ChatGPT = <code>gpt-5</code>, Claude Opus 4.8 = <code>claude-opus-4-8</code>, GPT-OSS 120B = <code>openai/gpt-oss-120b</code> (served via Groq), Llama 4 Maverick = <code>meta-llama/llama-4-maverick-17b-128e-instruct</code> (via Groq), and DeepSeek = <code>deepseek-reasoner</code>. These are the defaults; a deployment can override them. The full API contract is in the <a href="{{ url_for('api_docs') }}">API reference</a>.
             </div>
           </div>
         </div>

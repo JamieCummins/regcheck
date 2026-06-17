@@ -227,6 +227,19 @@
     color: var(--rc-flag);
 }
 
+.report-action-btn:disabled,
+.report-action-btn.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.docs-quotes-hint {
+    margin: 0 0 0.5rem;
+    font-size: 0.78rem;
+    color: var(--rc-faint);
+}
+
 .report-action-btn--danger:hover,
 .report-action-btn--danger:focus {
     color: #fff;

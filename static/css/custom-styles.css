@@ -58,6 +58,64 @@
     --upload-strip-width: clamp(16rem, 50vw, 78rem);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Light theme — same RegCheck palette (blue accent + verdict trio), light    */
+/* surfaces. Opt-in via the navbar toggle; dark stays the default             */
+/* (see color-modes.js). Only color tokens change here.                       */
+/* -------------------------------------------------------------------------- */
+[data-bs-theme="light"] {
+    --rc-bg: #F4F6FB;
+    --rc-surface: #FFFFFF;
+    --rc-surface-2: #EEF1F8;
+    --rc-surface-3: #E2E7F2;
+    --rc-panel: #FFFFFF;
+    --rc-border: #DBE0EA;
+    --rc-border-strong: #C4CBDA;
+    --rc-text: #1A1D26;
+    --rc-muted: #4D5666;
+    --rc-faint: #6E7686;
+    /* Blue accent kept; link/emphasis variants darkened for contrast on white */
+    --rc-accent: #3A5BC0;
+    --rc-accent-hover: #2F4DA8;
+    --rc-accent-strong: #2F4DA8;
+    --rc-accent-soft: rgba(58, 91, 192, 0.10);
+    --rc-accent-line: rgba(58, 91, 192, 0.30);
+    --rc-accent-blue-soft: #2F4DA8;
+    /* Verdict trio — darkened so chips read on white */
+    --rc-flag: #C0392B;
+    --rc-ok: #1E8E5A;
+    --rc-warn: #B26A00;
+    /* Softer elevation on light surfaces */
+    --rc-shadow-sm: 0 2px 8px rgba(23, 33, 64, 0.08);
+    --rc-shadow-md: 0 14px 34px rgba(23, 33, 64, 0.12);
+    --rc-shadow-lg: 0 28px 64px rgba(23, 33, 64, 0.16);
+}
+
+/* Light-mode overrides for components that hardcode dark-only values. */
+[data-bs-theme="light"] body {
+    text-shadow: none;
+    box-shadow: none;
+}
+[data-bs-theme="light"] select.form-control,
+[data-bs-theme="light"] select.form-select,
+[data-bs-theme="light"] select.app-toggles,
+[data-bs-theme="light"] select.llm-select,
+[data-bs-theme="light"] select.survey-select {
+    /* dark chevron for light backgrounds */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%231A1D26' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+}
+[data-bs-theme="light"] .docs-panel--doc .docs-panel__scroll {
+    background: #E7EBF3;
+}
+[data-bs-theme="light"] .tp2-left {
+    background: var(--rc-surface-2);
+}
+/* Only a negative (white) SNSF logo asset exists; render it dark on light. */
+[data-bs-theme="light"] .footer-funding__logo {
+    filter: brightness(0);
+    opacity: 0.6;
+}
+
 body {
     font-family: var(--rc-font-sans);
     background-color: var(--rc-bg);
@@ -110,6 +168,39 @@ a:focus {
 
 .app-logo {
     max-width: 60px;
+}
+
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    margin-left: 0.6rem;
+    background: transparent;
+    border: 1px solid var(--rc-border);
+    border-radius: 8px;
+    color: var(--rc-text);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.theme-toggle:hover {
+    background: var(--rc-surface-2);
+    border-color: var(--rc-border-strong);
+}
+
+.theme-toggle__icon {
+    display: none;
+}
+
+[data-bs-theme="dark"] .theme-toggle__icon--sun {
+    display: block;
+}
+
+[data-bs-theme="light"] .theme-toggle__icon--moon {
+    display: block;
 }
 
 .locked-image {
@@ -283,7 +374,7 @@ body:not(.results-page) .table-responsive tbody + tbody {
 
 .disclaimer-text {
     margin: 10px auto 10px;
-    color: white;
+    color: var(--rc-text);
     font-size: medium;
 
 }
@@ -308,7 +399,7 @@ body:not(.results-page) .table-responsive tbody + tbody {
 }
 
 .general-text {
-    color: black;
+    color: var(--rc-text);
     display: block;
 }
 
@@ -751,7 +842,7 @@ footer {
 
 .form-control,
 .form-select {
-    background: #141722;
+    background: var(--rc-surface);
     border-color: var(--rc-border);
     color: var(--rc-text);
     border-radius: 8px;
@@ -759,13 +850,13 @@ footer {
 
 .form-control::placeholder,
 .form-select::placeholder {
-    color: #8f96b3;
+    color: var(--rc-faint);
 }
 
 .form-control:disabled,
 .form-select:disabled {
-    background: rgba(20, 23, 34, 0.72);
-    color: #7d85a3;
+    background: var(--rc-surface-2);
+    color: var(--rc-faint);
     opacity: 1;
 }
 
@@ -781,7 +872,7 @@ select.app-toggles,
 select.llm-select,
 select.survey-select {
     color: var(--rc-text);
-    background-color: #141722;
+    background-color: var(--rc-surface);
     border-color: var(--rc-border);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23f4f6ff' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
 }
@@ -792,7 +883,7 @@ select.app-toggles option,
 select.llm-select option,
 select.survey-select option {
     color: var(--rc-text);
-    background-color: #171a24;
+    background-color: var(--rc-surface);
 }
 
 .form-text,

@@ -33,13 +33,13 @@ body {
  */
 
 .nav-masthead .nav-link {
-  color: rgba(255, 255, 255, .5);
+  color: var(--rc-muted);
   border-bottom: .25rem solid transparent;
 }
 
 .nav-masthead .nav-link:hover,
 .nav-masthead .nav-link:focus {
-  border-bottom-color: rgba(255, 255, 255, .25);
+  border-bottom-color: var(--rc-border-strong);
 }
 
 .nav-masthead .nav-link + .nav-link {
@@ -51,8 +51,8 @@ body {
 }
 
 .nav-masthead .active {
-  color: #fff;
-  border-bottom-color: #fff;
+  color: var(--rc-text);
+  border-bottom-color: var(--rc-accent);
 }
 
 @media (max-width: 991.98px) {
@@ -76,10 +76,10 @@ body {
 }
 
 .navbar .navbar-brand {
-  color: #f5f7ff;
+  color: var(--rc-text);
 }
 
 .navbar .navbar-brand:hover,
 .navbar .navbar-brand:focus {
-  color: #f5f7ff;
+  color: var(--rc-text);
 }

@@ -667,6 +667,22 @@
     border-color: var(--rc-accent);
 }
 
+.dropzone.has-error {
+    border-style: solid;
+    border-color: var(--rc-flag);
+}
+
+.dropzone.has-error .dropzone__file {
+    color: var(--rc-flag);
+    font-weight: 600;
+}
+
+.dim-warning {
+    color: var(--rc-flag);
+    font-size: 0.85rem;
+    margin: 0.4rem 0 0;
+}
+
 .dropzone__input {
     position: absolute;
     inset: 0;
