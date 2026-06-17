@@ -194,9 +194,8 @@ def _normalize_parser_choice(parser_choice: str) -> str:
 
 def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> str | None:
     effort_normalized = (reasoning_effort or "").strip().lower()
-    # OpenAI reasoning models (gpt-5) accept a reasoning effort. GPT-OSS runs via
-    # Groq, which we call without an effort hint, so it is excluded here.
-    if client == "openai":
+    # ChatGPT (gpt-5) and GPT-OSS (a reasoning model on Groq) accept a reasoning effort.
+    if client in {"openai", "gpt_oss"}:
         if effort_normalized not in {"low", "medium", "high"}:
             effort_normalized = "medium"
         return effort_normalized

@@ -110,7 +110,13 @@ def _is_response_format_error(exc: Exception) -> bool:
     return "response_format" in text or "json_object" in text or "json mode" in text
 
 
-def _groq_chat_completion(*, model: str, messages: list[dict[str, str]], use_json_mode: bool):
+def _groq_chat_completion(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    use_json_mode: bool,
+    reasoning_effort: str | None = None,
+):
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -118,6 +124,9 @@ def _groq_chat_completion(*, model: str, messages: list[dict[str, str]], use_jso
     }
     if use_json_mode:
         kwargs["response_format"] = {"type": "json_object"}
+    # GPT-OSS is a reasoning model on Groq and accepts an effort hint; Llama does not.
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
     try:
         return groq_client.chat.completions.create(**kwargs)
     except Exception as exc:
@@ -129,12 +138,11 @@ def _groq_chat_completion(*, model: str, messages: list[dict[str, str]], use_jso
             "Groq JSON response_format unsupported; retrying without response_format",
             extra={"model": model, "error": str(exc)},
         )
+        retry_kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0}
+        if reasoning_effort:
+            retry_kwargs["reasoning_effort"] = reasoning_effort
         try:
-            return groq_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
+            return groq_client.chat.completions.create(**retry_kwargs)
         except Exception as retry_exc:
             if _is_provider_auth_error(retry_exc):
                 _raise_provider_auth_error("Groq", "GROQ_API_KEY", retry_exc)
@@ -1025,11 +1033,13 @@ async def extract_experiment_specific_paper_text(
                 reasoning_effort=normalized_effort,
             )
         if client_choice == "gpt_oss":
-            # GPT-OSS-120B is served via Groq, not OpenAI's hosted API.
+            # GPT-OSS-120B is served via Groq, not OpenAI's hosted API. It is a
+            # reasoning model, so forward the effort hint when set.
             response = _groq_chat_completion(
                 model=_gpt_oss_model(),
                 messages=messages,
                 use_json_mode=False,
+                reasoning_effort=_normalize_reasoning_effort_value(reasoning_effort),
             )
             return _message_content_to_text(response.choices[0].message)
         if client_choice == "deepseek":
@@ -2262,12 +2272,13 @@ def run_comparison(
                 reasoning_effort=normalized_effort,
             )
     elif client_choice == "gpt_oss":
-        # GPT-OSS-120B is an open-weight model served via Groq (OpenAI's hosted
-        # API does not offer it); it runs through the Groq client like Llama.
+        # GPT-OSS-120B is an open-weight reasoning model served via Groq (OpenAI's
+        # hosted API does not offer it); forward the reasoning effort when set.
         response = _groq_chat_completion(
             model=_gpt_oss_model(),
             messages=messages,
             use_json_mode=True,
+            reasoning_effort=_normalize_reasoning_effort_value(reasoning_effort),
         )
         result_json = _message_content_to_text(response.choices[0].message)
     elif client_choice == "deepseek":
