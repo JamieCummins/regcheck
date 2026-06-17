@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.api_auth import require_api_key
+from ..core.rate_limit import comparison_rate_limit
 from ..db import models
 from ..db.session import get_db
 from ..services import reports as reports_service
@@ -37,7 +38,7 @@ async def _owned_report_or_404(db: AsyncSession, user: models.User, task_id: str
     return report
 
 
-@router.post("/compare")
+@router.post("/compare", dependencies=[Depends(comparison_rate_limit)])
 async def api_compare(
     request: Request,
     user: models.User = Depends(require_api_key),

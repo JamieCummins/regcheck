@@ -7,7 +7,6 @@ from pathlib import Path
 
 import docx
 import fitz
-from fpdf import FPDF
 
 __all__ = [
     "extract_text_from_docx",
@@ -39,22 +38,58 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 
 def convert_txt_to_pdf(txt_path: str) -> str:
-    """Convert a TXT file into a PDF stored near the source file with a unique name."""
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("Arial", size=12)
+    """Convert a TXT file into a PDF stored near the source file with a unique name.
 
-    with open(txt_path, "r", encoding="utf-8", errors="ignore") as txt_file:
-        for line in txt_file:
-            pdf.multi_cell(0, 10, line)
+    Rendered with PyMuPDF rather than a Latin-1-only core-font engine, so the
+    scientific characters that pervade real text — em dashes, curly quotes,
+    Greek letters, accented names, ≤/×/μ — survive instead of raising an
+    encoding error. This is the same rendering path used for DOCX/HTML uploads.
+    """
+    text = _read_txt(txt_path).strip()
 
-    stem = Path(txt_path).stem or "converted_txt"
-    target_dir = Path(txt_path).parent if Path(txt_path).parent else UPLOADS_DIR
-    output_path = target_dir / f"{stem}_{uuid.uuid4().hex}.pdf"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf.output(str(output_path))
-    return str(output_path)
+    page_width, page_height, margin = 612, 792, 54
+    font_size = 11.0
+    rect = fitz.Rect(margin, margin, page_width - margin, page_height - margin)
+
+    doc = fitz.open()
+    try:
+        remaining = text
+        if not remaining:
+            # Always emit at least one (blank) page so downstream PDF handling
+            # has a valid document.
+            doc.new_page(width=page_width, height=page_height)
+        while remaining:
+            page = doc.new_page(width=page_width, height=page_height)
+            overflow = page.insert_textbox(
+                rect, remaining, fontsize=font_size, fontname="helv",
+                lineheight=1.35, color=(0, 0, 0),
+            )
+            if isinstance(overflow, (int, float)) and overflow < 0:
+                # insert_textbox does not report how much text it consumed;
+                # approximate a page slice on a paragraph/word boundary.
+                max_chars = 2800
+                split_at = remaining.rfind("\n\n", 0, max_chars)
+                if split_at < 400:
+                    split_at = remaining.rfind(" ", 0, max_chars)
+                if split_at < 400:
+                    split_at = min(max_chars, len(remaining))
+                page.clean_contents()
+                page.insert_textbox(
+                    rect, remaining[:split_at].strip(), fontsize=font_size,
+                    fontname="helv", lineheight=1.35, color=(0, 0, 0),
+                )
+                remaining = remaining[split_at:].strip()
+            else:
+                remaining = ""
+
+        stem = Path(txt_path).stem or "converted_txt"
+        target_dir = Path(txt_path).parent if Path(txt_path).parent else UPLOADS_DIR
+        output_path = target_dir / f"{stem}_{uuid.uuid4().hex}.pdf"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path))
+        return str(output_path)
+    finally:
+        doc.close()
 
 
 class _HTMLTextExtractor(HTMLParser):
