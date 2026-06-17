@@ -14,17 +14,35 @@ trials.py; the worker calls this via asyncio.to_thread.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
 import requests
 
+logger = logging.getLogger(__name__)
+
 __all__ = ["extract_osf_guid", "fetch_osf_preregistration"]
 
-_TIMEOUT = 30
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int((os.environ.get(name) or "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+# OSF — especially the WaterButler file-download path — is occasionally slow to
+# respond. Use a short connect timeout but a generous read timeout, and retry
+# transient failures so a momentary OSF hiccup doesn't fail the whole job.
+_CONNECT_TIMEOUT = 10
+_API_READ_TIMEOUT = _int_env("OSF_API_TIMEOUT", 30)
+_DOWNLOAD_READ_TIMEOUT = _int_env("OSF_DOWNLOAD_TIMEOUT", 60)
+_MAX_ATTEMPTS = _int_env("OSF_MAX_ATTEMPTS", 3)
+_RETRY_STATUS = {502, 503, 504}
 _SUPPORTED_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
 _BARE_GUID_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
 _PATH_AFTER_HOST_RE = re.compile(r"osf\.io/(.+)", re.IGNORECASE)
@@ -110,10 +128,48 @@ def extract_osf_guid(url_or_id: str) -> str | None:
     return None
 
 
+def _get_with_retry(url: str, *, headers: dict[str, str], read_timeout: int):
+    """GET with a short connect + generous read timeout, retrying transient
+    network errors and 5xx responses so OSF's occasional slowness doesn't fail
+    the job. Raises a friendly ValueError if OSF stays unreachable."""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(
+                url,
+                headers=headers,
+                timeout=(_CONNECT_TIMEOUT, read_timeout),
+                allow_redirects=True,
+            )
+            if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
+                last_exc = requests.HTTPError(f"OSF returned {resp.status_code}")
+                logger.warning(
+                    "OSF %s on attempt %d/%d for %s; retrying",
+                    resp.status_code, attempt + 1, _MAX_ATTEMPTS, url,
+                )
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            return resp
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_exc = exc
+            logger.warning(
+                "OSF request failed on attempt %d/%d for %s: %s",
+                attempt + 1, _MAX_ATTEMPTS, url, exc,
+            )
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+    raise ValueError(
+        "Couldn't reach OSF to fetch the preregistration — it timed out or was "
+        "unavailable after several attempts. OSF may be slow right now; try again "
+        "in a moment, or download the file and upload it directly."
+    ) from last_exc
+
+
 def _resolve_guid(guid: str) -> dict[str, Any]:
     """Resolve a GUID to its typed object. /v2/guids/{guid}/ redirects to the
     typed endpoint, so the returned `data` carries the full attributes."""
-    resp = requests.get(f"{_api_base()}/guids/{guid}/", headers=_headers(), timeout=_TIMEOUT)
+    resp = _get_with_retry(f"{_api_base()}/guids/{guid}/", headers=_headers(), read_timeout=_API_READ_TIMEOUT)
     resp.raise_for_status()
     return resp.json().get("data", {}) or {}
 
@@ -160,7 +216,7 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
     links = data.get("links", {}) or {}
     name = attrs.get("name") or ""
     download_url = links.get("download") or f"https://osf.io/{guid}/download"
-    resp = requests.get(download_url, headers=_download_headers(), timeout=_TIMEOUT, allow_redirects=True)
+    resp = _get_with_retry(download_url, headers=_download_headers(), read_timeout=_DOWNLOAD_READ_TIMEOUT)
     resp.raise_for_status()
 
     # Guard against content negotiation returning JSON metadata instead of the file.

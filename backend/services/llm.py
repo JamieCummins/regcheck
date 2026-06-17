@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_GPT_OSS_MODEL = "openai/gpt-oss-120b"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 
 # Client choices that run through the OpenAI SDK. (GPT-OSS is an open-weight
