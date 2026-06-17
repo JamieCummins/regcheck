@@ -1,6 +1,8 @@
+import fitz
 import pytest
 
 from backend.services.documents import (
+    convert_txt_to_pdf,
     extract_text_from_html,
     read_file,
     read_file_as_pdf,
@@ -51,3 +53,27 @@ def test_read_file_rejects_unknown_extension(tmp_path):
     path = _write(tmp_path / "p.xyz", "data")
     with pytest.raises(ValueError, match="Unsupported file type"):
         read_file(path, ".xyz")
+
+
+def test_convert_txt_to_pdf_handles_unicode(tmp_path):
+    # Scientific text routinely contains non-Latin-1 characters that the old
+    # core-font renderer could not encode. This must produce a valid PDF with
+    # extractable text instead of raising.
+    content = (
+        "Effect of treatment—a pre–post design.\n\n"
+        "We found α = .05, μ ≤ 0.2, n × 2 “blinded” raters; "
+        "Müller et al. report β weights.\n"
+    )
+    txt = _write(tmp_path / "doc.txt", content)
+    out = convert_txt_to_pdf(txt)
+
+    assert out.endswith(".pdf")
+    doc = fitz.open(out)
+    try:
+        assert doc.page_count >= 1
+        rendered = "".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
+    # ASCII content always survives; this also proves no encoding crash occurred.
+    assert "Effect of treatment" in rendered
+    assert "blinded" in rendered

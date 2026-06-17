@@ -30,6 +30,7 @@ class Settings:
     oauth_redirect_base_url: str
     external_parser_url: str
     external_parser_api_key: str
+    is_production: bool
 
     def ensure_directories(self) -> None:
         """Ensure that directories required by the application exist."""
@@ -96,6 +97,13 @@ def get_settings() -> Settings:
         "ANONYMOUS_TASK_TTL_SECONDS", 7 * 24 * 60 * 60, minimum=60
     )
     max_queue_length = _int_env("MAX_QUEUE_LENGTH", 200, minimum=1)
+    # Production-like deployment: served over HTTPS, so the session cookie is
+    # marked Secure and HSTS is emitted. Detected from Heroku's DYNO marker, with
+    # an explicit override for non-Heroku HTTPS hosts.
+    is_production = bool((os.environ.get("DYNO") or "").strip()) or (
+        (os.environ.get("FORCE_SECURE_COOKIES") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     static_dir = os.environ.get("STATIC_DIR", str(base_dir / "static"))
     templates_dir = os.environ.get("TEMPLATES_DIR", str(base_dir / "templates"))
     upload_dir = os.environ.get("UPLOAD_DIR", str(base_dir / "uploads"))
@@ -130,6 +138,7 @@ def get_settings() -> Settings:
         oauth_redirect_base_url=_str_env("OAUTH_REDIRECT_BASE_URL"),
         external_parser_url=_str_env("EXTERNAL_PARSER_URL"),
         external_parser_api_key=_str_env("EXTERNAL_PARSER_API_KEY"),
+        is_production=is_production,
     )
     settings.ensure_directories()
     return settings

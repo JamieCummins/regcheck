@@ -8,9 +8,10 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
+from ..core.rate_limit import comparison_rate_limit
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 from ..services import reports as reports_service
 from ..services.osf import extract_osf_guid
@@ -482,7 +483,7 @@ async def _queue_comparison(
     return task_id
 
 
-@router.post("/compare", name="compare_post")
+@router.post("/compare", name="compare_post", dependencies=[Depends(comparison_rate_limit)])
 async def compare_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -527,7 +528,7 @@ async def compare_post(
     )
 
 
-@router.post("/clinical_trials")
+@router.post("/clinical_trials", dependencies=[Depends(comparison_rate_limit)])
 async def clinical_trials_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -551,7 +552,7 @@ async def clinical_trials_post(
     )
 
 
-@router.post("/general_preregistration")
+@router.post("/general_preregistration", dependencies=[Depends(comparison_rate_limit)])
 async def general_preregistration_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -581,7 +582,7 @@ async def general_preregistration_post(
     )
 
 
-@router.post("/animals_trials")
+@router.post("/animals_trials", dependencies=[Depends(comparison_rate_limit)])
 async def animals_trials_post(
     request: Request,
     parser_choice: str = Form(...),

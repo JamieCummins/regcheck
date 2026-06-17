@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .core.auth_context import CurrentUserMiddleware
 from .core.config import get_settings
 from .core.logging import configure_logging
+from .core.security_headers import SecurityHeadersMiddleware
 from .core.oauth import build_oauth
 from .core.redis import create_redis_client
 from .db.session import create_engine_from_url, create_sessionmaker, init_models
@@ -31,10 +32,24 @@ def create_app() -> FastAPI:
     # Middleware: the LAST added is outermost. CurrentUserMiddleware reads
     # request.session, so it must run *inside* SessionMiddleware — i.e. added
     # before it here so SessionMiddleware ends up the outer layer.
+    # SecurityHeadersMiddleware is added last so it is outermost and stamps
+    # headers onto every response, including errors.
     app.add_middleware(CurrentUserMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key=settings.session_secret)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.session_secret,
+        https_only=settings.is_production,
+        same_site="lax",
+        max_age=14 * 24 * 60 * 60,
+    )
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)
+    # Per-IP rate limiting on cost-bearing submission endpoints is applied per
+    # route via the comparison_rate_limit dependency (see core.rate_limit),
+    # gated to production so it is a no-op locally and in tests.
     app.mount("/static", StaticFiles(directory=settings.static_dir), name="static")
-    app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+    # NB: uploaded source files are intentionally NOT served over HTTP. They are
+    # handed to the worker via S3/Redis and rendered through gated report
+    # artifacts; a public mount would bypass report visibility controls.
 
     app.state.settings = settings
     app.state.redis = create_redis_client(settings.redis_url)
@@ -77,6 +92,12 @@ def create_app() -> FastAPI:
                 await redis_client.aclose()
             except Exception:  # pragma: no cover - best-effort cleanup
                 pass
+
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        """Liveness probe for uptime monitors. Dependency-free by design so it
+        stays green while Redis/DB hiccup (readiness is a separate concern)."""
+        return {"status": "ok"}
 
     app.include_router(pages.router)
     app.include_router(auth.router)

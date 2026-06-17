@@ -25,6 +25,74 @@ from backend.services.report_artifacts import cleanup_expired_s3_artifacts
 logger = logging.getLogger(__name__)
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int((os.environ.get(name) or "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+# A job that keeps crashing the worker *process* (a hard crash/OOM, not a caught
+# error — those are marked FAILURE and acked) would otherwise be re-queued
+# forever by crash recovery, blocking the queue. Cap the recovery retries and
+# dead-letter beyond that.
+_MAX_JOB_ATTEMPTS = _int_env("MAX_JOB_ATTEMPTS", 3)
+
+
+async def _recover_stalled_jobs(
+    redis_client, *, max_attempts: int, task_ttl_seconds: int
+) -> tuple[int, int]:
+    """Reclaim jobs left in ``comparison:processing`` by a previous crash/restart.
+
+    Each reclaimed job's attempt count is incremented. Jobs that have exceeded
+    ``max_attempts`` (i.e. they keep crashing the worker) are moved to
+    ``comparison:deadletter`` and marked FAILURE instead of being re-queued
+    forever. Returns ``(requeued, dead_lettered)``.
+    """
+    stalled = await redis_client.lrange("comparison:processing", 0, -1)
+    if not stalled:
+        return (0, 0)
+
+    requeue: list[str] = []
+    dead = 0
+    for raw in stalled:
+        try:
+            job = json.loads(raw)
+        except Exception:
+            # Undecodable payload — cannot retry it meaningfully.
+            await redis_client.rpush("comparison:deadletter", raw)
+            dead += 1
+            continue
+        attempts = int(job.get("attempts", 0) or 0) + 1
+        job["attempts"] = attempts
+        if attempts > max_attempts:
+            task_id = job.get("task_id")
+            if task_id:
+                try:
+                    await redis_client.hset(
+                        task_id,
+                        mapping={
+                            "state": "FAILURE",
+                            "status": "Worker error: job exceeded retry limit",
+                        },
+                    )
+                    await redis_client.expire(task_id, task_ttl_seconds)
+                except Exception:  # pragma: no cover - best-effort status
+                    logger.warning(
+                        "Failed to mark dead-lettered job FAILURE",
+                        extra={"task_id": task_id},
+                    )
+            await redis_client.rpush("comparison:deadletter", json.dumps(job))
+            dead += 1
+        else:
+            requeue.append(json.dumps(job))
+
+    if requeue:
+        await redis_client.rpush("comparison:queue", *requeue)
+    await redis_client.delete("comparison:processing")
+    return (len(requeue), dead)
+
+
 async def _restore_upload(redis_client, path: str, redis_key: str | None) -> None:
     """Recreate an uploaded file on the worker dyno if it doesn't exist locally."""
     if not path or Path(path).exists():
@@ -206,13 +274,18 @@ async def worker_loop() -> None:
             )
             await asyncio.sleep(delay)
 
-    # Recover any jobs left in the processing queue from a previous crash/restart.
+    # Recover any jobs left in the processing queue from a previous crash/restart,
+    # dead-lettering ones that have exceeded the retry limit (poison messages).
     try:
-        stalled = await redis_client.lrange("comparison:processing", 0, -1)
-        if stalled:
-            await redis_client.rpush("comparison:queue", *stalled)
-            await redis_client.delete("comparison:processing")
-            logger.info("Recovered %d stalled job(s) from processing queue", len(stalled))
+        requeued, dead = await _recover_stalled_jobs(
+            redis_client,
+            max_attempts=_MAX_JOB_ATTEMPTS,
+            task_ttl_seconds=settings.task_ttl_seconds,
+        )
+        if requeued or dead:
+            logger.info(
+                "Recovered stalled jobs: requeued=%d dead_lettered=%d", requeued, dead
+            )
     except Exception as exc:  # pragma: no cover - defensive recovery
         logger.warning("Failed to recover stalled jobs", exc_info=exc)
 
