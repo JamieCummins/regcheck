@@ -93,3 +93,35 @@ def test_fetch_project_raises(tmp_path):
 def test_fetch_bad_link_raises(tmp_path):
     with pytest.raises(ValueError, match="OSF"):
         osf.fetch_osf_preregistration("not-a-link", dest_dir=tmp_path, resolver=lambda g: {})
+
+
+def test_get_with_retry_recovers_from_transient_timeout(monkeypatch):
+    monkeypatch.setattr(osf, "_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(osf.time, "sleep", lambda *_: None)
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+
+    def fake_get(url, **kw):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise osf.requests.Timeout("read timed out")
+        return _Resp()
+
+    monkeypatch.setattr(osf.requests, "get", fake_get)
+    resp = osf._get_with_retry("https://osf.io/x", headers={}, read_timeout=5)
+    assert isinstance(resp, _Resp)
+    assert calls["n"] == 3  # retried twice, succeeded on the third
+
+
+def test_get_with_retry_friendly_error_after_exhaustion(monkeypatch):
+    monkeypatch.setattr(osf, "_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(osf.time, "sleep", lambda *_: None)
+
+    def fake_get(url, **kw):
+        raise osf.requests.ConnectionError("unreachable")
+
+    monkeypatch.setattr(osf.requests, "get", fake_get)
+    with pytest.raises(ValueError, match="Couldn't reach OSF"):
+        osf._get_with_retry("https://osf.io/x", headers={}, read_timeout=5)
