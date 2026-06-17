@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -20,6 +22,11 @@ from .routes import api as api_routes
 from .routes import reports as reports_routes
 from .routes import survey
 
+# Single source of truth for static-asset cache-busting. Bump this on any
+# CSS/JS change so browsers refetch; it is exposed to every template as the
+# `static_version` global (templates reference it as `?v={{ static_version }}`).
+STATIC_VERSION = "20260617-phase3"
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -28,7 +35,33 @@ def create_app() -> FastAPI:
     if not (os.environ.get("SESSION_SECRET") or "").strip():
         logger.warning("SESSION_SECRET not set; using an ephemeral session secret.")
 
-    app = FastAPI()
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: warm the Redis connection so the first request isn't slow, and
+        # for local SQLite create the schema (production schema is managed by
+        # Alembic in the release phase).
+        try:
+            await app.state.redis.ping()
+        except Exception as exc:  # pragma: no cover - best-effort warmup
+            logger.warning("Redis warmup ping failed; first request may be slower", exc_info=exc)
+        if settings.database_url.startswith("sqlite"):
+            try:
+                await init_models(app.state.db_engine)
+            except Exception as exc:  # pragma: no cover - best-effort dev convenience
+                logger.warning("SQLite schema init failed", exc_info=exc)
+        yield
+        # Shutdown: dispose the engine and close Redis.
+        engine = getattr(app.state, "db_engine", None)
+        if engine is not None:
+            await engine.dispose()
+        redis_client = getattr(app.state, "redis", None)
+        if redis_client is not None:
+            try:
+                await redis_client.aclose()
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
+
+    app = FastAPI(lifespan=lifespan)
     # Middleware: the LAST added is outermost. CurrentUserMiddleware reads
     # request.session, so it must run *inside* SessionMiddleware — i.e. added
     # before it here so SessionMiddleware ends up the outer layer.
@@ -58,40 +91,19 @@ def create_app() -> FastAPI:
     app.state.db_engine = create_engine_from_url(settings.database_url)
     app.state.db_sessionmaker = create_sessionmaker(app.state.db_engine)
 
-    # Expose the current user to all templates (navbar account menu, etc.).
+    # Expose the current user + static asset version to all templates.
     app.state.templates.env.globals["current_user"] = (
         lambda request: getattr(request.state, "user", None)
     )
+    app.state.templates.env.globals["static_version"] = STATIC_VERSION
 
-    @app.on_event("startup")
-    async def warm_redis_connection() -> None:
-        try:
-            await app.state.redis.ping()
-        except Exception as exc:  # pragma: no cover - best-effort warmup
-            logger.warning("Redis warmup ping failed; first request may be slower", exc_info=exc)
-
-    @app.on_event("startup")
-    async def prepare_database() -> None:
-        # Production schema is managed by Alembic (release phase). For local
-        # SQLite development, create tables on startup so the app is usable
-        # without running migrations.
-        if settings.database_url.startswith("sqlite"):
-            try:
-                await init_models(app.state.db_engine)
-            except Exception as exc:  # pragma: no cover - best-effort dev convenience
-                logger.warning("SQLite schema init failed", exc_info=exc)
-
-    @app.on_event("shutdown")
-    async def dispose_resources() -> None:
-        engine = getattr(app.state, "db_engine", None)
-        if engine is not None:
-            await engine.dispose()
-        redis_client = getattr(app.state, "redis", None)
-        if redis_client is not None:
-            try:
-                await redis_client.aclose()
-            except Exception:  # pragma: no cover - best-effort cleanup
-                pass
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Safety net so an unexpected error returns a clean 500 (and is logged
+        # with a stack trace) instead of leaking internals. HTTPException and
+        # validation errors keep their own FastAPI handlers.
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error."})
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:

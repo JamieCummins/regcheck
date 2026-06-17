@@ -15,6 +15,16 @@ def test_extract_osf_guid_variants():
     assert osf.extract_osf_guid("") is None
 
 
+def test_extract_osf_guid_file_browser_urls():
+    # A file-browser URL must resolve to the FILE guid, not the parent project /
+    # registration (regression: osf.io/jwvrk/files/t6n5s fetched jwvrk instead).
+    assert osf.extract_osf_guid("https://osf.io/jwvrk/files/t6n5s") == "t6n5s"
+    assert osf.extract_osf_guid("https://osf.io/abc12/files/osfstorage/xy9zk") == "xy9zk"
+    assert osf.extract_osf_guid("https://osf.io/abc12/files/osfstorage/xy9zk/?foo=1") == "xy9zk"
+    # No specific file in the path → fall back to the node/registration guid.
+    assert osf.extract_osf_guid("https://osf.io/abc12/files/") == "abc12"
+
+
 def test_fetch_registration_flattens_responses(tmp_path):
     def fake_resolver(guid):
         assert guid == "abc12"

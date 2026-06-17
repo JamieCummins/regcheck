@@ -6,6 +6,7 @@ import os
 # at module load; satisfy it so this module imports in isolation too.
 os.environ.setdefault("GROQ_API_KEY", "test")
 
+import backend.worker as worker_mod
 from backend.worker import _recover_stalled_jobs
 
 
@@ -95,3 +96,104 @@ def test_recover_noop_when_processing_empty():
     assert asyncio.run(
         _recover_stalled_jobs(redis, max_attempts=3, task_ttl_seconds=100)
     ) == (0, 0)
+
+
+# --- _dispatch_job routing/cleanup integration ------------------------------
+
+def _make_job(tmp_path, **over):
+    paper = tmp_path / "paper.pdf"
+    paper.write_bytes(b"%PDF-1.4 stub")
+    job = {"task_id": "t1", "paper_path": str(paper), "paper_ext": ".pdf", "client": "openai"}
+    job.update(over)
+    return job, paper
+
+
+def _no_s3(monkeypatch):
+    # Keep the upload-restore path entirely local (no AWS calls).
+    monkeypatch.setattr(worker_mod, "get_s3_config", lambda: None)
+
+
+def test_dispatch_routes_general_preregistration(tmp_path, monkeypatch):
+    _no_s3(monkeypatch)
+    calls = {}
+
+    async def stub(*args, **kwargs):
+        calls["general"] = True
+
+    monkeypatch.setattr(worker_mod, "general_preregistration_comparison", stub)
+    prereg = tmp_path / "prereg.txt"
+    prereg.write_text("p")
+    job, paper = _make_job(
+        tmp_path, comparison_type="general_preregistration",
+        prereg_path=str(prereg), prereg_ext=".txt",
+    )
+
+    asyncio.run(worker_mod._dispatch_job(job, FakeRedis()))
+
+    assert calls.get("general")
+    # Local temp files are unlinked in the finally regardless of outcome.
+    assert not paper.exists() and not prereg.exists()
+
+
+def test_dispatch_routes_clinical_trials(tmp_path, monkeypatch):
+    _no_s3(monkeypatch)
+    calls = {}
+
+    async def stub(*args, **kwargs):
+        calls["clinical"] = True
+
+    monkeypatch.setattr(worker_mod, "clinical_trial_comparison", stub)
+    job, paper = _make_job(tmp_path, comparison_type="clinical_trials", registration_id="NCT1")
+
+    asyncio.run(worker_mod._dispatch_job(job, FakeRedis()))
+
+    assert calls.get("clinical")
+    assert not paper.exists()
+
+
+def test_dispatch_routes_animals_trials(tmp_path, monkeypatch):
+    _no_s3(monkeypatch)
+    calls = {}
+
+    async def stub(*args, **kwargs):
+        calls["animals"] = True
+
+    monkeypatch.setattr(worker_mod, "animals_trial_comparison", stub)
+    job, paper = _make_job(tmp_path, comparison_type="animals_trials", registration_id="X")
+
+    asyncio.run(worker_mod._dispatch_job(job, FakeRedis()))
+
+    assert calls.get("animals")
+
+
+def test_dispatch_failure_sets_failure_status_and_still_cleans_up(tmp_path, monkeypatch):
+    _no_s3(monkeypatch)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(worker_mod, "general_preregistration_comparison", boom)
+    prereg = tmp_path / "prereg.txt"
+    prereg.write_text("p")
+    job, paper = _make_job(
+        tmp_path, comparison_type="general_preregistration",
+        prereg_path=str(prereg), prereg_ext=".txt",
+    )
+    redis = FakeRedis()
+
+    asyncio.run(worker_mod._dispatch_job(job, redis))
+
+    assert redis.hashes["t1"]["state"] == "FAILURE"
+    assert "kaboom" in redis.hashes["t1"]["status"]
+    # Cleanup runs even on failure.
+    assert not paper.exists() and not prereg.exists()
+
+
+def test_dispatch_unknown_type_is_noop(tmp_path, monkeypatch):
+    _no_s3(monkeypatch)
+    job, paper = _make_job(tmp_path, comparison_type="bogus")
+    # Should neither raise nor mark FAILURE; just logs and cleans up.
+    redis = FakeRedis()
+    asyncio.run(worker_mod._dispatch_job(job, redis))
+    assert "t1" not in redis.hashes
+    assert not paper.exists()

@@ -26,9 +26,21 @@ __all__ = ["extract_osf_guid", "fetch_osf_preregistration"]
 
 _TIMEOUT = 30
 _SUPPORTED_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
-# OSF GUID right after the host (optionally behind a /download/ segment).
-_GUID_RE = re.compile(r"osf\.io/(?:download/)?([a-z0-9]{5,})", re.IGNORECASE)
 _BARE_GUID_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
+_PATH_AFTER_HOST_RE = re.compile(r"osf\.io/(.+)", re.IGNORECASE)
+_GUID_SEGMENT_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
+# Path words that look GUID-like but are OSF routes/storage providers, not GUIDs.
+_RESERVED_SEGMENTS = {
+    "download", "files", "osfstorage", "github", "dropbox", "googledrive",
+    "figshare", "owncloud", "onedrive", "bitbucket", "gitlab", "dataverse",
+    "render", "settings", "registrations", "forks", "metadata", "resources",
+    "components", "analytics", "addons", "project", "quickfiles", "preprints",
+    "preprint", "wiki",
+}
+
+
+def _is_guid_segment(segment: str) -> bool:
+    return bool(_GUID_SEGMENT_RE.match(segment)) and segment.lower() not in _RESERVED_SEGMENTS
 
 
 def _api_base() -> str:
@@ -53,16 +65,48 @@ def _download_headers() -> dict[str, str]:
 
 
 def extract_osf_guid(url_or_id: str) -> str | None:
-    """Pull the OSF GUID from a URL (osf.io/<guid>, .../<guid>/download,
-    osf.io/download/<guid>, …) or accept a bare GUID. Returns None if absent."""
+    """Pull the OSF GUID from a URL or accept a bare GUID. Returns None if absent.
+
+    Handles the common shapes: ``osf.io/<guid>``, ``osf.io/<guid>/download``,
+    ``osf.io/download/<guid>``, and file-browser URLs like
+    ``osf.io/<node-or-registration>/files/[<provider>/]<file-guid>``. For the
+    last, the *file* GUID (the entity the user pointed at) is returned rather
+    than the containing node/registration — otherwise a link to a specific file
+    would resolve to its parent project and never fetch the file.
+    """
     text = (url_or_id or "").strip()
     if not text:
         return None
-    match = _GUID_RE.search(text)
-    if match:
-        return match.group(1).lower()
     if _BARE_GUID_RE.match(text):
         return text.lower()
+
+    match = _PATH_AFTER_HOST_RE.search(text)
+    if not match:
+        return None
+    path = match.group(1).split("?", 1)[0].split("#", 1)[0]
+    segments = [s for s in path.split("/") if s]
+    if not segments:
+        return None
+    lowered = [s.lower() for s in segments]
+
+    # File-browser URL: the file GUID is the last guid-like segment after /files/.
+    if "files" in lowered:
+        after = [s for s in segments[lowered.index("files") + 1 :] if _is_guid_segment(s)]
+        if after:
+            return after[-1].lower()
+
+    # Explicit download URLs: the GUID sits adjacent to the 'download' segment.
+    if "download" in lowered:
+        di = lowered.index("download")
+        if di + 1 < len(segments) and _is_guid_segment(segments[di + 1]):
+            return segments[di + 1].lower()
+        if di - 1 >= 0 and _is_guid_segment(segments[di - 1]):
+            return segments[di - 1].lower()
+
+    # Otherwise the first guid-like segment (e.g. osf.io/<guid>).
+    for segment in segments:
+        if _is_guid_segment(segment):
+            return segment.lower()
     return None
 
 

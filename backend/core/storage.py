@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import IO, Optional
 
@@ -20,7 +21,11 @@ def get_s3_config() -> S3Config | None:
     return S3Config(bucket=bucket, region=region)
 
 
+@lru_cache(maxsize=4)
 def _s3_client(region: str | None):
+    # Cached per region: boto3 clients are thread-safe and creating one is
+    # non-trivial (session + endpoint + credential resolution), so a worker
+    # touching several keys reuses one client instead of rebuilding it each call.
     import boto3
 
     kwargs = {}
