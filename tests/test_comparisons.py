@@ -516,3 +516,38 @@ def test_claude_chat_maps_auth_error_to_friendly_message(monkeypatch):
             model="claude-opus-4-8",
             messages=[{"role": "user", "content": "hi"}],
         )
+
+
+def test_gpt_oss_is_not_openai_family_and_uses_groq_model():
+    # GPT-OSS-120B is open-weight; OpenAI's hosted API does not serve it, so it
+    # must NOT be routed through the OpenAI client.
+    assert "gpt_oss" not in comparisons._OPENAI_CLIENTS
+    assert comparisons._gpt_oss_model() == "openai/gpt-oss-120b"
+
+
+@pytest.mark.asyncio
+async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
+    def _no_openai():
+        raise AssertionError("gpt_oss must not touch the OpenAI client")
+
+    monkeypatch.setattr(comparisons, "get_openai_client", _no_openai)
+
+    captured = {}
+
+    def fake_groq(*, model, messages, use_json_mode):
+        captured["model"] = model
+        captured["use_json_mode"] = use_json_mode
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="INTRO ... EXPERIMENT 2 ... DISCUSSION"))]
+        )
+
+    monkeypatch.setattr(comparisons, "_groq_chat_completion", fake_groq)
+
+    out = await comparisons.extract_experiment_specific_paper_text(
+        "Full paper text spanning several experiments.",
+        "2",
+        client_choice="gpt_oss",
+    )
+    assert "EXPERIMENT 2" in out
+    assert captured["model"] == "openai/gpt-oss-120b"
+    assert captured["use_json_mode"] is False
