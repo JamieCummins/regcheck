@@ -28,10 +28,17 @@ class Settings:
     orcid_client_secret: str
     orcid_sandbox: bool
     oauth_redirect_base_url: str
+    external_parser_url: str
+    external_parser_api_key: str
 
     def ensure_directories(self) -> None:
         """Ensure that directories required by the application exist."""
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def external_parser_enabled(self) -> bool:
+        """The optional external structured parser is offered only when its service URL is set."""
+        return bool(self.external_parser_url)
 
     @property
     def google_oauth_enabled(self) -> bool:
@@ -121,6 +128,8 @@ def get_settings() -> Settings:
         orcid_client_secret=_str_env("ORCID_CLIENT_SECRET"),
         orcid_sandbox=_bool_env("ORCID_SANDBOX"),
         oauth_redirect_base_url=_str_env("OAUTH_REDIRECT_BASE_URL"),
+        external_parser_url=_str_env("EXTERNAL_PARSER_URL"),
+        external_parser_api_key=_str_env("EXTERNAL_PARSER_API_KEY"),
     )
     settings.ensure_directories()
     return settings

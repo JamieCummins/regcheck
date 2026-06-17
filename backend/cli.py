@@ -204,13 +204,13 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "gpt_oss", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq", "claude"],
         help="LLM provider to use.",
     )
     general.add_argument(
         "--parser-choice",
         default="grobid",
-        choices=["grobid", "dpt2"],
+        choices=["grobid", "dpt2", "pymupdf", "external"],
         help="PDF parser to extract paper text.",
     )
     general.add_argument(
@@ -268,13 +268,13 @@ def build_parser() -> argparse.ArgumentParser:
     clinical.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "gpt_oss", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq", "claude"],
         help="LLM provider to use.",
     )
     clinical.add_argument(
         "--parser-choice",
         default="grobid",
-        choices=["grobid", "dpt2"],
+        choices=["grobid", "dpt2", "pymupdf", "external"],
         help="PDF parser to extract paper text.",
     )
     clinical.add_argument(
@@ -323,13 +323,13 @@ def build_parser() -> argparse.ArgumentParser:
     animals.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "gpt_oss", "deepseek", "groq"],
+        choices=["openai", "gpt_oss", "deepseek", "groq", "claude"],
         help="LLM provider to use.",
     )
     animals.add_argument(
         "--parser-choice",
         default="grobid",
-        choices=["grobid", "dpt2"],
+        choices=["grobid", "dpt2", "pymupdf", "external"],
         help="PDF parser to extract paper text.",
     )
     animals.add_argument(

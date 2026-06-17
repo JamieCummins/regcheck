@@ -245,6 +245,88 @@ def extract_dpt_text(payload: Any) -> str:
         return str(payload)
 
 
+async def pdf2external(
+    filename: str,
+    service_url: str | None = None,
+) -> dict[str, Any]:
+    """Send a PDF to an optional external structured-parsing HTTP service and
+    return its JSON. The service runs its own extraction; we only call its HTTP
+    API (`POST /papers/extract`, multipart `file`), mirroring the GROBID/DPT clients."""
+    base = (service_url or os.environ.get("EXTERNAL_PARSER_URL") or "").strip()
+    if not base:
+        raise RuntimeError("Missing EXTERNAL_PARSER_URL (external parser is not configured)")
+    endpoint = base.rstrip("/")
+    if not endpoint.endswith("/papers/extract"):
+        endpoint = f"{endpoint}/papers/extract"
+    api_key = (os.environ.get("EXTERNAL_PARSER_API_KEY") or "").strip()
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    timeout_seconds = float(os.environ.get("EXTERNAL_PARSER_TIMEOUT_SECONDS", "300") or 300)
+    timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            with open(filename, "rb") as document:
+                files = {"file": (os.path.basename(filename), document, "application/pdf")}
+                response = await client.post(endpoint, headers=headers, files=files)
+    except httpx.ReadTimeout as exc:
+        raise RuntimeError("External parser timed out; please retry or use another parser") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"External parser failed: {exc}") from exc
+    response.raise_for_status()
+    return response.json()
+
+
+def extract_external_text(payload: Any) -> str:
+    """Reconstruct readable full text from an external parser's JSON export.
+
+    Joins the `text` segments in order, grouping by paragraph and inserting each
+    section's header, so the comparison model sees structured prose."""
+    if not isinstance(payload, dict):
+        return ""
+    headers: dict[Any, str] = {}
+    for section in payload.get("section") or []:
+        if isinstance(section, dict) and section.get("section_id") is not None:
+            headers[section.get("section_id")] = (section.get("header") or "").strip()
+
+    blocks: list[str] = []
+    para_buf: list[str] = []
+    cur_section: Any = object()
+    cur_para: Any = object()
+
+    def _flush() -> None:
+        if para_buf:
+            blocks.append(" ".join(para_buf))
+            para_buf.clear()
+
+    for row in payload.get("text") or []:
+        if not isinstance(row, dict):
+            continue
+        seg = (row.get("text") or "").strip()
+        if not seg:
+            continue
+        section_id = row.get("section_id")
+        paragraph_id = row.get("paragraph_id")
+        if section_id != cur_section:
+            _flush()
+            cur_section = section_id
+            cur_para = object()
+            head = headers.get(section_id)
+            if head:
+                blocks.append(head)
+        if paragraph_id != cur_para:
+            _flush()
+            cur_para = paragraph_id
+        para_buf.append(seg)
+    _flush()
+
+    text = "\n\n".join(block for block in blocks if block.strip()).strip()
+    if text:
+        return text
+    # Fallback to whatever scalar text the export carries.
+    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+    parts = [str(info.get("title") or "").strip(), str(info.get("abstract") or "").strip()]
+    return "\n\n".join(part for part in parts if part).strip()
+
+
 def extract_body_text(xml_content: str) -> str:
     namespace = {"tei": "http://www.tei-c.org/ns/1.0"}
     root = ET.fromstring(xml_content)
@@ -260,13 +342,14 @@ async def extract_pdf_text(
     parser_choice: str = "grobid",
     pdf_parser: Any | None = None,
     dpt_parser: Any | None = None,
+    external_parser: Any | None = None,
 ) -> tuple[str, str]:
     """Extract paper text from PDF; optionally fall back for scanned PDFs.
 
     Returns (extracted_text, used_parser_label).
     """
     normalized = (parser_choice or "grobid").strip().lower()
-    if normalized not in {"grobid", "dpt2", "pymupdf"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf", "external"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
     fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
@@ -302,6 +385,23 @@ async def extract_pdf_text(
                 "If this is a scanned PDF, select the DPT2 parser (OCR)."
             )
         return extracted, "pymupdf"
+
+    if normalized == "external":
+        parser_callable = external_parser or pdf2external
+        try:
+            payload = await parser_callable(filename)
+            extracted = extract_external_text(payload)
+            if not _has_usable_text(extracted):
+                raise ValueError("Parsed PDF but extracted no usable text (external parser).")
+            return extracted, "external"
+        except Exception as exc:
+            if fallback_chain:
+                logger.warning(
+                    "External parser failed; attempting fallbacks",
+                    extra={"pdf_path": filename, "error": str(exc)},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise
 
     if normalized == "dpt2":
         parser_callable = dpt_parser or pdf2dpt

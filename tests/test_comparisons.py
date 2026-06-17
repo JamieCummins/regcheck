@@ -6,6 +6,7 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("GROQ_API_KEY", "test")
 os.environ.setdefault("DEEPSEEK_API_KEY", "test")
+os.environ.setdefault("CLAUDE_API_KEY", "test")
 
 import backend.services.comparisons as comparisons  # noqa: E402
 from backend.services.comparisons import (  # noqa: E402
@@ -439,3 +440,79 @@ def test_wizard_preclinical_preset_matches_backend():
         for d in comparisons.PRECLINICAL_DEFAULT_DIMENSIONS
     ]
     assert preset == backend
+
+
+def test_split_system_for_anthropic_separates_system_and_conversation():
+    system, convo = comparisons._split_system_for_anthropic(
+        [
+            {"role": "system", "content": "You are RegCheck."},
+            {"role": "user", "content": "Compare these documents."},
+        ]
+    )
+    assert system == "You are RegCheck."
+    assert convo == [{"role": "user", "content": "Compare these documents."}]
+
+
+def test_claude_response_text_concatenates_text_blocks_only():
+    class _Block:
+        def __init__(self, text=None):
+            if text is not None:
+                self.text = text
+
+    response = SimpleNamespace(content=[_Block("Hello "), _Block(), _Block("world")])
+    assert comparisons._claude_response_text(response) == "Hello world"
+    assert comparisons._claude_response_text(SimpleNamespace(content=None)) == ""
+
+
+def test_claude_chat_sends_system_separately_and_returns_text(monkeypatch):
+    captured = {}
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"dimension": "Sample size"}')]
+            )
+
+    monkeypatch.setattr(
+        comparisons,
+        "get_claude_client",
+        lambda: SimpleNamespace(messages=_FakeMessages()),
+    )
+
+    out = comparisons._claude_chat(
+        model="claude-opus-4-8",
+        messages=[
+            {"role": "system", "content": "sys prompt"},
+            {"role": "user", "content": "user prompt"},
+        ],
+        max_tokens=4321,
+    )
+
+    assert out == '{"dimension": "Sample size"}'
+    assert captured["model"] == "claude-opus-4-8"
+    assert captured["system"] == "sys prompt"
+    assert "temperature" not in captured  # Opus 4.8 rejects temperature
+    assert captured["max_tokens"] == 4321
+    assert captured["messages"] == [{"role": "user", "content": "user prompt"}]
+
+
+def test_claude_chat_maps_auth_error_to_friendly_message(monkeypatch):
+    class _AuthBoom(Exception):
+        status_code = 401
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            raise _AuthBoom("invalid x-api-key")
+
+    monkeypatch.setattr(
+        comparisons,
+        "get_claude_client",
+        lambda: SimpleNamespace(messages=_FakeMessages()),
+    )
+
+    with pytest.raises(RuntimeError, match="CLAUDE_API_KEY"):
+        comparisons._claude_chat(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "hi"}],
+        )

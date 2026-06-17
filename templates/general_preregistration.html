@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260614-share11' %}
+    {% set static_version = '20260614-share12' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -65,13 +65,14 @@
                   <section class="form-step choice-step" data-step="3">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Choose a model</h2>
-                          <p class="step-sub">ChatGPT is generally most accurate, but can be slower. GPT-OSS 120B is OpenAI's open-weight model. Llama 4 Maverick (via Groq) is typically fastest but less accurate. DeepSeek can perform well but may be slower.</p>
+                          <p class="step-sub">ChatGPT and Claude Opus 4.8 are generally most accurate, but can be slower. GPT-OSS 120B is OpenAI's open-weight model. Llama 4 Maverick (via Groq) is typically fastest but less accurate. DeepSeek can perform well but may be slower.</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
                               <label class="field-label" for="client">Model</label>
                               <select class="form-control app-toggles llm-select" id="client" name="client">
                                   <option value="openai">ChatGPT</option>
+                                  <option value="claude">Claude Opus 4.8</option>
                                   <option value="gpt_oss">GPT-OSS 120B</option>
                                   <option value="deepseek">DeepSeek</option>
                                   <option value="groq">Llama 4 Maverick</option>
