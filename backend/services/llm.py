@@ -82,7 +82,16 @@ def _raise_provider_auth_error(provider: str, env_var: str, exc: Exception) -> N
 
 def _is_response_format_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return "response_format" in text or "json_object" in text or "json mode" in text
+    # Includes Groq's `json_validate_failed` (400) — some models, especially
+    # reasoning ones, can't reliably satisfy strict JSON mode, so we retry
+    # without response_format and extract the JSON from the free-form reply.
+    return (
+        "response_format" in text
+        or "json_object" in text
+        or "json mode" in text
+        or "json_validate_failed" in text
+        or "failed to validate json" in text
+    )
 
 
 # ---- per-provider model resolution -------------------------------------------
