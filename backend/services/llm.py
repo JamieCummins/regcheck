@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import lru_cache
 from typing import Any
 
 from groq import Groq
@@ -316,6 +317,13 @@ def _groq_chat_completion(
 
 # ---- client construction (lazy) ----------------------------------------------
 
+# Clients are built once and reused (``lru_cache``) so repeated per-dimension
+# calls reuse one HTTP connection pool (keep-alive) instead of a fresh TLS
+# handshake each time. Construction is lazy and a missing key raises (not
+# cached), so the app/worker still boot when a given provider's key is unset —
+# an unset key fails only that provider's path, not the whole process.
+
+@lru_cache(maxsize=1)
 def get_openai_client() -> OpenAI:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -325,6 +333,7 @@ def get_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
+@lru_cache(maxsize=1)
 def get_deepseek_client() -> OpenAI:
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
@@ -334,27 +343,17 @@ def get_deepseek_client() -> OpenAI:
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 
-_groq_client: "Groq | None" = None
-
-
+@lru_cache(maxsize=1)
 def get_groq_client() -> "Groq":
-    """Lazily build and reuse the Groq client.
-
-    Built on first use (not at import) so the app/worker still boot when
-    GROQ_API_KEY is unset — Groq is only one of several providers, and an unset
-    key should fail just the Groq path, not the whole process.
-    """
-    global _groq_client
-    if _groq_client is None:
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "Missing GROQ_API_KEY. Please contact administrators."
-            )
-        _groq_client = Groq(api_key=api_key)
-    return _groq_client
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing GROQ_API_KEY. Please contact administrators."
+        )
+    return Groq(api_key=api_key)
 
 
+@lru_cache(maxsize=1)
 def get_claude_client() -> "Anthropic":
     if Anthropic is None:
         raise RuntimeError(

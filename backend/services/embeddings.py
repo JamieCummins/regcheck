@@ -235,10 +235,17 @@ def extract_chunks_tokens_with_spans(
     return [c for c in chunks if c.text]
 
 
-def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-3-large") -> np.ndarray:
+@lru_cache(maxsize=1)
+def _embed_client():
+    # Built once and reused so repeated embedding calls keep the connection
+    # pool warm instead of doing a fresh TLS handshake each time.
     from openai import OpenAI
 
-    client = OpenAI()
+    return OpenAI()
+
+
+def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-3-large") -> np.ndarray:
+    client = _embed_client()
     max_batch = 2048
     embeddings: list[list[float]] = []
     for start in range(0, len(segments), max_batch):
@@ -333,23 +340,6 @@ def retrieve_relevant_chunks(
         (corpus.chunk_ids[int(i)], corpus.segments[int(i)], float(sims[int(i)]))
         for i in idx
     ]
-
-
-def get_top_k_segments_openai(
-    segments: Sequence[str],
-    embeddings: np.ndarray,
-    query: str,
-    k: int,
-    model: str = "text-embedding-3-large",
-) -> list[str]:
-    from numpy.linalg import norm
-
-    query_embedding = openai_embed_segments([query], model=model)[0]
-    scores = np.array(
-        [np.dot(embedding, query_embedding) / (norm(embedding) * norm(query_embedding)) for embedding in embeddings]
-    )
-    top_indices = np.argsort(-scores)[:k]
-    return [segments[index] for index in top_indices]
 
 
 def get_embedding(text: str, model: str = "text-embedding-3-large"):
