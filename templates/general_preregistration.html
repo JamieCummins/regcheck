@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" class="h-100" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260617-gptoss1' %}
+    {% set static_version = '20260617-feedback3' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -85,6 +85,7 @@
                                   <option value="medium" selected>Medium</option>
                                   <option value="high">High</option>
                               </select>
+                              <p class="dropzone__note">Lower effort is faster and cheaper; higher is more thorough but slower. Applies to ChatGPT only.</p>
                           </div>
                       </div>
                   </section>
@@ -93,6 +94,7 @@
                       <div class="dim-head">
                           <h2 class="step-heading">Comparison dimensions</h2>
                           <p class="step-sub">RegCheck compares the registration and paper on each of these dimensions in the order you specify.</p>
+                          <p class="dim-warning" id="dim-empty-warning" hidden>Add at least one dimension to continue — RegCheck needs at least one thing to compare.</p>
                       </div>
                       <div class="tp2">
                           <div class="tp2-left">

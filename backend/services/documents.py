@@ -96,7 +96,9 @@ def read_file(file_path: str, file_extension: str) -> str:
     elif file_extension == ".pdf":
         text = extract_text_from_pdf(file_path)
     else:
-        raise ValueError("Unsupported file type")
+        raise ValueError(
+            f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, or TXT file."
+        )
     return clean_document_text(text)
 
 

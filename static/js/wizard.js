@@ -275,6 +275,7 @@
                 current.name = nameEl.value;
                 dimensionsTouched = true;
                 updateRowName(current.id, current.name);
+                if (nameEl.value.trim()) showDimWarning(false);
             });
             defEl.addEventListener("input", () => {
                 current.definition = defEl.value;
@@ -332,6 +333,7 @@
             dimensions = loadDiscipline(key);
             selectedId = dimensions[0] ? dimensions[0].id : null;
             if (userInitiated) dimensionsTouched = true;
+            if (countDimensions() >= 1) showDimWarning(false);
             updatePresetActive();
             renderRows();
             renderEditor();
@@ -349,8 +351,19 @@
         if (addDimensionButton) addDimensionButton.addEventListener("click", addDimension);
 
         /* ---- step navigation ---------------------------------------------- */
+        function countDimensions() {
+            return dimensions.filter((d) => (d.name || "").trim() !== "").length;
+        }
+
+        function showDimWarning(show) {
+            const el = document.getElementById("dim-empty-warning");
+            if (el) el.hidden = !show;
+        }
+
         function getActiveSequence() {
-            return defaultModeActive ? [1, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
+            const base = defaultModeActive ? [1, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
+            // "Append previous outputs?" (step 5) only makes sense with >= 2 dimensions.
+            return countDimensions() < 2 ? base.filter((s) => s !== 5) : base;
         }
 
         function goToStep(step) {
@@ -368,6 +381,11 @@
         }
 
         function goToNext() {
+            // The comparison needs at least one dimension; block leaving step 4 empty.
+            if (currentStep === 4 && countDimensions() < 1) {
+                showDimWarning(true);
+                return;
+            }
             const sequence = getActiveSequence();
             const idx = sequence.indexOf(currentStep);
             if (idx === -1) { goToStep(sequence[0]); return; }
@@ -436,11 +454,37 @@
             }
         }
 
+        function fileExt(name) {
+            const i = name.lastIndexOf(".");
+            return i >= 0 ? name.slice(i).toLowerCase() : "";
+        }
+
+        // Reject unsupported file types at upload time (rather than failing the run).
+        function validateFile(input) {
+            if (!input.files || !input.files.length) return true;
+            const allowed = (input.getAttribute("accept") || "")
+                .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+            const ext = fileExt(input.files[0].name);
+            const dropzone = input.closest(".dropzone");
+            if (allowed.length && allowed.indexOf(ext) === -1) {
+                const display = fileDisplay(input);
+                if (display) {
+                    display.textContent = "Unsupported file (" + (ext || "no extension") + "). Use PDF, DOCX, or TXT.";
+                    display.removeAttribute("title");
+                }
+                if (dropzone) { dropzone.classList.add("has-error"); dropzone.classList.remove("has-file"); }
+                input.value = "";
+                return false;
+            }
+            if (dropzone) dropzone.classList.remove("has-error");
+            return true;
+        }
+
         function setupDropzone(input) {
             if (!input) return;
             const dropzone = input.closest(".dropzone");
             input.addEventListener("change", function () {
-                refreshFileDisplay(input);
+                if (validateFile(input)) refreshFileDisplay(input);
                 checkFiles();
             });
             if (!dropzone) return;
@@ -461,7 +505,7 @@
                 if (input.disabled) return;
                 if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) {
                     input.files = event.dataTransfer.files;
-                    refreshFileDisplay(input);
+                    if (validateFile(input)) refreshFileDisplay(input);
                     checkFiles();
                 }
             });
@@ -534,6 +578,25 @@
         }
 
         if (modelSelect) modelSelect.addEventListener("change", updateReasoningEffortVisibility);
+
+        // Auto-advance to the next step when a choice is made, except when the
+        // selection reveals more controls on the same step (reasoning effort,
+        // experiment number). Native selects can't fire on re-picking the same
+        // value, so the Back/Next buttons stay available as a fallback.
+        function autoAdvance(select, stayWhen) {
+            if (!select) return;
+            select.addEventListener("change", function () {
+                if (select.disabled) return;
+                if (typeof stayWhen === "function" && stayWhen(select.value)) return;
+                window.setTimeout(function () { goToNext(); }, 240);
+            });
+        }
+        autoAdvance(parserSelect);
+        autoAdvance(modelSelect, function (v) { return v === "openai"; });
+        autoAdvance(reasoningEffortSelect);
+        autoAdvance(appendSelect);
+        autoAdvance(multipleExperimentsSelect, function (v) { return v === "yes"; });
+        autoAdvance(comparisonSelect);
 
         if (multipleExperimentsSelect) {
             multipleExperimentsSelect.addEventListener("change", function () {

@@ -44,6 +44,33 @@ async def demo(request: Request):
     return templates.TemplateResponse("demo.html", {"request": request})
 
 
+# Tools that are planned but not yet built. The nav links point here so a click
+# explains the status instead of doing nothing.
+_COMING_SOON = {
+    "code-paper": {
+        "title": "Code–Paper Comparison",
+        "blurb": "Compare a study's analysis code against what its paper reports, to check that the published results match the code that produced them.",
+    },
+    "evaluate-registration": {
+        "title": "Evaluate Registration Quality",
+        "blurb": "Assess how complete and specific a preregistration is, so you can strengthen it before a study runs — or review it more efficiently.",
+    },
+}
+
+
+@router.get("/coming-soon/{feature}", response_class=HTMLResponse, name="coming_soon")
+async def coming_soon(request: Request, feature: str):
+    templates = request.app.state.templates
+    info = _COMING_SOON.get(
+        feature,
+        {"title": "This tool", "blurb": "This RegCheck tool is in development."},
+    )
+    return templates.TemplateResponse(
+        "coming_soon.html",
+        {"request": request, "feature_title": info["title"], "feature_blurb": info["blurb"]},
+    )
+
+
 @router.get("/team", name="team")
 async def team(request: Request):
     templates = request.app.state.templates
