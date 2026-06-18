@@ -543,8 +543,20 @@ async def general_preregistration_comparison(
                 )
             raise
     else:
-        preregistration_input = read_file(prereg_path, prereg_ext)
-    paper_input = read_file_as_pdf(paper_path, paper_ext)
+        try:
+            preregistration_input = read_file(prereg_path, prereg_ext)
+        except Exception as exc:
+            # Name the document + extension so the worker error is self-explanatory
+            # (a bare "Unsupported file type" can't be traced to paper vs prereg).
+            raise ValueError(
+                f"Couldn't read the preregistration ('{prereg_ext or 'unknown'}'): {exc}"
+            ) from exc
+    try:
+        paper_input = read_file_as_pdf(paper_path, paper_ext)
+    except Exception as exc:
+        raise ValueError(
+            f"Couldn't read the paper ('{paper_ext or 'unknown'}'): {exc}"
+        ) from exc
     parser_choice_normalized = (parser_choice or "grobid").lower()
 
     if task_id and redis_client:
