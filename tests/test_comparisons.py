@@ -411,14 +411,22 @@ async def test_evidence_success_fields_returns_error_when_artifact_is_missing():
 
 
 @pytest.mark.asyncio
-async def test_current_task_ttl_sets_task_expiry_when_missing(monkeypatch):
+async def test_current_task_ttl_persists_when_report_has_no_expiry(monkeypatch):
+    # ttl == -1 means the task hash is persisted (no expiry) → evidence persists
+    # too, and the resolver must NOT mutate the task hash's expiry.
     monkeypatch.setenv("TASK_TTL_SECONDS", "1234")
     redis = FakeRedis(ttl_value=-1)
 
     ttl = await comparisons._current_task_ttl(redis, "task-1")
 
-    assert ttl == 1234
-    assert redis.expiries["task-1"] == 1234
+    assert ttl is None
+    assert "task-1" not in redis.expiries
+
+
+@pytest.mark.asyncio
+async def test_current_task_ttl_inherits_remaining_seconds():
+    redis = FakeRedis(ttl_value=4242)
+    assert await comparisons._current_task_ttl(redis, "task-1") == 4242
 
 
 @pytest.mark.asyncio

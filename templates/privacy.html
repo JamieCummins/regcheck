@@ -92,7 +92,8 @@
         <h3>A. Content you upload (documents)</h3>
         <p><strong>What:</strong> Papers, preregistrations, and related files you upload.</p>
         <p><strong>Why:</strong> To run the comparison and generate your report.</p>
-        <p><strong>Temporary storage under load:</strong> Under high traffic, uploaded files may be temporarily written to AWS S3 to support reliable processing. Files remain in S3 only while the comparison process is running and are automatically deleted once processing finishes. We do not intentionally create backups of uploaded files (subject to the underlying cloud provider’s standard technical operations).</p>
+        <p><strong>During processing:</strong> While a comparison runs, your uploaded file may be written to AWS S3 (object storage) to support reliable processing across our servers, and is deleted once processing finishes.</p>
+        <p><strong>Stored with your report:</strong> To power the report viewer, we keep a copy of your source document and a rendered (PDF/text) view of it in AWS S3 for as long as the report itself is retained (see Section 7), then delete them. These document files are private — they are served only through access-controlled links, never made publicly readable on S3. We do not intentionally create separate backups of these files (subject to the underlying cloud provider’s standard technical operations).</p>
 
         <h3>B. Model prompts and outputs (processing data)</h3>
         <p><strong>What:</strong> Prompts derived from your uploaded content and the resulting model outputs needed to generate the report.</p>
@@ -102,7 +103,7 @@
         <h3>C. Reports and shareable report data (persistence)</h3>
         <p><strong>What:</strong> Report content and quotations shown in the report viewer and any shareable report link.</p>
         <p><strong>Why:</strong> To let you view and share reports after processing.</p>
-        <p>We store this in an encrypted Redis database so that reports can remain accessible via their link until you request deletion.</p>
+        <p>We store the report’s text content and quotations in an encrypted Redis database, and the associated document files (your source document and its rendered view) in AWS S3, so that reports remain accessible via their link until you request deletion.</p>
 
         <h3>D. Optional survey responses</h3>
         <p><strong>What:</strong> Any feedback or survey responses you voluntarily submit.</p>
@@ -154,8 +155,8 @@
 
         <h2>7) Retention</h2>
         <ul>
-          <li><strong>Uploaded files in S3 (when used):</strong> stored only while the comparison process runs; deleted automatically when processing finishes.</li>
-          <li><strong>Reports and quotations (Redis):</strong> Reports generated <em>without</em> an account are automatically deleted about 7 days after creation. Reports generated while <em>signed in</em> are retained until you delete them (from the report, your dashboard, or the API) or delete your account.</li>
+          <li><strong>Uploaded files during processing (S3):</strong> the transient working copy used while a comparison runs is deleted automatically when processing finishes.</li>
+          <li><strong>Reports, quotations and their document files (Redis + S3):</strong> the report text/quotations (Redis) and the associated source/rendered document files (S3) share the report’s lifetime — reports generated <em>without</em> an account are automatically deleted about 7 days after creation; reports generated while <em>signed in</em> are retained until you delete them (from the report, your dashboard, or the API) or delete your account.</li>
           <li><strong>Account data (database):</strong> Your account, profile, API keys, and any access grants on private reports are retained until you delete the relevant item (e.g. revoke a key, remove someone’s access) or delete your account; deleting your account also deletes your reports and their access grants.</li>
           <li><strong>Survey responses:</strong> retained indefinitely unless you request deletion.</li>
           <li><strong>Server logs:</strong> retained for 1 day, then deleted.</li>
@@ -166,7 +167,7 @@
         <p>We use reasonable technical and organisational measures, including:</p>
         <ul>
           <li>Encryption in transit (TLS) where supported.</li>
-          <li>Encrypted Redis storage for persisted reports.</li>
+          <li>Encrypted Redis storage for report content, and private (non-public) AWS S3 storage for report document files, served only via access-controlled links.</li>
           <li>Access controls limited to essential systems/personnel.</li>
         </ul>
         <p>No method of transmission or storage is 100% secure; however, we aim to use safeguards appropriate to the risk.</p>
