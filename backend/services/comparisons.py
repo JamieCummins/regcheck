@@ -1690,11 +1690,12 @@ def run_comparison(
             )
     elif client_choice == "gpt_oss":
         # GPT-OSS-120B (open-weight reasoning model) is served via Groq's
-        # OpenAI-compatible endpoint. The OpenAI SDK takes reasoning_effort as a
-        # native top-level arg (the pinned Groq SDK does not), matching the call
-        # that works directly against the API; _openai_chat_json also degrades
-        # gracefully if the model can't satisfy strict JSON mode.
-        result_json = _openai_chat_json(
+        # OpenAI-compatible endpoint, where reasoning_effort is a native arg.
+        # We do NOT use strict JSON mode here: GPT-OSS on Groq intermittently
+        # returns a 200 with empty/non-JSON content under response_format, so —
+        # like the Claude path — we take plain text and pull the JSON object out
+        # with _extract_json_payload (the prompt already mandates a JSON object).
+        result_json = _openai_chat_text(
             get_groq_openai_client(),
             model=_gpt_oss_model(),
             messages=messages,
