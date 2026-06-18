@@ -561,3 +561,27 @@ def test_claude_chat_maps_auth_error_to_friendly_message(monkeypatch):
             model="claude-opus-4-8",
             messages=[{"role": "user", "content": "hi"}],
         )
+
+
+@pytest.mark.parametrize("ext", [".pdf", ".PDF", ".docx", ".txt", ".html", ".htm"])
+def test_validate_doc_ext_accepts_supported_types(ext):
+    from backend.routes.comparisons import _validate_doc_ext
+
+    # Should not raise for any document type the pipeline can read.
+    _validate_doc_ext(ext, kind="paper")
+
+
+@pytest.mark.parametrize("ext", [".doc", ".rtf", ".pages", "", ".pdf "])
+def test_validate_doc_ext_rejects_unsupported_paper_types(ext):
+    # An unsupported paper must be rejected at submit (HTTP 400) rather than
+    # passing through to the worker, where read_file_as_pdf raises a cryptic
+    # "Unsupported file type" that surfaces only as a worker error. This is
+    # independent of multiple-experiments (the read happens before that branch).
+    from fastapi import HTTPException
+
+    from backend.routes.comparisons import _validate_doc_ext
+
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_doc_ext(ext, kind="paper")
+    assert exc_info.value.status_code == 400
+    assert "paper file type" in exc_info.value.detail

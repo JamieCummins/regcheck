@@ -60,7 +60,7 @@ def _upload_limit() -> int:
 MAX_UPLOAD_BYTES = _upload_limit()
 
 # Document types the comparison pipeline can read (mirrors documents.read_file).
-_SUPPORTED_PREREG_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
+_SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
 
 ComparisonType = Literal[
     "clinical_trials",
@@ -109,6 +109,19 @@ def _safe_filename(filename: str | None) -> str:
 
 def _file_ext(filename: str | None) -> str:
     return Path(_safe_filename(filename)).suffix.lower()
+
+
+def _validate_doc_ext(ext: str, *, kind: str) -> None:
+    """Reject documents the comparison pipeline can't read, with a clear message.
+
+    Without this, an unsupported (or extension-less) upload passes submit and only
+    fails deep in the worker as a cryptic ``Worker error: Unsupported file type``.
+    """
+    if (ext or "").lower() not in _SUPPORTED_DOC_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported {kind} file type ('{ext or 'unknown'}'). Upload a PDF, DOCX, TXT, or HTML file.",
+        )
 
 
 async def _save_upload(
@@ -268,12 +281,19 @@ async def _queue_comparison(
         extra={"client": client, "reasoning_effort": effort_normalized, "comparison_type": comparison_type},
     )
 
-    if paper is None:
+    # An empty file input arrives as an UploadFile with a blank filename (not
+    # None), so guard on the filename rather than identity.
+    if paper is None or not (getattr(paper, "filename", "") or "").strip():
         raise HTTPException(status_code=400, detail="Paper upload is required")
     task_id = str(uuid.uuid4())
     paper_path, paper_ext = await _save_upload(
         upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
     )
+    # Validate the paper type at submit (the prereg is validated below). Otherwise
+    # an unsupported paper only fails later in the worker with a cryptic error.
+    if (paper_ext or "").lower() not in _SUPPORTED_DOC_EXTS:
+        Path(paper_path).unlink(missing_ok=True)
+        _validate_doc_ext(paper_ext, kind="paper")
     paper_redis_key = f"upload:{task_id}:paper"
     prereg_redis_key: str | None = None
     csv_redis_key: str | None = None
@@ -319,7 +339,7 @@ async def _queue_comparison(
             raise HTTPException(
                 status_code=400, detail="Provide a preregistration file or an OSF link."
             )
-        elif _file_ext(preregistration.filename) not in _SUPPORTED_PREREG_EXTS:
+        elif _file_ext(preregistration.filename) not in _SUPPORTED_DOC_EXTS:
             raise HTTPException(
                 status_code=400,
                 detail="Unsupported preregistration file type. Upload a PDF, DOCX, TXT, or HTML file, or paste an OSF link.",
