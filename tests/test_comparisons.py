@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test")
-os.environ.setdefault("GROQ_API_KEY", "test")
 os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 os.environ.setdefault("CLAUDE_API_KEY", "test")
 
@@ -199,116 +198,6 @@ async def test_clinical_trial_comparison(tmp_path):
     assert calls == [dim["dimension"] for dim in selected_dims]
     assert definitions == [dim["definition"] for dim in selected_dims]
     assert isinstance(result, ComparisonResult)
-
-
-def test_groq_auth_error_is_not_retried(monkeypatch):
-    class AuthError(Exception):
-        status_code = 401
-
-    calls = []
-
-    def fake_create(**kwargs):
-        calls.append(kwargs)
-        raise AuthError("invalid_api_key")
-
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
-    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
-
-    with pytest.raises(RuntimeError, match="Groq authentication failed"):
-        llm._groq_chat_completion(
-            model="llama-test",
-            messages=[{"role": "user", "content": "x"}],
-            use_json_mode=True,
-        )
-
-    assert len(calls) == 1
-
-
-def test_groq_response_format_error_retries_without_json_mode(monkeypatch):
-    calls = []
-    response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))]
-    )
-
-    def fake_create(**kwargs):
-        calls.append(kwargs)
-        if len(calls) == 1:
-            raise RuntimeError("response_format is not supported")
-        return response
-
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
-    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
-
-    result = llm._groq_chat_completion(
-        model="llama-test",
-        messages=[{"role": "user", "content": "x"}],
-        use_json_mode=True,
-    )
-
-    assert result is response
-    assert "response_format" in calls[0]
-    assert "response_format" not in calls[1]
-
-
-def test_is_response_format_error_matches_groq_json_validate_failed():
-    err = RuntimeError(
-        "Error code: 400 - {'error': {'message': \"Failed to validate JSON. Please "
-        "adjust your prompt.\", 'type': 'invalid_request_error', 'code': 'json_validate_failed'}}"
-    )
-    assert llm._is_response_format_error(err)
-
-
-def test_groq_json_validate_failed_retries_without_json_mode(monkeypatch):
-    calls = []
-    response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))]
-    )
-
-    def fake_create(**kwargs):
-        calls.append(kwargs)
-        if len(calls) == 1:
-            raise RuntimeError(
-                "Error code: 400 - {'error': {'code': 'json_validate_failed', "
-                "'message': 'Failed to validate JSON'}}"
-            )
-        return response
-
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
-    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
-
-    result = llm._groq_chat_completion(
-        model="qwen/qwen3.6-27b",
-        messages=[{"role": "user", "content": "x"}],
-        use_json_mode=True,
-    )
-
-    assert result is response
-    assert "response_format" in calls[0]      # first attempt used strict JSON mode
-    assert "response_format" not in calls[1]   # retry dropped it and succeeded
-
-
-def test_groq_passes_reasoning_effort_via_extra_body(monkeypatch):
-    captured = {}
-    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
-
-    def fake_create(**kwargs):
-        captured.update(kwargs)
-        return response
-
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
-    monkeypatch.setattr(llm, "get_groq_client", lambda: fake_client)
-
-    llm._groq_chat_completion(
-        model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": "x"}],
-        use_json_mode=False,
-        reasoning_effort="high",
-    )
-
-    # The pinned Groq SDK rejects a top-level `reasoning_effort` kwarg, so it must
-    # be forwarded via extra_body instead.
-    assert "reasoning_effort" not in captured
-    assert captured["extra_body"] == {"reasoning_effort": "high"}
 
 
 def test_run_comparison_degrades_on_unparseable_response(monkeypatch):
@@ -672,41 +561,3 @@ def test_claude_chat_maps_auth_error_to_friendly_message(monkeypatch):
             model="claude-opus-4-8",
             messages=[{"role": "user", "content": "hi"}],
         )
-
-
-def test_gpt_oss_is_not_openai_family_and_uses_groq_model():
-    # GPT-OSS-120B is open-weight; OpenAI's hosted API does not serve it, so it
-    # must NOT be routed through the OpenAI client.
-    assert "gpt_oss" not in comparisons._OPENAI_CLIENTS
-    assert comparisons._gpt_oss_model() == "openai/gpt-oss-120b"
-
-
-@pytest.mark.asyncio
-async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
-    # gpt_oss must use Groq's OpenAI-compatible endpoint, NOT OpenAI's hosted API,
-    # and pass reasoning_effort as a native top-level arg (the working Colab call).
-    def _no_openai():
-        raise AssertionError("gpt_oss must not touch the hosted OpenAI client")
-
-    monkeypatch.setattr(comparisons, "get_openai_client", _no_openai)
-
-    captured = {}
-
-    def fake_create(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="INTRO ... EXPERIMENT 2 ... DISCUSSION"))]
-        )
-
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
-    monkeypatch.setattr(comparisons, "get_groq_openai_client", lambda: fake_client)
-
-    out = await comparisons.extract_experiment_specific_paper_text(
-        "Full paper text spanning several experiments.",
-        "2",
-        client_choice="gpt_oss",
-        reasoning_effort="high",
-    )
-    assert "EXPERIMENT 2" in out
-    assert captured["model"] == "openai/gpt-oss-120b"
-    assert captured["reasoning_effort"] == "high"  # native top-level arg via Groq's OpenAI endpoint

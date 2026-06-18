@@ -1,10 +1,5 @@
 import asyncio
 import json
-import os
-
-# backend.worker imports services.comparisons, which instantiates a Groq client
-# at module load; satisfy it so this module imports in isolation too.
-os.environ.setdefault("GROQ_API_KEY", "test")
 
 import backend.worker as worker_mod
 from backend.worker import _recover_stalled_jobs

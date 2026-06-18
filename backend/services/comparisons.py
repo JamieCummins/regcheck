@@ -44,8 +44,6 @@ from .trials import extract_nct_id, extract_nested_trial_with_metadata
 from .llm import (
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
-    DEFAULT_GPT_OSS_MODEL,
-    DEFAULT_GROQ_MODEL,
     DEFAULT_OPENAI_MODEL,
     _OPENAI_CLIENTS,
     _claude_chat,
@@ -56,11 +54,7 @@ from .llm import (
     _env_int,
     _env_str,
     _extract_json_payload,
-    _gpt_oss_model,
-    _groq_chat_completion,
-    _groq_model,
     _is_provider_auth_error,
-    _is_response_format_error,
     _message_content_to_text,
     _normalize_reasoning_effort_value,
     _openai_chat_json,
@@ -74,8 +68,6 @@ from .llm import (
     _strip_deepseek_reasoning,
     get_claude_client,
     get_deepseek_client,
-    get_groq_client,
-    get_groq_openai_client,
     get_openai_client,
 )
 from .dimensions import (
@@ -480,15 +472,6 @@ async def extract_experiment_specific_paper_text(
                 messages=messages,
                 reasoning_effort=normalized_effort,
             )
-        if client_choice == "gpt_oss":
-            # GPT-OSS-120B is served via Groq's OpenAI-compatible endpoint; the
-            # OpenAI SDK forwards reasoning_effort natively (unlike the Groq SDK).
-            return _openai_chat_text(
-                get_groq_openai_client(),
-                model=_gpt_oss_model(),
-                messages=messages,
-                reasoning_effort=reasoning_effort,
-            )
         if client_choice == "deepseek":
             deepseek_client = get_deepseek_client()
             response = deepseek_client.chat.completions.create(
@@ -498,13 +481,6 @@ async def extract_experiment_specific_paper_text(
             )
             raw_content = _message_content_to_text(response.choices[0].message)
             return _strip_deepseek_reasoning(raw_content)
-        if client_choice == "groq":
-            response = _groq_chat_completion(
-                model=_groq_model(),
-                messages=messages,
-                use_json_mode=False,
-            )
-            return _message_content_to_text(response.choices[0].message)
         if client_choice == "claude":
             # Long extraction output; allow a larger token budget than the comparison call.
             return _claude_chat(
@@ -1688,19 +1664,6 @@ def run_comparison(
                 messages=messages,
                 reasoning_effort=normalized_effort,
             )
-    elif client_choice == "gpt_oss":
-        # GPT-OSS-120B (open-weight reasoning model) is served via Groq's
-        # OpenAI-compatible endpoint, where reasoning_effort is a native arg.
-        # We do NOT use strict JSON mode here: GPT-OSS on Groq intermittently
-        # returns a 200 with empty/non-JSON content under response_format, so —
-        # like the Claude path — we take plain text and pull the JSON object out
-        # with _extract_json_payload (the prompt already mandates a JSON object).
-        result_json = _openai_chat_text(
-            get_groq_openai_client(),
-            model=_gpt_oss_model(),
-            messages=messages,
-            reasoning_effort=reasoning_effort,
-        )
     elif client_choice == "deepseek":
         deepseek_client = get_deepseek_client()
         response = deepseek_client.chat.completions.create(
@@ -1739,19 +1702,6 @@ def run_comparison(
                         "message_dump": message_dump,
                     },
                 )
-        result_json = _strip_deepseek_reasoning(raw_content)
-    elif client_choice == "groq":
-        # Qwen (served via Groq) is a reasoning model that doesn't reliably honor
-        # strict JSON mode — Groq returns 200s with non-JSON/reasoning prose — so
-        # request plain text and pull the JSON out, stripping any <think> prefix
-        # first (same handling as DeepSeek).
-        groq_model = _groq_model()
-        response = _groq_chat_completion(
-            model=groq_model,
-            messages=messages,
-            use_json_mode=False,
-        )
-        raw_content = _message_content_to_text(response.choices[0].message)
         result_json = _strip_deepseek_reasoning(raw_content)
     elif client_choice == "claude":
         result_json = _claude_chat(
