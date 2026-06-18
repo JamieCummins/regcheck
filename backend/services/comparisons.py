@@ -1741,13 +1741,18 @@ def run_comparison(
                 )
         result_json = _strip_deepseek_reasoning(raw_content)
     elif client_choice == "groq":
+        # Qwen (served via Groq) is a reasoning model that doesn't reliably honor
+        # strict JSON mode — Groq returns 200s with non-JSON/reasoning prose — so
+        # request plain text and pull the JSON out, stripping any <think> prefix
+        # first (same handling as DeepSeek).
         groq_model = _groq_model()
         response = _groq_chat_completion(
             model=groq_model,
             messages=messages,
-            use_json_mode=True,
+            use_json_mode=False,
         )
-        result_json = _message_content_to_text(response.choices[0].message)
+        raw_content = _message_content_to_text(response.choices[0].message)
+        result_json = _strip_deepseek_reasoning(raw_content)
     elif client_choice == "claude":
         result_json = _claude_chat(
             model=_claude_model(),
@@ -1757,20 +1762,35 @@ def run_comparison(
         raise ValueError("Invalid client selection")
 
     cleaned_json = _extract_json_payload(result_json)
-    if not cleaned_json:
-        raise ValueError(f"Received empty completion content from provider '{client_choice}'")
-    try:
-        parsed_payload = json.loads(cleaned_json)
-    except json.JSONDecodeError as exc:
-        logger.error(
-            "Failed to decode JSON completion",
-            extra={
-                "client": client_choice,
-                "raw_result": result_json,
-                "cleaned_result": cleaned_json,
-            },
+    parsed_payload: Any = None
+    if cleaned_json:
+        try:
+            parsed_payload = json.loads(cleaned_json)
+        except json.JSONDecodeError:
+            logger.error(
+                "Failed to decode JSON completion",
+                extra={"client": client_choice, "raw_result": result_json, "cleaned_result": cleaned_json},
+            )
+    else:
+        logger.error("Received empty completion content", extra={"client": client_choice})
+
+    if not isinstance(parsed_payload, dict):
+        # The model returned something we couldn't parse into a result for THIS
+        # dimension. Degrade just this dimension to "Insufficient evidence" (keeping
+        # the deterministic retrieved quotes) rather than failing the whole report —
+        # one flaky per-dimension response shouldn't discard the others.
+        degraded = ComparisonItem(
+            dimension=dimension_query,
+            deviation_judgement="Insufficient evidence",
+            deviation_information=(
+                "RegCheck couldn’t parse the model’s response for this dimension, so no "
+                "judgement was made. The retrieved quotes are shown below; re-running or "
+                "choosing a different model may help."
+            ),
+            paper_content_quotes="\n\n".join(paper_top),
+            registration_content_quotes="\n\n".join(prereg_top),
         )
-        raise
+        return ComparisonResult(items=[degraded])
 
     # Normalize common LLM deviations before validation
     normalized_payload = _normalize_comparison_payload(parsed_payload)
