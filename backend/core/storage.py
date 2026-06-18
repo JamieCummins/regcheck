@@ -13,12 +13,30 @@ class S3Config:
     region: str | None
 
 
-def get_s3_config() -> S3Config | None:
-    bucket = (os.environ.get("S3_BUCKET") or "").strip()
+def _s3_region() -> str | None:
+    return (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip() or None
+
+
+def s3_config_for_bucket(bucket: str | None) -> S3Config | None:
+    """An S3Config for an explicit bucket (used to read/delete an artifact from
+    whichever bucket it was written to)."""
+    bucket = (bucket or "").strip()
     if not bucket:
         return None
-    region = (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip() or None
-    return S3Config(bucket=bucket, region=region)
+    return S3Config(bucket=bucket, region=_s3_region())
+
+
+def get_s3_config() -> S3Config | None:
+    """Default ("temp") bucket: the transient upload hand-off and anonymous
+    report files (which auto-expire). Resolves S3_TEMP_BUCKET, falling back to
+    S3_BUCKET so a single-bucket deployment keeps working unchanged."""
+    return s3_config_for_bucket(os.environ.get("S3_TEMP_BUCKET") or os.environ.get("S3_BUCKET"))
+
+
+def get_persist_s3_config() -> S3Config | None:
+    """Persistent bucket: signed-in users' report files, kept until deletion.
+    Resolves S3_PERSIST_BUCKET, falling back to S3_BUCKET (single-bucket setup)."""
+    return s3_config_for_bucket(os.environ.get("S3_PERSIST_BUCKET") or os.environ.get("S3_BUCKET"))
 
 
 @lru_cache(maxsize=4)

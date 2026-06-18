@@ -96,28 +96,97 @@ def test_report_artifact_storage_redis_round_trip(event_loop, monkeypatch):
     assert public["sources"]["registration"]["raw_url"] == "/report/task-1/sources/registration/raw"
 
 
-def test_report_artifact_storage_uses_redis_even_when_s3_is_configured(event_loop, monkeypatch):
-    monkeypatch.setattr("backend.services.report_artifacts.get_s3_config", lambda: object())
-    fake_redis = FakeRedis()
+def test_report_artifact_storage_uses_s3_when_configured(event_loop, monkeypatch):
+    from backend.core.storage import S3Config
+    from backend.services import report_artifacts as ra
 
+    puts: dict[str, tuple[bytes, str | None]] = {}
+    monkeypatch.setattr(ra, "get_s3_config", lambda: S3Config(bucket="b", region="us-east-1"))
+    monkeypatch.setattr(
+        ra,
+        "s3_put_bytes",
+        lambda cfg, *, key, data, content_type=None: puts.__setitem__(key, (data, content_type)),
+    )
+
+    class _Redis(FakeRedis):
+        def __init__(self):
+            super().__init__()
+            self.zset: dict[str, dict] = {}
+
+        async def zadd(self, name, mapping):
+            self.zset.setdefault(name, {}).update(mapping)
+
+    redis = _Redis()
     source = event_loop.run_until_complete(
         store_source_artifacts(
-            fake_redis,
+            redis,
             task_id="task-1",
-            source={"id": "registration", "label": "Registration", "kind": "text"},
-            raw_bytes=b"raw",
-            raw_content_type="text/plain",
-            render_data={"kind": "text", "text": "raw"},
+            source={"id": "paper", "label": "Paper", "kind": "pdf", "raw_filename": "p.pdf"},
+            raw_bytes=b"%PDF-1.4 x",
+            raw_content_type="application/pdf",
+            render_data={"kind": "pdf", "text": "hi"},
             ttl_seconds=120,
         )
     )
 
-    assert source["_artifacts"]["render"]["storage"] == "redis"
-    assert source["_artifacts"]["raw"]["storage"] == "redis"
-    raw = event_loop.run_until_complete(load_artifact_bytes(fake_redis, source["_artifacts"]["raw"]))
-    render = event_loop.run_until_complete(load_artifact_bytes(fake_redis, source["_artifacts"]["render"]))
-    assert raw == b"raw"
-    assert b'"text": "raw"' in render
+    raw_art = source["_artifacts"]["raw"]
+    assert raw_art["storage"] == "s3"
+    assert raw_art["bucket"] == "b"  # finite ttl → default/temp bucket
+    assert raw_art["key"] == "regcheck/report/task-1/source/paper/raw"
+    assert source["_artifacts"]["render"]["key"] == "regcheck/report/task-1/source/paper/render"
+    # Raw bytes uploaded to S3 (uncompressed) with their content type.
+    assert puts["regcheck/report/task-1/source/paper/raw"] == (b"%PDF-1.4 x", "application/pdf")
+    # Finite TTL → scheduled for cleanup, since S3 has no per-object expiry.
+    assert "regcheck/report/task-1/source/paper/raw" in redis.zset[ra.S3_CLEANUP_ZSET]
+    # Verification accepts S3-stored artifacts.
+    manifest = {"sources": {"paper": source}, "chunks": {}}
+    event_loop.run_until_complete(store_manifest(redis, task_id="task-1", manifest=manifest, ttl_seconds=120))
+    stats = event_loop.run_until_complete(
+        verify_manifest_artifacts(redis, task_id="task-1", manifest=manifest)
+    )
+    assert stats["artifact_count"] == 2
+
+
+def test_report_artifact_storage_routes_temp_vs_persist_buckets(event_loop, monkeypatch):
+    from backend.core.storage import S3Config
+    from backend.services import report_artifacts as ra
+
+    monkeypatch.setattr(ra, "get_s3_config", lambda: S3Config(bucket="regcheck-temp-files", region="r"))
+    monkeypatch.setattr(ra, "get_persist_s3_config", lambda: S3Config(bucket="regcheck-persist", region="r"))
+    monkeypatch.setattr(ra, "s3_put_bytes", lambda cfg, *, key, data, content_type=None: None)
+
+    class _Redis(FakeRedis):
+        def __init__(self):
+            super().__init__()
+            self.zset: dict[str, dict] = {}
+
+        async def zadd(self, name, mapping):
+            self.zset.setdefault(name, {}).update(mapping)
+
+    def _store(task_id, ttl):
+        return event_loop.run_until_complete(
+            store_source_artifacts(
+                _redis,
+                task_id=task_id,
+                source={"id": "paper", "label": "Paper", "kind": "pdf", "raw_filename": "p.pdf"},
+                raw_bytes=b"x",
+                raw_content_type="application/pdf",
+                render_data={"kind": "pdf", "text": "t"},
+                ttl_seconds=ttl,
+            )
+        )
+
+    # Anonymous (finite ttl) → temp bucket, scheduled for cleanup.
+    _redis = _Redis()
+    anon = _store("anon", 7 * 24 * 60 * 60)
+    assert anon["_artifacts"]["raw"]["bucket"] == "regcheck-temp-files"
+    assert "regcheck/report/anon/source/paper/raw" in _redis.zset[ra.S3_CLEANUP_ZSET]
+
+    # Signed-in (ttl None → persist) → persistent bucket, NOT scheduled to expire.
+    _redis = _Redis()
+    persisted = _store("user", None)
+    assert persisted["_artifacts"]["raw"]["bucket"] == "regcheck-persist"
+    assert ra.S3_CLEANUP_ZSET not in _redis.zset
 
 
 def test_report_artifact_verification_fails_when_redis_artifact_is_missing(event_loop):

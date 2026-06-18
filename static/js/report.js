@@ -638,6 +638,24 @@
         if (scroll) scroll.style.setProperty("--doc-zoom", String(zoom || 1));
     }
 
+    // Diagnose *why* the whole evidence set is unavailable, from the status the
+    // worker recorded — so a blank pane becomes an actionable message.
+    function evidenceUnavailableMessage() {
+        const status = state.evidenceStatus;
+        const err = (state.evidenceError || "").trim();
+        if (status === "missing") {
+            return "Evidence wasn’t generated for this report. If this persists, the worker may be on a different release than the site — re-running the comparison should regenerate it.";
+        }
+        if (status === "error") {
+            return err ? ("The source documents couldn’t be prepared: " + err) : "The source documents couldn’t be prepared for this report.";
+        }
+        if (status === "preparing") {
+            return "The source documents are still being prepared — refresh in a moment.";
+        }
+        // ready/unknown, but the manifest or its artifacts are gone (expired or evicted from storage).
+        return "The source documents for this report are no longer available (they may have expired).";
+    }
+
     // Last-resort panel state: explain + offer the original file when we can
     // neither render pages nor show extracted text.
     function renderUnavailable(scroll, source, message) {
@@ -658,7 +676,8 @@
         const sourceId = roleSourceId(item, role);
         const source = sourceId ? manifestSources()[sourceId] : null;
         if (state.manifestUnavailable || !source) {
-            renderUnavailable(scroll, source, "This document is unavailable.");
+            const message = state.manifestUnavailable ? evidenceUnavailableMessage() : "This document is unavailable.";
+            renderUnavailable(scroll, source, message);
             return;
         }
 

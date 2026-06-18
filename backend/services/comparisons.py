@@ -371,12 +371,15 @@ async def _current_task_ttl(redis_client: Any | None, task_id: str | None) -> in
         ttl = await redis_client.ttl(task_id)
     except Exception:
         ttl = None
+    # Align the evidence lifetime with the report's own: -1 = the task hash is
+    # persisted (no expiry) → evidence must persist too (don't let it expire out
+    # from under a kept report); >0 = inherit the remaining seconds. Anything
+    # else (missing/unknown) falls back, WITHOUT mutating the task hash's expiry
+    # — a TTL resolver shouldn't be a side-effecting writer.
+    if ttl == -1:
+        return None
     if isinstance(ttl, int) and ttl > 0:
         return ttl
-    try:
-        await redis_client.expire(task_id, fallback_ttl)
-    except Exception:
-        pass
     return fallback_ttl
 
 

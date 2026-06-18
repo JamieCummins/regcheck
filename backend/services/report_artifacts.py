@@ -8,7 +8,14 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from ..core.storage import get_s3_config, s3_delete_key, s3_get_bytes
+from ..core.storage import (
+    get_persist_s3_config,
+    get_s3_config,
+    s3_config_for_bucket,
+    s3_delete_key,
+    s3_get_bytes,
+    s3_put_bytes,
+)
 
 MANIFEST_KEY_TEMPLATE = "report:{task_id}:manifest"
 SOURCE_RAW_KEY_TEMPLATE = "report:{task_id}:source:{source_id}:raw"
@@ -47,19 +54,48 @@ async def _redis_get_bytes(redis_client, key: str) -> bytes | None:
         return gzip.decompress(base64.b64decode(value))
 
 
+def _s3_artifact_key(redis_key: str) -> str:
+    # Mirror the Redis key under the shared regcheck/ prefix as an S3 path.
+    return "regcheck/" + redis_key.replace(":", "/")
+
+
 async def _store_artifact_bytes(
     redis_client,
     *,
     redis_key: str,
     data: bytes,
-    ttl_seconds: int,
+    ttl_seconds: int | None,
+    content_type: str | None = None,
 ) -> dict[str, Any]:
-    """Persist report evidence artifacts in Redis.
+    """Persist a report evidence artifact.
 
-    S3 may be configured for upload handoff between web and worker dynos, but
-    completed report evidence artifacts live in Redis so the status and viewer
-    paths share one storage backend.
+    Large binary artifacts (original documents, rendered PDFs, render data) go to
+    S3 — object storage that's durable, cheap, and out of Redis RAM — whenever a
+    bucket is configured; otherwise (local dev) they fall back to Redis
+    (gzip+base64).
+
+    Routing follows the report's retention: persisted reports (``ttl_seconds is
+    None``, i.e. signed-in) go to the persistent bucket and are kept; anonymous
+    reports (finite ttl) go to the temp bucket, which auto-expires via an S3
+    lifecycle rule (the cleanup schedule below is a belt-and-suspenders backstop).
+    The entry records its ``storage``+``bucket``+``key`` so reads/deletes target
+    the right bucket and pre-existing Redis artifacts keep working through a cutover.
     """
+    cfg = get_persist_s3_config() if ttl_seconds is None else get_s3_config()
+    if cfg is not None:
+        s3_key = _s3_artifact_key(redis_key)
+
+        def _put() -> None:
+            s3_put_bytes(cfg, key=s3_key, data=data, content_type=content_type)
+
+        await asyncio.to_thread(_put)
+        if ttl_seconds is not None:
+            try:
+                await redis_client.zadd(S3_CLEANUP_ZSET, {s3_key: time.time() + ttl_seconds})
+            except Exception:  # pragma: no cover - best-effort scheduling
+                pass
+        return {"storage": "s3", "bucket": cfg.bucket, "key": s3_key, "compressed_bytes": len(data)}
+
     compressed_bytes = await _redis_set_bytes(redis_client, redis_key, data, ttl_seconds)
     return {"storage": "redis", "key": redis_key, "compressed_bytes": compressed_bytes}
 
@@ -106,14 +142,19 @@ async def verify_manifest_artifacts(
     for source_id, artifact_name, artifact in _iter_manifest_artifacts(manifest):
         storage = artifact.get("storage")
         key = artifact.get("key")
-        if storage != "redis":
+        if not key:
+            raise RuntimeError(f"{source_id}.{artifact_name} is missing an artifact key")
+        if storage == "redis":
+            if not await redis_client.exists(key):
+                raise RuntimeError(f"{source_id}.{artifact_name} Redis artifact key was not visible after save")
+        elif storage == "s3":
+            # s3_put_bytes is synchronous and raises on failure; new objects are
+            # read-after-write consistent, so a returned put means it's present.
+            continue
+        else:
             raise RuntimeError(
                 f"{source_id}.{artifact_name} uses unsupported report artifact storage: {storage or 'missing'}"
             )
-        if not key:
-            raise RuntimeError(f"{source_id}.{artifact_name} is missing a Redis artifact key")
-        if not await redis_client.exists(key):
-            raise RuntimeError(f"{source_id}.{artifact_name} Redis artifact key was not visible after save")
 
     return manifest_artifact_stats(manifest)
 
@@ -142,6 +183,7 @@ async def store_source_artifacts(
         redis_key=_render_key(task_id, source_id),
         data=render_bytes,
         ttl_seconds=ttl_seconds,
+        content_type="application/json",
     )
 
     if raw_bytes is not None:
@@ -151,6 +193,7 @@ async def store_source_artifacts(
             redis_key=_raw_key(task_id, source_id),
             data=raw_bytes,
             ttl_seconds=ttl_seconds,
+            content_type=raw_content_type,
         )
         artifacts["raw"] = {
             **raw_artifact,
@@ -189,21 +232,44 @@ async def load_manifest(redis_client, task_id: str) -> dict[str, Any] | None:
 
 
 async def delete_report_artifacts(redis_client, task_id: str) -> None:
-    """Delete a report's Redis evidence artifacts: the manifest and every
-    per-source render/raw blob it references."""
-    keys = [manifest_key(task_id)]
+    """Delete a report's evidence artifacts: the manifest and every per-source
+    render/raw blob it references, across both Redis and S3."""
     try:
         manifest = await load_manifest(redis_client, task_id)
     except Exception:
         manifest = None
+
+    redis_keys = [manifest_key(task_id)]
+    s3_targets: list[tuple[str | None, str]] = []  # (bucket, key)
     if manifest:
+        for _source_id, _artifact_name, artifact in _iter_manifest_artifacts(manifest):
+            if artifact.get("storage") == "s3" and artifact.get("key"):
+                s3_targets.append((artifact.get("bucket"), str(artifact["key"])))
+        # Also clear any legacy/Redis-stored per-source blobs.
         for source_id in (manifest.get("sources") or {}):
-            keys.append(_render_key(task_id, str(source_id)))
-            keys.append(_raw_key(task_id, str(source_id)))
+            redis_keys.append(_render_key(task_id, str(source_id)))
+            redis_keys.append(_raw_key(task_id, str(source_id)))
+
     try:
-        await redis_client.delete(*keys)
+        await redis_client.delete(*redis_keys)
     except Exception:  # pragma: no cover - best effort cleanup
         pass
+
+    if s3_targets:
+        def _delete_all() -> None:
+            for bucket, key in s3_targets:
+                cfg = s3_config_for_bucket(bucket) if bucket else get_s3_config()
+                if cfg is None:
+                    continue
+                try:
+                    s3_delete_key(cfg, key=key)
+                except Exception:
+                    continue
+        await asyncio.to_thread(_delete_all)
+        try:  # drop any temp-bucket keys from the expiry schedule too
+            await redis_client.zrem(S3_CLEANUP_ZSET, *[key for _bucket, key in s3_targets])
+        except Exception:  # pragma: no cover - best effort
+            pass
 
 
 async def load_artifact_bytes(redis_client, artifact: dict[str, Any] | None) -> bytes | None:
@@ -216,7 +282,10 @@ async def load_artifact_bytes(redis_client, artifact: dict[str, Any] | None) -> 
     if storage == "redis":
         return await _redis_get_bytes(redis_client, key)
     if storage == "s3":
-        cfg = get_s3_config()
+        # Read from whichever bucket the artifact was written to (temp vs
+        # persist); fall back to the default bucket for entries without one.
+        bucket = artifact.get("bucket")
+        cfg = s3_config_for_bucket(bucket) if bucket else get_s3_config()
         if cfg is None:
             return None
 
