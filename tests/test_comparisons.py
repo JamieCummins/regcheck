@@ -311,6 +311,41 @@ def test_groq_passes_reasoning_effort_via_extra_body(monkeypatch):
     assert captured["extra_body"] == {"reasoning_effort": "high"}
 
 
+def test_run_comparison_degrades_on_unparseable_response(monkeypatch):
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    def _corpus(prefix):
+        return EmbeddingCorpus(
+            segments=["a segment of text"],
+            embeddings=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            chunk_ids=[f"{prefix}_0001"],
+            norms=np.array([1.0], dtype=np.float32),
+            metadata=[{}],
+        )
+
+    prereg, paper = "p", "x"
+    corpus_cache = {
+        f"prereg:{hashlib.sha256(prereg.encode()).hexdigest()}": _corpus("PREREG"),
+        f"paper:{hashlib.sha256(paper.encode()).hexdigest()}": _corpus("PAPER"),
+    }
+    # Avoid the embeddings API for the query; make the model return non-JSON prose.
+    monkeypatch.setattr(comparisons, "get_embedding", lambda text, model=None: np.array([1.0, 0.0, 0.0], dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_claude_chat", lambda **kw: "I considered the dimension but produced no JSON object.")
+
+    result = comparisons.run_comparison(prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache)
+
+    # One degraded item — the whole report is NOT aborted by one bad response.
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.dimension == "Sample size"
+    assert item.deviation_judgement == "Insufficient evidence"
+    assert item.deviation_information  # explains the parse failure
+
+
 def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
     import numpy as np
 
