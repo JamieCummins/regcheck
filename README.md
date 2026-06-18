@@ -16,7 +16,7 @@ Status: beta (under active development).
 ## Prerequisites
 - Python 3.12+ (virtualenv recommended)
 - Redis (local or remote) for the web flow; CLI can run without Redis.
-- API keys as needed: `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY` (set whichever provider you use).
+- API keys as needed: `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `CLAUDE_API_KEY` (set whichever provider you use).
 - Optional: GROBID/DPT2 settings if using those parsers.
 
 ## Setup
@@ -39,16 +39,16 @@ REDIS_URL=redis://localhost:6379/0               # preferred (HEROKU_REDIS_OLIVE
 SESSION_SECRET=your-session-secret
 LOG_LEVEL=INFO                                   # optional
 OPENAI_API_KEY=...
-GROQ_API_KEY=...
 DEEPSEEK_API_KEY=...
+CLAUDE_API_KEY=...
 
 # Optional model overrides
 OPENAI_MODEL=gpt-5
 OPENAI_COMPARISON_MODEL=gpt-5
 OPENAI_EXPERIMENT_MODEL=gpt-5
 OPENAI_EXPERIMENT_REASONING_EFFORT=medium        # low | medium | high
-GROQ_MODEL=llama-3.3-70b-versatile
 DEEPSEEK_MODEL=deepseek-reasoner
+CLAUDE_MODEL=claude-opus-4-8
 
 # Optional parser overrides
 GROBID_URL=https://kermitt2-grobid.hf.space/api/processFulltextDocument
@@ -153,7 +153,7 @@ pytest
 - Web flow uses Redis for progress tracking; the CLI calls comparison services directly and works without Redis.
 - On Heroku, use a separate `worker` dyno to process comparisons from the Redis queue; the web dyno enqueues jobs.
 - For multi-dyno deployments (web + worker), configure `S3_BUCKET` so workers can fetch uploaded files reliably. When S3 is configured, uploads are deleted from S3 after each job completes. S3 permissions only need to cover the `regcheck/uploads/...` handoff keys. Completed report evidence artifacts are stored in Redis, share the task TTL (`TASK_TTL_SECONDS`), and are not written to S3.
-- Supported LLM providers: `openai`, `groq`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
+- Supported LLM providers: `openai`, `claude`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 
 ## License

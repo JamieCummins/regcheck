@@ -1,7 +1,7 @@
 """LLM provider layer for RegCheck comparisons.
 
 Everything that talks to a model provider lives here: client construction
-(OpenAI / DeepSeek / Groq / Claude), per-provider model resolution, the chat
+(OpenAI / DeepSeek / Claude), per-provider model resolution, the chat
 helpers used by the comparison flows, provider-error classification, and the
 response-parsing utilities. Clients are built lazily so the app/worker boot even
 when a given provider's key is unset — an unset key fails only that provider's
@@ -17,7 +17,6 @@ import os
 from functools import lru_cache
 from typing import Any
 
-from groq import Groq
 from openai import OpenAI
 
 try:  # Optional provider SDK; only required when client_choice == "claude".
@@ -28,13 +27,10 @@ except ImportError:  # pragma: no cover - dependency optional at runtime
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-5"
-DEFAULT_GPT_OSS_MODEL = "openai/gpt-oss-120b"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
-DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 
-# Client choices that run through the OpenAI SDK. (GPT-OSS is an open-weight
-# model that OpenAI's hosted API does not serve — it is routed via Groq below.)
+# Client choices that run through the OpenAI SDK.
 _OPENAI_CLIENTS = {"openai"}
 
 
@@ -80,28 +76,10 @@ def _raise_provider_auth_error(provider: str, env_var: str, exc: Exception) -> N
     ) from exc
 
 
-def _is_response_format_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    # Includes Groq's `json_validate_failed` (400) — some models, especially
-    # reasoning ones, can't reliably satisfy strict JSON mode, so we retry
-    # without response_format and extract the JSON from the free-form reply.
-    return (
-        "response_format" in text
-        or "json_object" in text
-        or "json mode" in text
-        or "json_validate_failed" in text
-        or "failed to validate json" in text
-    )
-
-
 # ---- per-provider model resolution -------------------------------------------
 
 def _openai_model() -> str:
     return _env_str("OPENAI_COMPARISON_MODEL", _env_str("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
-
-
-def _gpt_oss_model() -> str:
-    return _env_str("GPT_OSS_MODEL", DEFAULT_GPT_OSS_MODEL)
 
 
 def _openai_experiment_model() -> str:
@@ -114,10 +92,6 @@ def _openai_family_model(client_choice: str, *, experiment: bool = False) -> str
 
 def _deepseek_model() -> str:
     return _env_str("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
-
-
-def _groq_model() -> str:
-    return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 
 
 def _claude_model() -> str:
@@ -210,11 +184,6 @@ def _openai_error_param(exc: Exception) -> str | None:
                 return param.strip()
 
     message = str(exc)
-    lowered = message.lower()
-    # Groq returns json_validate_failed when a model can't satisfy strict JSON
-    # mode; treat it like a response_format error so the caller retries without it.
-    if "json_validate_failed" in lowered or "failed to validate json" in lowered:
-        return "response_format"
     for candidate in ("reasoning_effort", "response_format"):
         if candidate in message:
             return candidate
@@ -290,48 +259,6 @@ def _openai_chat_text(
     return _message_content_to_text(response.choices[0].message)
 
 
-def _groq_chat_completion(
-    *,
-    model: str,
-    messages: list[dict[str, str]],
-    use_json_mode: bool,
-    reasoning_effort: str | None = None,
-):
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0,
-    }
-    if use_json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
-    # GPT-OSS is a reasoning model on Groq and accepts an effort hint; Llama does
-    # not. The pinned Groq SDK doesn't type `reasoning_effort`, so forward it via
-    # extra_body (it reaches the API as a request-body field) instead of as a
-    # top-level kwarg, which the SDK rejects with a TypeError.
-    if reasoning_effort:
-        kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
-    try:
-        return get_groq_client().chat.completions.create(**kwargs)
-    except Exception as exc:
-        if _is_provider_auth_error(exc):
-            _raise_provider_auth_error("Groq", "GROQ_API_KEY", exc)
-        if not use_json_mode or not _is_response_format_error(exc):
-            raise
-        logger.info(
-            "Groq JSON response_format unsupported; retrying without response_format",
-            extra={"model": model, "error": str(exc)},
-        )
-        retry_kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0}
-        if reasoning_effort:
-            retry_kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
-        try:
-            return get_groq_client().chat.completions.create(**retry_kwargs)
-        except Exception as retry_exc:
-            if _is_provider_auth_error(retry_exc):
-                _raise_provider_auth_error("Groq", "GROQ_API_KEY", retry_exc)
-            raise
-
-
 # ---- client construction (lazy) ----------------------------------------------
 
 # Clients are built once and reused (``lru_cache``) so repeated per-dimension
@@ -358,32 +285,6 @@ def get_deepseek_client() -> OpenAI:
             "Missing DEEPSEEK_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-
-
-@lru_cache(maxsize=1)
-def get_groq_client() -> "Groq":
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Missing GROQ_API_KEY. Please contact administrators."
-        )
-    return Groq(api_key=api_key)
-
-
-@lru_cache(maxsize=1)
-def get_groq_openai_client() -> OpenAI:
-    """Groq's OpenAI-compatible endpoint, via the OpenAI SDK.
-
-    GPT-OSS is a reasoning model that takes ``reasoning_effort`` as a native
-    top-level argument here — unlike the pinned Groq SDK, which doesn't type it
-    (and forced an extra_body workaround). This is the exact call pattern that
-    works directly against the Groq API."""
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Missing GROQ_API_KEY. Please contact administrators."
-        )
-    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
 
 @lru_cache(maxsize=1)
@@ -435,7 +336,7 @@ def _claude_chat(
 ) -> str:
     """Call Claude (Anthropic Messages API) and return the concatenated text.
 
-    Mirrors the synchronous client pattern used for Groq/DeepSeek. Reasoning
+    Mirrors the synchronous client pattern used for DeepSeek. Reasoning
     effort is OpenAI-family-specific and intentionally not forwarded here."""
     client = get_claude_client()
     system, convo = _split_system_for_anthropic(messages)
