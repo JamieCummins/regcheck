@@ -75,6 +75,7 @@ from .llm import (
     get_claude_client,
     get_deepseek_client,
     get_groq_client,
+    get_groq_openai_client,
     get_openai_client,
 )
 from .dimensions import (
@@ -477,15 +478,14 @@ async def extract_experiment_specific_paper_text(
                 reasoning_effort=normalized_effort,
             )
         if client_choice == "gpt_oss":
-            # GPT-OSS-120B is served via Groq, not OpenAI's hosted API. It is a
-            # reasoning model, so forward the effort hint when set.
-            response = _groq_chat_completion(
+            # GPT-OSS-120B is served via Groq's OpenAI-compatible endpoint; the
+            # OpenAI SDK forwards reasoning_effort natively (unlike the Groq SDK).
+            return _openai_chat_text(
+                get_groq_openai_client(),
                 model=_gpt_oss_model(),
                 messages=messages,
-                use_json_mode=False,
-                reasoning_effort=_normalize_reasoning_effort_value(reasoning_effort),
+                reasoning_effort=reasoning_effort,
             )
-            return _message_content_to_text(response.choices[0].message)
         if client_choice == "deepseek":
             deepseek_client = get_deepseek_client()
             response = deepseek_client.chat.completions.create(
@@ -1686,15 +1686,17 @@ def run_comparison(
                 reasoning_effort=normalized_effort,
             )
     elif client_choice == "gpt_oss":
-        # GPT-OSS-120B is an open-weight reasoning model served via Groq (OpenAI's
-        # hosted API does not offer it); forward the reasoning effort when set.
-        response = _groq_chat_completion(
+        # GPT-OSS-120B (open-weight reasoning model) is served via Groq's
+        # OpenAI-compatible endpoint. The OpenAI SDK takes reasoning_effort as a
+        # native top-level arg (the pinned Groq SDK does not), matching the call
+        # that works directly against the API; _openai_chat_json also degrades
+        # gracefully if the model can't satisfy strict JSON mode.
+        result_json = _openai_chat_json(
+            get_groq_openai_client(),
             model=_gpt_oss_model(),
             messages=messages,
-            use_json_mode=True,
-            reasoning_effort=_normalize_reasoning_effort_value(reasoning_effort),
+            reasoning_effort=reasoning_effort,
         )
-        result_json = _message_content_to_text(response.choices[0].message)
     elif client_choice == "deepseek":
         deepseek_client = get_deepseek_client()
         response = deepseek_client.chat.completions.create(

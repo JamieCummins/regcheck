@@ -640,22 +640,23 @@ def test_gpt_oss_is_not_openai_family_and_uses_groq_model():
 
 @pytest.mark.asyncio
 async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
+    # gpt_oss must use Groq's OpenAI-compatible endpoint, NOT OpenAI's hosted API,
+    # and pass reasoning_effort as a native top-level arg (the working Colab call).
     def _no_openai():
-        raise AssertionError("gpt_oss must not touch the OpenAI client")
+        raise AssertionError("gpt_oss must not touch the hosted OpenAI client")
 
     monkeypatch.setattr(comparisons, "get_openai_client", _no_openai)
 
     captured = {}
 
-    def fake_groq(*, model, messages, use_json_mode, reasoning_effort=None):
-        captured["model"] = model
-        captured["use_json_mode"] = use_json_mode
-        captured["reasoning_effort"] = reasoning_effort
+    def fake_create(**kwargs):
+        captured.update(kwargs)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="INTRO ... EXPERIMENT 2 ... DISCUSSION"))]
         )
 
-    monkeypatch.setattr(comparisons, "_groq_chat_completion", fake_groq)
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(comparisons, "get_groq_openai_client", lambda: fake_client)
 
     out = await comparisons.extract_experiment_specific_paper_text(
         "Full paper text spanning several experiments.",
@@ -665,5 +666,4 @@ async def test_gpt_oss_routes_through_groq_not_openai(monkeypatch):
     )
     assert "EXPERIMENT 2" in out
     assert captured["model"] == "openai/gpt-oss-120b"
-    assert captured["use_json_mode"] is False
-    assert captured["reasoning_effort"] == "high"  # GPT-OSS forwards the effort to Groq
+    assert captured["reasoning_effort"] == "high"  # native top-level arg via Groq's OpenAI endpoint

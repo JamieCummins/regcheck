@@ -210,6 +210,11 @@ def _openai_error_param(exc: Exception) -> str | None:
                 return param.strip()
 
     message = str(exc)
+    lowered = message.lower()
+    # Groq returns json_validate_failed when a model can't satisfy strict JSON
+    # mode; treat it like a response_format error so the caller retries without it.
+    if "json_validate_failed" in lowered or "failed to validate json" in lowered:
+        return "response_format"
     for candidate in ("reasoning_effort", "response_format"):
         if candidate in message:
             return candidate
@@ -363,6 +368,22 @@ def get_groq_client() -> "Groq":
             "Missing GROQ_API_KEY. Please contact administrators."
         )
     return Groq(api_key=api_key)
+
+
+@lru_cache(maxsize=1)
+def get_groq_openai_client() -> OpenAI:
+    """Groq's OpenAI-compatible endpoint, via the OpenAI SDK.
+
+    GPT-OSS is a reasoning model that takes ``reasoning_effort`` as a native
+    top-level argument here — unlike the pinned Groq SDK, which doesn't type it
+    (and forced an extra_body workaround). This is the exact call pattern that
+    works directly against the Groq API."""
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing GROQ_API_KEY. Please contact administrators."
+        )
+    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
 
 @lru_cache(maxsize=1)
