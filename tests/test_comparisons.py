@@ -629,8 +629,10 @@ async def test_qwen_routes_through_groq_openai_with_requested_params(monkeypatch
     )
 
     assert "EXPERIMENT 2" in out
-    assert "<think>" not in out and "deliberating" not in out  # reasoning hidden
+    assert "<think>" not in out and "deliberating" not in out  # stray reasoning stripped
     assert captured["model"] == "qwen/qwen3.6-27b"
     assert captured["temperature"] == 0.6
-    assert captured["reasoning_effort"] == "default"
-    assert captured["extra_body"] == {"reasoning_format": "hidden"}
+    assert captured["reasoning_effort"] == "none"  # QWEN_REASONING_EFFORT default
+    # NB: no reasoning_format — "hidden"/"parsed" route the answer into the reasoning
+    # channel on this Groq model and return empty content (verified live).
+    assert "extra_body" not in captured
