@@ -636,3 +636,28 @@ async def test_qwen_routes_through_groq_openai_with_requested_params(monkeypatch
     # NB: no reasoning_format — "hidden"/"parsed" route the answer into the reasoning
     # channel on this Groq model and return empty content (verified live).
     assert "extra_body" not in captured
+    # Isolation call returns free text, so it must NOT force JSON-object mode.
+    assert "response_format" not in captured
+
+
+def test_qwen_uses_json_object_mode_only_for_comparison(monkeypatch):
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"deviation_judgement":"no"}'))]
+        )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_groq_openai_client", lambda: fake_client)
+
+    # Comparison call → JSON-object structured output (strict json_schema is rejected
+    # by this Groq model, so json_object is the reliable choice).
+    llm._qwen_chat([{"role": "user", "content": "x"}], use_json_mode=True)
+    assert captured["response_format"] == {"type": "json_object"}
+
+    # Isolation call (free text) → no response_format.
+    llm._qwen_chat([{"role": "user", "content": "x"}])
+    assert "response_format" not in captured

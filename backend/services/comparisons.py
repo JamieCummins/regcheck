@@ -1723,10 +1723,11 @@ def run_comparison(
                 )
         result_json = _strip_deepseek_reasoning(raw_content)
     elif client_choice == "qwen":
-        # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint. Plain
-        # text + _extract_json_payload (no strict JSON mode), with reasoning hidden;
-        # an unparseable reply degrades per-dimension (handled below), not aborts.
-        result_json = _qwen_chat(messages)
+        # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint, in
+        # JSON-object mode so the reply is a clean JSON object (stops the occasional
+        # prose-wrapped/truncated reply). An unparseable reply still degrades
+        # per-dimension (handled below) rather than aborting.
+        result_json = _qwen_chat(messages, use_json_mode=True)
     elif client_choice == "claude":
         result_json = _claude_chat(
             model=_claude_model(),
