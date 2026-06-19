@@ -269,20 +269,22 @@ def _openai_chat_text(
 def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> str:
     """Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
 
-    Per the requested config: ``temperature=0.6`` and ``reasoning_effort="default"``,
-    with reasoning tokens hidden — we ask Groq to omit them (``reasoning_format:
-    "hidden"`` via extra_body) AND strip any ``<think>`` block defensively, so the
-    caller gets only the answer. Plain text (no strict JSON mode) like the Claude
-    path; the master prompt already mandates a JSON object, and ``run_comparison``
-    degrades per-dimension if a reply can't be parsed.
+    ``temperature=0.6``; reasoning effort from ``QWEN_REASONING_EFFORT`` (default
+    ``"none"``). IMPORTANT: we do NOT set Groq's ``reasoning_format`` — for this
+    model "hidden"/"parsed" route the *answer* into the reasoning channel and
+    return empty ``content`` (verified live). With no reasoning_format the answer
+    is in ``content``; ``reasoning_effort="none"`` keeps it tight and complete, and
+    ``_extract_json_payload`` (comparison) / ``_strip_deepseek_reasoning`` strip any
+    stray reasoning so callers get just the answer. Plain text, no strict JSON mode
+    (the master prompt mandates a JSON object; ``run_comparison`` degrades per
+    dimension if a reply still can't be parsed).
     """
     client = get_groq_openai_client()
     kwargs: dict[str, Any] = {
         "model": model or _qwen_model(),
         "messages": messages,
         "temperature": 0.6,
-        "reasoning_effort": "default",
-        "extra_body": {"reasoning_format": "hidden"},
+        "reasoning_effort": _env_str("QWEN_REASONING_EFFORT", "none"),
     }
     while True:
         try:
@@ -295,9 +297,7 @@ def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> s
             # failing the dimension outright (Groq model support varies).
             lowered = str(exc).lower()
             dropped = None
-            if "reasoning_format" in lowered and "extra_body" in kwargs:
-                kwargs.pop("extra_body"); dropped = "reasoning_format"
-            elif "reasoning_effort" in lowered and "reasoning_effort" in kwargs:
+            if "reasoning_effort" in lowered and "reasoning_effort" in kwargs:
                 kwargs.pop("reasoning_effort"); dropped = "reasoning_effort"
             elif "temperature" in lowered and "temperature" in kwargs:
                 kwargs.pop("temperature"); dropped = "temperature"
