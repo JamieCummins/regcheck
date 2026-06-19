@@ -194,6 +194,23 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 prereg_path, prereg_ext = await asyncio.to_thread(
                     fetch_osf_preregistration, osf_url, dest_dir=settings.upload_dir
                 )
+            paper_path_g = job.get("paper_path", "") or ""
+            # Log the resolved inputs so a read/parse failure can be traced to the
+            # exact file + extension (esp. for OSF, where the prereg is fetched here).
+            logger.info(
+                "general_preregistration inputs resolved",
+                extra={
+                    "task_id": task_id,
+                    "osf_url": osf_url,
+                    "prereg_ext": prereg_ext,
+                    "prereg_exists": bool(prereg_path) and Path(prereg_path).exists(),
+                    "prereg_size": (Path(prereg_path).stat().st_size if prereg_path and Path(prereg_path).exists() else None),
+                    "paper_ext": job.get("paper_ext"),
+                    "paper_exists": bool(paper_path_g) and Path(paper_path_g).exists(),
+                    "paper_size": (Path(paper_path_g).stat().st_size if paper_path_g and Path(paper_path_g).exists() else None),
+                    "multiple_experiments": job.get("multiple_experiments"),
+                },
+            )
             await general_preregistration_comparison(
                 prereg_path,
                 prereg_ext,
