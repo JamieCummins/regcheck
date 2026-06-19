@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -248,13 +249,23 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
         await run_with_concurrency_limit(_runner)
     except Exception as exc:
         logger.error("Job failed", exc_info=exc, extra={"task_id": task_id})
+        # Surface the exception type + originating code location in the status so a
+        # failure is diagnosable from the report page even when the worker's stdout
+        # logs aren't captured by the platform's log drain.
+        loc = ""
+        tb = traceback.extract_tb(exc.__traceback__)
+        app_frames = [f for f in tb if "/backend/" in f.filename.replace("\\", "/")]
+        if app_frames:
+            last = app_frames[-1]
+            loc = f" [{Path(last.filename).name}:{last.lineno} in {last.name}]"
+        status_msg = f"Worker error: {type(exc).__name__}: {exc}{loc}"[:480]
         if task_id:
             try:
                 await redis_client.hset(
                     task_id,
                     mapping={
                         "state": "FAILURE",
-                        "status": f"Worker error: {exc}",
+                        "status": status_msg,
                     },
                 )
                 await redis_client.expire(task_id, settings.task_ttl_seconds)

@@ -192,7 +192,11 @@ async def pdf2dpt(
     dpt_url = (dpt_url or os.environ.get("DPT_URL") or "").strip() or (
         "https://api.va.eu-west-1.landing.ai/v1/ade/parse"
     )
-    headers = {"Authorization": api_key}
+    # landing.ai requires an auth scheme; a bare token is rejected ("Authorization
+    # header should start with 'Basic ' or 'Bearer '"). Accept a key that already
+    # carries a scheme (don't double-prefix); otherwise add Bearer (PAT default).
+    auth_value = api_key if api_key.lower().startswith(("bearer ", "basic ")) else f"Bearer {api_key}"
+    headers = {"Authorization": auth_value}
     data = {"model": "dpt-2-latest"}
     timeout_seconds = float(os.environ.get("DPT_TIMEOUT_SECONDS", "240") or 240)
     timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
