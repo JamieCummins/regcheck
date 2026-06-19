@@ -585,3 +585,52 @@ def test_validate_doc_ext_rejects_unsupported_paper_types(ext):
         _validate_doc_ext(ext, kind="paper")
     assert exc_info.value.status_code == 400
     assert "paper file type" in exc_info.value.detail
+
+
+def test_qwen_is_not_openai_family_and_uses_groq_endpoint():
+    # Qwen is open-weight (served via Groq), so it must NOT route through the
+    # hosted OpenAI client.
+    assert "qwen" not in comparisons._OPENAI_CLIENTS
+    assert comparisons._qwen_model() == "qwen/qwen3.6-27b"
+
+
+@pytest.mark.asyncio
+async def test_qwen_routes_through_groq_openai_with_requested_params(monkeypatch):
+    # Qwen must use Groq's OpenAI-compatible endpoint (not hosted OpenAI), send
+    # temperature=0.6 + reasoning_effort="default" + hidden reasoning, and return
+    # text with any <think> block stripped.
+    def _no_openai():
+        raise AssertionError("qwen must not touch the hosted OpenAI client")
+
+    monkeypatch.setattr(comparisons, "get_openai_client", _no_openai)
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="<think>deliberating</think>INTRO ... EXPERIMENT 2 ... DISCUSSION"
+                    )
+                )
+            ]
+        )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    # _qwen_chat lives in llm and calls llm.get_groq_openai_client, so patch there.
+    monkeypatch.setattr(llm, "get_groq_openai_client", lambda: fake_client)
+
+    out = await comparisons.extract_experiment_specific_paper_text(
+        "Full paper text spanning several experiments.",
+        "2",
+        client_choice="qwen",
+    )
+
+    assert "EXPERIMENT 2" in out
+    assert "<think>" not in out and "deliberating" not in out  # reasoning hidden
+    assert captured["model"] == "qwen/qwen3.6-27b"
+    assert captured["temperature"] == 0.6
+    assert captured["reasoning_effort"] == "default"
+    assert captured["extra_body"] == {"reasoning_format": "hidden"}

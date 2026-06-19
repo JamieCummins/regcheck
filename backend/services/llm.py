@@ -29,8 +29,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
+# Open-weight Qwen, served via Groq's OpenAI-compatible endpoint (uses GROQ_API_KEY).
+DEFAULT_QWEN_MODEL = "qwen/qwen3.6-27b"
 
-# Client choices that run through the OpenAI SDK.
+# Client choices that run through the OpenAI SDK against the *hosted* OpenAI API.
+# (Qwen also uses the OpenAI SDK but against Groq's base URL — see get_groq_openai_client.)
 _OPENAI_CLIENTS = {"openai"}
 
 
@@ -92,6 +95,10 @@ def _openai_family_model(client_choice: str, *, experiment: bool = False) -> str
 
 def _deepseek_model() -> str:
     return _env_str("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+
+
+def _qwen_model() -> str:
+    return _env_str("QWEN_MODEL", DEFAULT_QWEN_MODEL)
 
 
 def _claude_model() -> str:
@@ -259,6 +266,48 @@ def _openai_chat_text(
     return _message_content_to_text(response.choices[0].message)
 
 
+def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> str:
+    """Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
+
+    Per the requested config: ``temperature=0.6`` and ``reasoning_effort="default"``,
+    with reasoning tokens hidden — we ask Groq to omit them (``reasoning_format:
+    "hidden"`` via extra_body) AND strip any ``<think>`` block defensively, so the
+    caller gets only the answer. Plain text (no strict JSON mode) like the Claude
+    path; the master prompt already mandates a JSON object, and ``run_comparison``
+    degrades per-dimension if a reply can't be parsed.
+    """
+    client = get_groq_openai_client()
+    kwargs: dict[str, Any] = {
+        "model": model or _qwen_model(),
+        "messages": messages,
+        "temperature": 0.6,
+        "reasoning_effort": "default",
+        "extra_body": {"reasoning_format": "hidden"},
+    }
+    while True:
+        try:
+            response = client.chat.completions.create(**kwargs)
+            break
+        except Exception as exc:
+            if _is_provider_auth_error(exc):
+                _raise_provider_auth_error("Groq", "GROQ_API_KEY", exc)
+            # Drop an optional knob the endpoint rejects and retry, rather than
+            # failing the dimension outright (Groq model support varies).
+            lowered = str(exc).lower()
+            dropped = None
+            if "reasoning_format" in lowered and "extra_body" in kwargs:
+                kwargs.pop("extra_body"); dropped = "reasoning_format"
+            elif "reasoning_effort" in lowered and "reasoning_effort" in kwargs:
+                kwargs.pop("reasoning_effort"); dropped = "reasoning_effort"
+            elif "temperature" in lowered and "temperature" in kwargs:
+                kwargs.pop("temperature"); dropped = "temperature"
+            if dropped is None:
+                raise
+            logger.info("Qwen call rejected %s; retrying without it", dropped, exc_info=exc)
+    raw = _message_content_to_text(response.choices[0].message)
+    return _strip_deepseek_reasoning(raw)
+
+
 # ---- client construction (lazy) ----------------------------------------------
 
 # Clients are built once and reused (``lru_cache``) so repeated per-dimension
@@ -285,6 +334,20 @@ def get_deepseek_client() -> OpenAI:
             "Missing DEEPSEEK_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+
+
+@lru_cache(maxsize=1)
+def get_groq_openai_client() -> OpenAI:
+    """Groq's OpenAI-compatible endpoint, via the OpenAI SDK (used for Qwen).
+
+    ``reasoning_effort``/``temperature`` are native OpenAI args here; Groq-specific
+    knobs (e.g. ``reasoning_format``) are forwarded via ``extra_body``."""
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing GROQ_API_KEY. Please contact administrators."
+        )
+    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
 
 @lru_cache(maxsize=1)
