@@ -266,18 +266,24 @@ def _openai_chat_text(
     return _message_content_to_text(response.choices[0].message)
 
 
-def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> str:
+def _qwen_chat(
+    messages: list[dict[str, str]], *, model: str | None = None, use_json_mode: bool = False
+) -> str:
     """Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
 
     ``temperature=0.6``; reasoning effort from ``QWEN_REASONING_EFFORT`` (default
-    ``"none"``). IMPORTANT: we do NOT set Groq's ``reasoning_format`` — for this
-    model "hidden"/"parsed" route the *answer* into the reasoning channel and
-    return empty ``content`` (verified live). With no reasoning_format the answer
-    is in ``content``; ``reasoning_effort="none"`` keeps it tight and complete, and
-    ``_extract_json_payload`` (comparison) / ``_strip_deepseek_reasoning`` strip any
-    stray reasoning so callers get just the answer. Plain text, no strict JSON mode
-    (the master prompt mandates a JSON object; ``run_comparison`` degrades per
-    dimension if a reply still can't be parsed).
+    ``"none"``). When ``use_json_mode`` (the comparison call), request JSON-object
+    structured output (``response_format={"type":"json_object"}``) — verified
+    supported + reliable here, and it stops the occasional prose-wrapped/truncated
+    reply that the plain-text path let through. The experiment-isolation call leaves
+    it off (it needs free text, not a JSON object). Strict ``json_schema`` is NOT
+    used — this Groq model rejects it (400).
+
+    IMPORTANT: we do NOT set Groq's ``reasoning_format`` — for this model
+    "hidden"/"parsed" route the *answer* into the reasoning channel and return empty
+    ``content`` (verified live). With no reasoning_format the answer is in
+    ``content``; ``reasoning_effort="none"`` keeps it tight + complete, and
+    ``_strip_deepseek_reasoning`` strips any stray reasoning.
     """
     client = get_groq_openai_client()
     kwargs: dict[str, Any] = {
@@ -286,6 +292,8 @@ def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> s
         "temperature": 0.6,
         "reasoning_effort": _env_str("QWEN_REASONING_EFFORT", "none"),
     }
+    if use_json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
     while True:
         try:
             response = client.chat.completions.create(**kwargs)
@@ -297,7 +305,9 @@ def _qwen_chat(messages: list[dict[str, str]], *, model: str | None = None) -> s
             # failing the dimension outright (Groq model support varies).
             lowered = str(exc).lower()
             dropped = None
-            if "reasoning_effort" in lowered and "reasoning_effort" in kwargs:
+            if ("response_format" in lowered or "json" in lowered) and "response_format" in kwargs:
+                kwargs.pop("response_format"); dropped = "response_format"
+            elif "reasoning_effort" in lowered and "reasoning_effort" in kwargs:
                 kwargs.pop("reasoning_effort"); dropped = "reasoning_effort"
             elif "temperature" in lowered and "temperature" in kwargs:
                 kwargs.pop("temperature"); dropped = "temperature"
