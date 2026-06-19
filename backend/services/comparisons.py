@@ -45,6 +45,7 @@ from .llm import (
     DEFAULT_CLAUDE_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
     DEFAULT_OPENAI_MODEL,
+    DEFAULT_QWEN_MODEL,
     _OPENAI_CLIENTS,
     _claude_chat,
     _claude_max_tokens,
@@ -63,11 +64,14 @@ from .llm import (
     _openai_experiment_model,
     _openai_family_model,
     _openai_model,
+    _qwen_chat,
+    _qwen_model,
     _raise_provider_auth_error,
     _split_system_for_anthropic,
     _strip_deepseek_reasoning,
     get_claude_client,
     get_deepseek_client,
+    get_groq_openai_client,
     get_openai_client,
 )
 from .dimensions import (
@@ -481,6 +485,9 @@ async def extract_experiment_specific_paper_text(
             )
             raw_content = _message_content_to_text(response.choices[0].message)
             return _strip_deepseek_reasoning(raw_content)
+        if client_choice == "qwen":
+            # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
+            return _qwen_chat(messages)
         if client_choice == "claude":
             # Long extraction output; allow a larger token budget than the comparison call.
             return _claude_chat(
@@ -1715,6 +1722,11 @@ def run_comparison(
                     },
                 )
         result_json = _strip_deepseek_reasoning(raw_content)
+    elif client_choice == "qwen":
+        # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint. Plain
+        # text + _extract_json_payload (no strict JSON mode), with reasoning hidden;
+        # an unparseable reply degrades per-dimension (handled below), not aborts.
+        result_json = _qwen_chat(messages)
     elif client_choice == "claude":
         result_json = _claude_chat(
             model=_claude_model(),
