@@ -127,6 +127,14 @@
             </div>
         </header>
 
+        {% if multi_study_isolation == "failed" %}
+        <div role="alert" style="margin:0 auto 1.1rem; max-width:1100px; padding:.85rem 1.1rem; border:1px solid rgba(214,158,46,.5); border-left:4px solid #d69e2e; border-radius:.5rem; background:rgba(214,158,46,.12); font-size:.92rem; line-height:1.5;">
+            <strong>Multi-study isolation didn't run.</strong>
+            RegCheck couldn't isolate study {{ multi_study_label or "the selected study" }} from the paper, so this comparison ran on the <strong>full paper</strong> rather than just that study.{% if multi_study_isolation_error %} Reason: {{ multi_study_isolation_error }}.{% endif %}
+            Re-running, or choosing a different model, may help.
+        </div>
+        {% endif %}
+
         <main id="report-app" class="report-workspace" data-task-id="{{ task_id }}">
             <div id="view-decision" class="report-view report-view--decision">
                 <aside class="report-dimension-rail" aria-label="Dimensions">

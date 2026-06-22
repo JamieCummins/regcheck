@@ -661,3 +661,59 @@ def test_qwen_uses_json_object_mode_only_for_comparison(monkeypatch):
     # Isolation call (free text) → no response_format.
     llm._qwen_chat([{"role": "user", "content": "x"}])
     assert "response_format" not in captured
+
+
+@pytest.mark.asyncio
+async def test_multi_study_isolation_failure_is_surfaced(tmp_path, monkeypatch):
+    """Multi-study isolation is best-effort, but a failure must be VISIBLE: the run
+    still completes on the full paper AND sets a persistent `multi_study_isolation`
+    flag so a silently-degraded run isn't mistaken for a study-specific one."""
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+
+    async def boom(*a, **k):
+        raise RuntimeError("model context exceeded")
+
+    monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", boom)
+
+    def fake_runner(p, pa, c, d, **kw):
+        return comparisons.ComparisonResult(items=[comparisons.ComparisonItem(
+            dimension=d, paper_content_quotes="", paper_content_summary="x",
+            registration_content_quotes="", registration_content_summary="y",
+            deviation_judgement="no", deviation_information="ok")])
+
+    class _R:
+        def __init__(s): s.h = {}
+        async def hset(s, k, mapping=None, **kw): s.h.setdefault(k, {}).update(mapping or kw)
+        async def hgetall(s, k): return s.h.get(k, {})
+        async def expire(s, *a, **k): return True
+        async def ttl(s, *a, **k): return 3600
+        async def persist(s, *a, **k): return True
+        async def set(s, k, v, ex=None): s.h[k] = v
+        async def get(s, k): return s.h.get(k)
+        async def exists(s, k): return 1 if k in s.h else 0
+        async def zadd(s, *a, **k): return 1
+
+    fitz = pytest.importorskip("fitz")
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 1.")
+    paper = tmp_path / "paper.pdf"
+    doc = fitz.open(); pg = doc.new_page(); pg.insert_text((72, 72), "Intro. Study 1 results. Discussion."); doc.save(paper); doc.close()
+
+    redis = _R()
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".pdf", "claude", "pymupdf",
+        task_id="t1", redis_client=redis,
+        selected_dimensions=[{"dimension": "Hypotheses", "definition": "the hypotheses"}],
+        comparison_runner=fake_runner, multiple_experiments="yes",
+        experiment_number="1", experiment_text="Study 1")
+
+    st = redis.h.get("t1", {})
+    assert st.get("state") == "SUCCESS"                       # still completes
+    assert st.get("multi_study_isolation") == "failed"        # ...but flagged
+    assert "model context exceeded" in (st.get("multi_study_isolation_error") or "")
+    assert len(res.items) == 1

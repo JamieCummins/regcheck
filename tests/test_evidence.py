@@ -166,3 +166,23 @@ def test_build_file_evidence_source_renders_docx_text_as_pdf(tmp_path):
     assert payload["raw_bytes"].startswith(b"%PDF")
     assert locations
     assert locations[0]["rects"]
+
+
+def test_text_pdf_render_paginates_without_dropping_content():
+    """The renderer must not drop content: the old fixed-2800-char slice could
+    overflow a page (text with many short lines) and silently clip + skip it."""
+    fitz = pytest.importorskip("fitz")
+    from backend.services.evidence import _build_text_pdf_render
+
+    # Many short lines — the layout that defeated the fixed-char slicer.
+    lines = [f"Line {i:03d}: the quick brown fox jumps over the lazy dog." for i in range(400)]
+    pdf = _build_text_pdf_render("\n".join(lines), title="Preregistration")
+    assert pdf
+
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    rendered = "\n".join(doc[i].get_text() for i in range(len(doc)))
+    # Every line survives (no dropped content)...
+    for i in range(400):
+        assert f"Line {i:03d}" in rendered, f"Line {i:03d} was dropped"
+    # ...and no blank/near-blank pages.
+    assert all(len(doc[i].get_text().strip()) > 30 for i in range(len(doc)))

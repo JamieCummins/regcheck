@@ -32,53 +32,51 @@ def _build_text_pdf_render(text: str, *, title: str) -> bytes | None:
         page_height = 792
         margin = 54
         line_rect = fitz.Rect(margin, margin, page_width - margin, page_height - margin)
-        remaining = text.strip()
         font_size = 10.5
-        line_height = font_size * 1.35
+        lineheight = 1.35
 
-        while remaining:
+        def _insert(page, body: str):
+            return page.insert_textbox(
+                line_rect, body, fontsize=font_size, fontname="helv",
+                lineheight=lineheight, color=(0, 0, 0),
+            )
+
+        def _render(page, body: str) -> None:
+            page.clean_contents()
+            page.insert_text((margin, 28), title[:120], fontsize=9, color=(0.28, 0.31, 0.42))
+            _insert(page, body)
+
+        remaining = text.strip()
+        guard = 0
+        while remaining and guard < 10000:
+            guard += 1
             page = doc.new_page(width=page_width, height=page_height)
-            page.insert_text(
-                (margin, 28),
-                title[:120],
-                fontsize=9,
-                color=(0.28, 0.31, 0.42),
-            )
-            overflow = page.insert_textbox(
-                line_rect,
-                remaining,
-                fontsize=font_size,
-                fontname="helv",
-                lineheight=line_height / font_size,
-                color=(0, 0, 0),
-            )
-            if isinstance(overflow, (int, float)) and overflow < 0:
-                # insert_textbox does not expose consumed text. Approximate a page
-                # slice and keep it on paragraph boundaries when possible.
-                max_chars = 2800
-                split_at = remaining.rfind("\n\n", 0, max_chars)
-                if split_at < 400:
-                    split_at = remaining.rfind(" ", 0, max_chars)
-                if split_at < 400:
-                    split_at = min(max_chars, len(remaining))
+            # Binary-search the LARGEST prefix that fits without clipping, then advance
+            # by exactly that much. insert_textbox returns >=0 when the text fits and a
+            # negative value when it overflows; the old fixed-2800-char slice could
+            # exceed a page (esp. text with many short lines), clipping + dropping the
+            # overflow → "missing content" + near-blank pages.
+            lo, hi, best = 1, len(remaining), 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
                 page.clean_contents()
-                page.insert_text(
-                    (margin, 28),
-                    title[:120],
-                    fontsize=9,
-                    color=(0.28, 0.31, 0.42),
-                )
-                page.insert_textbox(
-                    line_rect,
-                    remaining[:split_at].strip(),
-                    fontsize=font_size,
-                    fontname="helv",
-                    lineheight=line_height / font_size,
-                    color=(0, 0, 0),
-                )
-                remaining = remaining[split_at:].strip()
-            else:
-                remaining = ""
+                overflow = _insert(page, remaining[:mid])
+                if isinstance(overflow, (int, float)) and overflow < 0:
+                    hi = mid - 1
+                else:
+                    best = mid
+                    lo = mid + 1
+            # Snap the cut to a paragraph/line/word boundary when one is reasonably
+            # close, so we don't split mid-word.
+            if best < len(remaining):
+                window = remaining[:best]
+                for sep in ("\n\n", "\n", " "):
+                    pos = window.rfind(sep)
+                    if pos >= int(best * 0.5):
+                        best = pos + len(sep)
+                        break
+            _render(page, remaining[:best].strip())
+            remaining = remaining[best:].lstrip()
         return doc.tobytes()
     finally:
         doc.close()

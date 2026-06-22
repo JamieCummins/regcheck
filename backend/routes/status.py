@@ -210,6 +210,11 @@ async def result(request: Request, task_id: str):
         "is_owner": is_owner,
         "can_set_visibility": can_set_visibility,
         "shares": shares_ctx,
+        # Multi-study isolation outcome, so a run that silently fell back to the full
+        # paper is visible rather than mistaken for a study-specific comparison.
+        "multi_study_isolation": (_decode(data.get("multi_study_isolation")) if data else None),
+        "multi_study_isolation_error": (_decode(data.get("multi_study_isolation_error")) if data else None),
+        "multi_study_label": (_decode(data.get("multi_study_label")) if data else None),
     }
 
     if state == "SUCCESS":

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.oauth import available_providers, extract_identity
 from ..db.session import get_db
+from ..services import reports as reports_service
 from ..services.users import (
     create_api_key,
     get_user,
@@ -93,6 +94,22 @@ async def oauth_callback(request: Request, provider: str, db: AsyncSession = Dep
     await db.commit()
 
     request.session["user_id"] = user.id
+
+    # Claim any anonymous reports this browser created before signing in, so they're
+    # kept (owned + off the 7-day TTL) instead of auto-deleting. Best effort.
+    owned = request.session.get("owned_reports") or []
+    if owned:
+        try:
+            claimed = await reports_service.claim_anonymous_reports(
+                request.app.state.redis, db, owner_id=user.id, task_ids=list(owned)
+            )
+            await db.commit()
+            if claimed:
+                claimed_set = set(claimed)
+                request.session["owned_reports"] = [t for t in owned if t not in claimed_set]
+        except Exception:  # pragma: no cover - never block sign-in on claim failure
+            logger.warning("Failed to claim anonymous reports on login", exc_info=True)
+
     next_url = _safe_next(request.session.pop("oauth_next", "/"))
     return RedirectResponse(url=next_url, status_code=303)
 

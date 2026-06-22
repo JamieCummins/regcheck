@@ -108,6 +108,22 @@ def s3_delete_key(cfg: S3Config, *, key: str) -> None:
     client.delete_object(Bucket=cfg.bucket, Key=key)
 
 
+def s3_copy_object(src: S3Config, dst: S3Config, *, key: str) -> None:
+    """Server-side copy of ``key`` from ``src`` bucket to ``dst`` bucket (same key).
+
+    Used when an anonymous report is claimed on login: its evidence is moved from
+    the temp (auto-expiring) bucket to the persistent one. Server-side copy avoids
+    round-tripping the bytes through the dyno and preserves content-type/metadata.
+    """
+    client = _s3_client(dst.region or src.region)
+    client.copy_object(
+        Bucket=dst.bucket,
+        Key=key,
+        CopySource={"Bucket": src.bucket, "Key": key},
+        MetadataDirective="COPY",
+    )
+
+
 def guess_content_type(path: str) -> Optional[str]:
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
