@@ -285,12 +285,34 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                     continue
 
 
+def _runtime_release() -> str:
+    """Describe the code this dyno is running, for the boot log — so "is the worker
+    on the latest deploy?" is answerable at a glance (the recurring failure mode).
+    The release/commit vars need ``heroku labs:enable runtime-dyno-metadata``."""
+    rel = (os.environ.get("HEROKU_RELEASE_VERSION") or "").strip()
+    commit = (os.environ.get("HEROKU_SLUG_COMMIT") or "").strip()
+    created = (os.environ.get("HEROKU_RELEASE_CREATED_AT") or "").strip()
+    dyno = (os.environ.get("DYNO") or "").strip()
+    parts = []
+    if rel:
+        parts.append(f"release={rel}")
+    if commit:
+        parts.append(f"commit={commit[:8]}")
+    if created:
+        parts.append(f"released_at={created}")
+    if dyno:
+        parts.append(f"dyno={dyno}")
+    if not (rel or commit):
+        parts.append("release=unknown (enable `heroku labs:enable runtime-dyno-metadata`)")
+    return " | ".join(parts)
+
+
 async def worker_loop() -> None:
     settings = get_settings()
     # Worker uses blocking Redis commands (BRPOPLPUSH). Give reads a bit more
     # headroom than the command timeout to avoid spurious socket read timeouts.
     redis_client = create_redis_client(settings.redis_url, socket_timeout=15)
-    logger.info("Worker started; waiting for jobs on 'comparison:queue'")
+    logger.info("Worker started [%s]; waiting for jobs on 'comparison:queue'", _runtime_release())
 
     # On deploy/scale events, Redis may not be immediately reachable. Warm up the
     # connection with retries so the worker doesn't crash-loop or spam errors.
