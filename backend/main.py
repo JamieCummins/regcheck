@@ -75,7 +75,12 @@ def create_app() -> FastAPI:
         same_site="lax",
         max_age=14 * 24 * 60 * 60,
     )
-    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)
+    # CSP enforces by default; set CSP_REPORT_ONLY=1 to validate a tightened policy
+    # on staging (logs violations without blocking) before enforcing.
+    csp_report_only = (os.environ.get("CSP_REPORT_ONLY") or "").strip().lower() in {"1", "true", "yes", "on"}
+    app.add_middleware(
+        SecurityHeadersMiddleware, hsts=settings.is_production, csp_report_only=csp_report_only
+    )
     # Per-IP rate limiting on cost-bearing submission endpoints is applied per
     # route via the comparison_rate_limit dependency (see core.rate_limit),
     # gated to production so it is a no-op locally and in tests.
