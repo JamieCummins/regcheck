@@ -204,11 +204,21 @@ def _registration_to_text(data: dict[str, Any]) -> str:
 
     if responses:
         lines.append("")
-        for key in sorted(responses):
+        for key in sorted(responses, key=_response_sort_key):
             flat = _flatten_value(responses[key]).strip()
             if flat:
                 lines.append(f"{key}: {flat}")
     return "\n\n".join(line for line in lines if line is not None).strip()
+
+
+def _response_sort_key(key: str) -> tuple:
+    """Order registration responses by their question NUMBER, not lexicographically
+    — plain `sorted` puts "q10" before "q2", scrambling the prereg so sections read
+    out of order (and content looks missing). e.g. "q17.question" → (17, "question")."""
+    m = re.match(r"[A-Za-z]*(\d+)(?:\.(.*))?$", str(key))
+    if m:
+        return (0, int(m.group(1)), m.group(2) or "")
+    return (1, 0, str(key))
 
 
 def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tuple[str, str]:

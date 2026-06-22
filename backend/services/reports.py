@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import models
-from .report_artifacts import delete_report_artifacts
+from .report_artifacts import delete_report_artifacts, migrate_artifacts_to_persist
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,57 @@ async def create_report_row(
 
 async def get_report_row(db: AsyncSession, task_id: str) -> models.Report | None:
     return await db.get(models.Report, task_id)
+
+
+async def claim_anonymous_reports(
+    redis_client,
+    db: AsyncSession,
+    *,
+    owner_id: str,
+    task_ids: list[str],
+    visibility: str = DEFAULT_VISIBILITY,
+) -> list[str]:
+    """Assign anonymous reports (created in this browser session) to a user who has
+    just signed in: flip the Redis hash to owned + persistent, migrate evidence off
+    the auto-expiring temp bucket, and create the durable ownership row. Skips
+    reports that are gone/expired or already owned. Best effort per report; returns
+    the task_ids actually claimed. Caller commits the DB session."""
+    claimed: list[str] = []
+    vis = normalize_visibility(visibility)
+    for task_id in task_ids:
+        try:
+            existing = await get_report_row(db, task_id)
+            if existing is not None and (existing.owner_id or "").strip():
+                continue  # already owned by someone
+            meta = await redis_client.hgetall(task_id)
+            if not meta:
+                continue  # expired or never existed
+            if (meta.get("owner_id") or "").strip():
+                continue  # already owned (defensive)
+            await redis_client.hset(
+                task_id,
+                mapping={"owner_id": owner_id, "visibility": vis, "retention": "persist"},
+            )
+            await redis_client.persist(task_id)
+            await migrate_artifacts_to_persist(redis_client, task_id)
+            if existing is None:
+                await create_report_row(
+                    db,
+                    task_id=task_id,
+                    owner_id=owner_id,
+                    visibility=vis,
+                    title=meta.get("title"),
+                    comparison_type=meta.get("comparison_type"),
+                    source="ui",
+                )
+            else:
+                existing.owner_id = owner_id
+                existing.visibility = vis
+            claimed.append(task_id)
+        except Exception:  # pragma: no cover - per-report best effort
+            logger.warning("Failed to claim report %s on login", task_id, exc_info=True)
+            continue
+    return claimed
 
 
 async def list_reports_for_owner(db: AsyncSession, owner_id: str) -> list[models.Report]:

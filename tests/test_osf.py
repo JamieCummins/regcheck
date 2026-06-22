@@ -25,6 +25,25 @@ def test_extract_osf_guid_file_browser_urls():
     assert osf.extract_osf_guid("https://osf.io/abc12/files/") == "abc12"
 
 
+def test_registration_responses_ordered_by_question_number():
+    # `sorted()` would put q10 before q2 (lexicographic), scrambling the prereg.
+    data = {
+        "type": "registrations",
+        "attributes": {
+            "registration_responses": {
+                "q10.question": "TENTH",
+                "q2": "SECOND",
+                "q1": "FIRST",
+                "q17.question": "SEVENTEENTH-MELSM",
+            }
+        },
+    }
+    text = osf._registration_to_text(data)
+    assert (
+        text.index("FIRST") < text.index("SECOND") < text.index("TENTH") < text.index("SEVENTEENTH-MELSM")
+    )
+
+
 def test_fetch_registration_flattens_responses(tmp_path):
     def fake_resolver(guid):
         assert guid == "abc12"

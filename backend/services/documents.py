@@ -58,29 +58,39 @@ def convert_txt_to_pdf(txt_path: str) -> str:
             # Always emit at least one (blank) page so downstream PDF handling
             # has a valid document.
             doc.new_page(width=page_width, height=page_height)
-        while remaining:
+        guard = 0
+        while remaining and guard < 10000:
+            guard += 1
             page = doc.new_page(width=page_width, height=page_height)
-            overflow = page.insert_textbox(
-                rect, remaining, fontsize=font_size, fontname="helv",
-                lineheight=1.35, color=(0, 0, 0),
-            )
-            if isinstance(overflow, (int, float)) and overflow < 0:
-                # insert_textbox does not report how much text it consumed;
-                # approximate a page slice on a paragraph/word boundary.
-                max_chars = 2800
-                split_at = remaining.rfind("\n\n", 0, max_chars)
-                if split_at < 400:
-                    split_at = remaining.rfind(" ", 0, max_chars)
-                if split_at < 400:
-                    split_at = min(max_chars, len(remaining))
+            # Binary-search the largest prefix that fits, then advance by exactly that
+            # — a fixed char slice could overflow a page (text with many short lines),
+            # clipping + dropping the overflow → missing content + near-blank pages.
+            lo, hi, best = 1, len(remaining), 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
                 page.clean_contents()
-                page.insert_textbox(
-                    rect, remaining[:split_at].strip(), fontsize=font_size,
-                    fontname="helv", lineheight=1.35, color=(0, 0, 0),
+                overflow = page.insert_textbox(
+                    rect, remaining[:mid], fontsize=font_size, fontname="helv",
+                    lineheight=1.35, color=(0, 0, 0),
                 )
-                remaining = remaining[split_at:].strip()
-            else:
-                remaining = ""
+                if isinstance(overflow, (int, float)) and overflow < 0:
+                    hi = mid - 1
+                else:
+                    best = mid
+                    lo = mid + 1
+            if best < len(remaining):
+                window = remaining[:best]
+                for sep in ("\n\n", "\n", " "):
+                    pos = window.rfind(sep)
+                    if pos >= int(best * 0.5):
+                        best = pos + len(sep)
+                        break
+            page.clean_contents()
+            page.insert_textbox(
+                rect, remaining[:best].strip(), fontsize=font_size,
+                fontname="helv", lineheight=1.35, color=(0, 0, 0),
+            )
+            remaining = remaining[best:].lstrip()
 
         stem = Path(txt_path).stem or "converted_txt"
         target_dir = Path(txt_path).parent if Path(txt_path).parent else UPLOADS_DIR

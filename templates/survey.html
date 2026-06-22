@@ -265,6 +265,39 @@
             border-color: #4B6CCB;
             text-decoration: none;
         }
+        .keep-report-notice {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem 1.1rem;
+            margin-top: 1.1rem;
+            padding: 0.9rem 1.1rem;
+            border: 1px solid rgba(75, 108, 203, 0.35);
+            border-left: 3px solid #4B6CCB;
+            border-radius: 0.5rem;
+            background: rgba(75, 108, 203, 0.10);
+        }
+        .keep-report-notice__body {
+            flex: 1 1 320px;
+            color: #cdd4e6;
+            font-size: 0.92rem;
+            line-height: 1.5;
+        }
+        .keep-report-notice__body strong { color: #eef1fb; }
+        .keep-report-notice__cta {
+            flex: 0 0 auto;
+            display: inline-block;
+            padding: 0.5rem 0.95rem;
+            border-radius: 0.5rem;
+            background: #4B6CCB;
+            color: #ffffff;
+            font-weight: 700;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .keep-report-notice__cta:hover,
+        .keep-report-notice__cta:focus { background: #5b7ad6; color: #ffffff; }
     </style>
 </head>
 {% set nav_active = 'tools' %}
@@ -295,6 +328,13 @@
                             {% endif %}
                         </span>
                     </div>
+                </div>
+
+                <div class="keep-report-notice" role="note">
+                    <div class="keep-report-notice__body">
+                        <strong>Your report is generating.</strong> You can leave this page and come back to it — nothing is lost, and you won't need to re-upload anything. Reports run without an account are <strong>automatically deleted after 7&nbsp;days</strong>.
+                    </div>
+                    <a class="keep-report-notice__cta" href="{{ url_for('login') }}?next=/result/{{ task_id }}">Log in or sign up to keep it</a>
                 </div>
 
                 <form method="post" action="{{ url_for('survey', task_id=task_id) }}" id="survey-form">

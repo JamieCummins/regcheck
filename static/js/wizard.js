@@ -557,7 +557,7 @@
             if (multipleExperimentsSelect && multipleExperimentsSelect.value === "yes") {
                 const num = experimentNumberInput ? experimentNumberInput.value : "";
                 experimentTextInput.value = num
-                    ? "This was a multistudy paper. The preregistration here pertains to Experiment " + num + " only."
+                    ? "This was a multi-study paper. The preregistration here pertains to Study " + num + " only."
                     : "";
             } else {
                 experimentTextInput.value = "";

@@ -424,32 +424,34 @@ async def extract_experiment_specific_paper_text(
     client_choice: str = "openai",
     reasoning_effort: str | None = None,
 ) -> str:
-    """Use a generative LLM to isolate intro, relevant experiment, and general discussion text.
+    """Use a generative LLM to isolate intro, the relevant study, and general discussion text.
 
-    The model is also instructed to inline summaries of referenced experiments in square brackets.
+    The model is also instructed to inline summaries of referenced studies in square brackets.
+    (``experiment_label``/``experiment_*`` arg names are kept for API/form stability.)
     """
     if not full_paper_text.strip() or not experiment_label.strip():
         return full_paper_text
 
     note = (experiment_note or "").strip()
     user_prompt = (
-        "You will receive the full text of a multi-experiment paper and will be required to extract a subset of its content. "
-        f"The relevant experiment identifier to focus on is '{experiment_label}'. \n\n"
-        "When the relevant experiment refers to another experiment rather than providing content (e.g., 'our method was identical to Experiment X'), "
-        "append in square brackets direct quotes of the referenced experiment relevant to this portion immediately after that reference. "
+        "You will receive the full text of a paper that reports multiple studies (sometimes labelled 'experiments') "
+        "and must extract a subset of its content. "
+        f"The relevant study to focus on is identified as '{experiment_label}'. \n\n"
+        "When the relevant study refers to another study/experiment rather than providing content (e.g., 'our method was identical to Study 2'), "
+        "append in square brackets direct quotes of the referenced study relevant to this portion immediately after that reference. "
         "Preserve the paper's wording in all cases. Do not add extra commentary or headings. \n"
-        "For example, if the relevant experiment states 'we used the same procedure as Experiment 2', "
-        "and Experiment 2's procedure section states 'Participants were shown images for 500ms each', "
-        "then the extracted text should be: 'we used the same procedure as Experiment 2 [\"Participants were shown images for 500ms each.\"]'."
+        "For example, if the relevant study states 'we used the same procedure as Study 2', "
+        "and Study 2's procedure section states 'Participants were shown images for 500ms each', "
+        "then the extracted text should be: 'we used the same procedure as Study 2 [\"Participants were shown images for 500ms each.\"]'."
         "If a requested section is missing, simply omit it; do not invent content under any circumstances.\n\n"
         "Return ONLY the following paper content, in order, as plain text:\n"
         "1) The Full Introduction section of the paper.\n"
-        f"2) The full text of the relevant experiment ({experiment_label}), including its methods, results, "
-        "and any discussion specific to that experiment, as well as square brackets quotes of referenced experiments.\n"
+        f"2) The full text of the relevant study ({experiment_label}), including its methods, results, "
+        "and any discussion specific to that study, as well as square-bracket quotes of referenced studies.\n"
         "3) The General Discussion section.\n\n"
     )
     if note:
-        user_prompt += f"\n\nAdditional context from the user about the relevant experiment: {note}"
+        user_prompt += f"\n\nAdditional context from the user about the relevant study: {note}"
     user_prompt += f"\n\nFull paper text:\n{full_paper_text}"
 
     def _invoke_llm() -> str:
@@ -458,7 +460,7 @@ async def extract_experiment_specific_paper_text(
                 "role": "system",
                 "content": (
                     "You are an expert academic text extractor. Your job is to extract only the requested sections "
-                    "from a multi-experiment paper while preserving the original language, annotating relevant "
+                    "from a paper that reports multiple studies while preserving the original language, annotating relevant "
                     "information of other studies where referenced in-text in square brackets following that reference."
                 ),
             },
@@ -630,7 +632,13 @@ async def general_preregistration_comparison(
                     "total_dimensions": total_dimensions,
                     "processed_dimensions": 0,
                     "dimensions": json.dumps(dimension_names),
-                    "status": f"Isolating Experiment {experiment_label} text with the model",
+                    "status": f"Isolating study {experiment_label} text with the model",
+                    # Persistent flags so the multi-study outcome is visible on the
+                    # report even after later status updates overwrite "status".
+                    "multi_study_requested": "1",
+                    "multi_study_label": str(experiment_label),
+                    "multi_study_isolation": "pending",
+                    "multi_study_isolation_error": "",
                 },
             )
         try:
@@ -642,6 +650,10 @@ async def general_preregistration_comparison(
                 reasoning_effort=reasoning_effort,
             )
             extracted_paper_sections = canonical_paper_text
+            logger.info(
+                "Study-specific extraction succeeded",
+                extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
+            )
             if task_id and redis_client:
                 await redis_client.hset(
                     task_id,
@@ -651,24 +663,33 @@ async def general_preregistration_comparison(
                         "total_dimensions": total_dimensions,
                         "processed_dimensions": 0,
                         "dimensions": json.dumps(dimension_names),
+                        "multi_study_isolation": "ok",
                         "status": (
-                            f"Experiment {experiment_label} isolated; embedding preregistration and paper"
+                            f"Study {experiment_label} isolated; embedding preregistration and paper"
                         ),
                     },
                 )
-        except Exception as exc:  # pragma: no cover - defensive guardrail
-            logger.warning(
-                "Experiment-focused paper extraction failed; using full paper text",
-                extra={"task_id": task_id, "experiment_label": experiment_label},
+        except Exception as exc:
+            # Multi-study isolation is best-effort: on failure we still run the
+            # comparison on the FULL paper. But surface it loudly (clear log + a
+            # PERSISTENT flag the report can show) so a silently-degraded run on a
+            # critical feature isn't mistaken for a successful study-specific one.
+            logger.error(
+                "Study-specific extraction FAILED (%s: %s); falling back to full paper text",
+                type(exc).__name__,
+                exc,
+                extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
                 exc_info=exc,
             )
             if task_id and redis_client:
                 await redis_client.hset(
                     task_id,
                     mapping={
+                        "multi_study_isolation": "failed",
+                        "multi_study_isolation_error": f"{type(exc).__name__}: {exc}"[:300],
                         "status": (
-                            f"Continuing without experiment-specific extraction for Experiment {experiment_label}"
-                        )
+                            f"Could not isolate study {experiment_label}; ran the comparison on the full paper"
+                        ),
                     },
                 )
 

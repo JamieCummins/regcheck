@@ -12,6 +12,7 @@ from ..core.storage import (
     get_persist_s3_config,
     get_s3_config,
     s3_config_for_bucket,
+    s3_copy_object,
     s3_delete_key,
     s3_get_bytes,
     s3_put_bytes,
@@ -270,6 +271,72 @@ async def delete_report_artifacts(redis_client, task_id: str) -> None:
             await redis_client.zrem(S3_CLEANUP_ZSET, *[key for _bucket, key in s3_targets])
         except Exception:  # pragma: no cover - best effort
             pass
+
+
+async def migrate_artifacts_to_persist(redis_client, task_id: str) -> int:
+    """Move a report's evidence to the persistent S3 bucket + drop its expiry, so a
+    claimed (formerly anonymous) report's source documents don't auto-delete.
+
+    Server-side-copies each temp-bucket artifact to the persist bucket, rewrites the
+    manifest's bucket refs, unschedules cleanup, and persists Redis-stored artifacts
+    + the manifest. When S3 isn't configured it just persists the Redis keys. Best
+    effort per artifact; returns the number of S3 objects moved.
+    """
+    manifest = await load_manifest(redis_client, task_id)
+    if not manifest:
+        return 0
+
+    persist_cfg = get_persist_s3_config()
+    cleanup_keys: list[str] = []
+    redis_persist_keys: list[str] = []
+    s3_moves: list[tuple[Any, str, dict]] = []  # (src_cfg, key, artifact dict)
+
+    for _source_id, _name, artifact in _iter_manifest_artifacts(manifest):
+        key = artifact.get("key")
+        if not key:
+            continue
+        storage = artifact.get("storage")
+        if storage == "redis":
+            redis_persist_keys.append(str(key))
+        elif storage == "s3":
+            bucket = artifact.get("bucket")
+            if persist_cfg is not None and bucket == persist_cfg.bucket:
+                cleanup_keys.append(str(key))  # already persistent; just unschedule
+                continue
+            src_cfg = s3_config_for_bucket(bucket) if bucket else get_s3_config()
+            if persist_cfg is None or src_cfg is None:
+                cleanup_keys.append(str(key))  # nowhere to move it; drop from schedule
+                continue
+            s3_moves.append((src_cfg, str(key), artifact))
+
+    if s3_moves:
+        def _copy_all() -> None:
+            for src_cfg, key, _artifact in s3_moves:
+                try:
+                    s3_copy_object(src_cfg, persist_cfg, key=key)
+                except Exception:
+                    continue
+        await asyncio.to_thread(_copy_all)
+        for _src, key, artifact in s3_moves:
+            artifact["bucket"] = persist_cfg.bucket  # mutates the manifest in place
+            cleanup_keys.append(key)
+
+    for key in redis_persist_keys:
+        try:
+            await redis_client.persist(key)
+        except Exception:  # pragma: no cover - best effort
+            pass
+    # Re-store the manifest with updated bucket refs and no expiry.
+    try:
+        await store_manifest(redis_client, task_id=task_id, manifest=manifest, ttl_seconds=None)
+    except Exception:  # pragma: no cover - best effort
+        pass
+    if cleanup_keys:
+        try:
+            await redis_client.zrem(S3_CLEANUP_ZSET, *cleanup_keys)
+        except Exception:  # pragma: no cover - best effort
+            pass
+    return len(s3_moves)
 
 
 async def load_artifact_bytes(redis_client, artifact: dict[str, Any] | None) -> bytes | None:
