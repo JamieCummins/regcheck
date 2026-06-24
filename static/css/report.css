@@ -42,6 +42,31 @@
     overflow: hidden;
 }
 
+/* Full-screen / focus mode -------------------------------------------------- */
+/* Reading feedback: with the shell capped at 1280px plus the site navbar and
+   footer, the Evidence panes (PDFs + quotes) never get enough room even after
+   dragging the splitters. Focus mode drops the width cap and the site chrome so
+   the report fills the whole viewport; it is toggled from the topbar and synced
+   to the native Fullscreen API (which additionally hides the browser chrome). */
+body.report-focus .report-shell {
+    width: 100vw;
+    max-width: none;
+    padding: clamp(0.4rem, 0.7vw, 0.7rem);
+}
+body.report-focus .report-header .navbar { display: none; }
+body.report-focus .report-shell footer { display: none; }
+body.report-focus .report-topbar { margin-top: 0.15rem; }
+
+/* Icon swap: expand glyph by default, compress glyph while focused. */
+.report-focus-btn__compress { display: none; }
+body.report-focus .report-focus-btn__expand { display: none; }
+body.report-focus .report-focus-btn__compress { display: inline-flex; }
+body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
+
+/* The Fullscreen API promotes <html> to the top layer; give it the page
+   background so no default backdrop shows through behind the rounded shell. */
+:root:fullscreen { background: var(--rc-bg); }
+
 .report-header,
 .report-page footer {
     flex: 0 0 auto;
