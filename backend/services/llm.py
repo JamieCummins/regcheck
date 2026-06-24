@@ -31,6 +31,11 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 # Open-weight Qwen, served via Groq's OpenAI-compatible endpoint (uses GROQ_API_KEY).
 DEFAULT_QWEN_MODEL = "qwen/qwen3.6-27b"
+# Uni Bern GPUStack — OpenAI-compatible, but reachable only from inside the Bern
+# network. So the gpustack provider only works from a machine on that network
+# (e.g. the CLI run locally, or an in-network worker), not the Heroku worker.
+DEFAULT_GPUSTACK_BASE_URL = "https://gpustack.unibe.ch/v1"
+DEFAULT_GPUSTACK_MODEL = "gpt-oss-120b"
 
 # Client choices that run through the OpenAI SDK against the *hosted* OpenAI API.
 # (Qwen also uses the OpenAI SDK but against Groq's base URL — see get_groq_openai_client.)
@@ -52,6 +57,16 @@ def _env_int(name: str, default: int) -> int:
         return default
     try:
         return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(str(raw).strip())
     except (TypeError, ValueError):
         return default
 
@@ -99,6 +114,10 @@ def _deepseek_model() -> str:
 
 def _qwen_model() -> str:
     return _env_str("QWEN_MODEL", DEFAULT_QWEN_MODEL)
+
+
+def _gpustack_model() -> str:
+    return _env_str("GPUSTACK_MODEL", DEFAULT_GPUSTACK_MODEL)
 
 
 def _claude_model() -> str:
@@ -318,6 +337,74 @@ def _qwen_chat(
     return _strip_deepseek_reasoning(raw)
 
 
+def _gpustack_chat(
+    messages: list[dict[str, str]], *, model: str | None = None, use_json_mode: bool = False
+) -> str:
+    """gpt-oss-120b (open-weight) via Uni Bern's GPUStack OpenAI-compatible endpoint.
+
+    GPUStack is firewalled to the Bern network, so this only succeeds from a machine
+    inside that network. Sampling mirrors GPUStack's reference snippet
+    (``temperature=1``, ``top_p=1``) — appropriate defaults for a reasoning model
+    like gpt-oss — and every knob is env-overridable (``GPUSTACK_TEMPERATURE``,
+    ``GPUSTACK_TOP_P``, ``GPUSTACK_MAX_TOKENS``, ``GPUSTACK_REASONING_EFFORT``).
+
+    IMPORTANT: we do NOT set ``response_format={"type":"json_object"}``. gpt-oss-120b's
+    JSON-object guided decoding is broken on this GPUStack deployment — it leaks
+    harmony control tokens (e.g. ``<|constrain|>``) and returns invalid JSON (verified
+    live). Plain generation, by contrast, yields clean parseable JSON. So when
+    ``use_json_mode`` (the comparison call) we append a short JSON-only instruction and
+    rely on the comparison prompt's explicit "single JSON object" requirement plus
+    ``_extract_json_payload``; the experiment-isolation call (free text) leaves it off.
+    Any optional knob the endpoint rejects is dropped and the call retried, and stray
+    ``<think>`` reasoning is stripped from the reply (mirrors the Qwen path).
+    """
+    client = get_gpustack_client()
+    chat_messages = list(messages)
+    if use_json_mode:
+        chat_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Respond with ONLY a single valid JSON object — no prose, no "
+                    "markdown fences, no extra text before or after."
+                ),
+            }
+        )
+    kwargs: dict[str, Any] = {
+        "model": model or _gpustack_model(),
+        "messages": chat_messages,
+        "temperature": _env_float("GPUSTACK_TEMPERATURE", 1.0),
+        "top_p": _env_float("GPUSTACK_TOP_P", 1.0),
+    }
+    max_tokens = _env_int("GPUSTACK_MAX_TOKENS", 40000)
+    if max_tokens > 0:
+        kwargs["max_tokens"] = max_tokens
+    effort = (os.environ.get("GPUSTACK_REASONING_EFFORT") or "").strip()
+    if effort:
+        kwargs["reasoning_effort"] = effort
+    while True:
+        try:
+            response = client.chat.completions.create(**kwargs)
+            break
+        except Exception as exc:
+            if _is_provider_auth_error(exc):
+                _raise_provider_auth_error("GPUStack", "GPUSTACK_API_KEY", exc)
+            # Endpoint/model support varies; drop a rejected optional knob and retry
+            # rather than failing the dimension outright.
+            lowered = str(exc).lower()
+            dropped = None
+            for knob in ("reasoning_effort", "max_tokens", "top_p", "temperature"):
+                if knob in lowered and knob in kwargs:
+                    kwargs.pop(knob)
+                    dropped = knob
+                    break
+            if dropped is None:
+                raise
+            logger.info("GPUStack call rejected %s; retrying without it", dropped, exc_info=exc)
+    raw = _message_content_to_text(response.choices[0].message)
+    return _strip_deepseek_reasoning(raw)
+
+
 # ---- client construction (lazy) ----------------------------------------------
 
 # Clients are built once and reused (``lru_cache``) so repeated per-dimension
@@ -358,6 +445,21 @@ def get_groq_openai_client() -> OpenAI:
             "Missing GROQ_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+
+@lru_cache(maxsize=1)
+def get_gpustack_client() -> OpenAI:
+    """Uni Bern GPUStack via the OpenAI SDK. Reachable only inside the Bern network.
+
+    Base URL defaults to the campus endpoint but is overridable via
+    ``GPUSTACK_BASE_URL`` (the SDK appends ``/chat/completions`` etc.)."""
+    api_key = os.environ.get("GPUSTACK_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing GPUSTACK_API_KEY. Set it in your environment (.env) to use GPUStack models."
+        )
+    base_url = _env_str("GPUSTACK_BASE_URL", DEFAULT_GPUSTACK_BASE_URL)
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 @lru_cache(maxsize=1)

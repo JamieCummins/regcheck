@@ -1408,25 +1408,32 @@
         }
     }
 
+    // Hydrate the viewer from a static {items, manifest, render_data} bundle —
+    // shared by the /demo fixture and the CLI's self-contained offline HTML report
+    // (which inlines the bundle as window.__REGCHECK_BUNDLE__). No polling/fetch.
+    function applyStaticBundle(data, statusLabel) {
+        state.items = Array.isArray(data.items) ? data.items : [];
+        state.manifest = data.manifest || null;
+        state.manifestUnavailable = !state.manifest;
+        if (data.render_data) {
+            Object.keys(data.render_data).forEach((id) => {
+                state.renderDataCache.set(id, data.render_data[id]);
+            });
+        }
+        setStatus("SUCCESS", statusLabel);
+        // Keep the status badge visible (setStatus hides the pill on SUCCESS for
+        // live reports); a static bundle has no live state to track.
+        if (els.statusPill) els.statusPill.classList.remove("d-none");
+        if (els.statusText) els.statusText.textContent = statusLabel;
+        render();
+    }
+
     async function loadDemo() {
         try {
             const response = await fetch(state.demoSrc);
             if (!response.ok) throw new Error("demo fixture unavailable");
             const data = await response.json();
-            state.items = Array.isArray(data.items) ? data.items : [];
-            state.manifest = data.manifest || null;
-            state.manifestUnavailable = !state.manifest;
-            if (data.render_data) {
-                Object.keys(data.render_data).forEach((id) => {
-                    state.renderDataCache.set(id, data.render_data[id]);
-                });
-            }
-            setStatus("SUCCESS", "Sample report");
-            // The demo intentionally keeps a "Sample report" badge (setStatus hides
-            // the pill on SUCCESS for real reports).
-            if (els.statusPill) els.statusPill.classList.remove("d-none");
-            if (els.statusText) els.statusText.textContent = "Sample report";
-            render();
+            applyStaticBundle(data, "Sample report");
         } catch (_error) {
             setStatus("FAILURE", "Could not load the sample report");
         }
@@ -1537,6 +1544,7 @@
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
 
-    if (state.demoSrc) loadDemo();
+    if (window.__REGCHECK_BUNDLE__) applyStaticBundle(window.__REGCHECK_BUNDLE__, "Report");
+    else if (state.demoSrc) loadDemo();
     else pollTaskStatus();
 })();

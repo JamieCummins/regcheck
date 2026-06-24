@@ -64,11 +64,20 @@ def _ensure_nltk_sentence_tokenizer() -> None:
             continue
 
 
+@lru_cache(maxsize=8)
 def _get_tokenizer(model_name: str = "text-embedding-3-large"):
     if tiktoken is None:
         return _FallbackTokenizer()
     try:
         return tiktoken.encoding_for_model(model_name)
+    except KeyError:
+        # Non-OpenAI embedding models (e.g. GPUStack's qwen3-embedding-0.6b) aren't in
+        # tiktoken's model map. Chunking only needs an approximate token count, so use a
+        # general-purpose encoding rather than failing or logging a traceback per chunk.
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:  # pragma: no cover - environment/cache dependent
+            return _FallbackTokenizer()
     except Exception as exc:  # pragma: no cover - environment/cache dependent
         logger.warning("Falling back to approximate tokenization", extra={"model": model_name}, exc_info=exc)
         return _FallbackTokenizer()
@@ -239,9 +248,17 @@ def extract_chunks_tokens_with_spans(
 def _embed_client():
     # Built once and reused so repeated embedding calls keep the connection
     # pool warm instead of doing a fresh TLS handshake each time.
+    #
+    # The endpoint is env-configurable so retrieval embeddings can be served by an
+    # OpenAI-compatible local provider (e.g. Uni Bern GPUStack) instead of OpenAI:
+    # set EMBEDDINGS_BASE_URL (+ EMBEDDINGS_API_KEY). Both unset → hosted OpenAI via
+    # OPENAI_API_KEY, exactly as before. This keeps paper/registration text off
+    # commercial servers when paired with a local chat provider.
     from openai import OpenAI
 
-    return OpenAI()
+    base_url = (os.environ.get("EMBEDDINGS_BASE_URL") or "").strip() or None
+    api_key = (os.environ.get("EMBEDDINGS_API_KEY") or "").strip() or os.environ.get("OPENAI_API_KEY")
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-3-large") -> np.ndarray:

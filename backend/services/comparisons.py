@@ -64,6 +64,8 @@ from .llm import (
     _openai_experiment_model,
     _openai_family_model,
     _openai_model,
+    _gpustack_chat,
+    _gpustack_model,
     _qwen_chat,
     _qwen_model,
     _raise_provider_auth_error,
@@ -71,6 +73,7 @@ from .llm import (
     _strip_deepseek_reasoning,
     get_claude_client,
     get_deepseek_client,
+    get_gpustack_client,
     get_groq_openai_client,
     get_openai_client,
 )
@@ -97,7 +100,9 @@ def _max_embedding_segments() -> int:
 
 
 def _embedding_model() -> str:
-    return _env_str("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+    # EMBEDDINGS_MODEL is the provider-neutral knob (e.g. GPUStack's
+    # "qwen3-embedding-0.6b"); OPENAI_EMBEDDING_MODEL is kept for back-compat.
+    return _env_str("EMBEDDINGS_MODEL", _env_str("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"))
 
 
 def _embedding_max_chunk_tokens() -> int:
@@ -270,6 +275,34 @@ def _add_evidence_corpus_to_cache(
         max_segments=_max_embedding_segments(),
         metadata=source_payload.get("metadata") or [],
     )
+
+
+def _assemble_inline_bundle(
+    task_id: str | None,
+    comparison_type: str,
+    source_payloads: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Assemble an in-memory evidence manifest + render_data from the build
+    payloads, WITHOUT persisting to Redis/S3. Mirrors the manifest that
+    ``_store_evidence_manifest`` builds, but keeps the source entries URL-free so a
+    static/offline viewer falls back to text rendering + quote-string tracing
+    (no page-image routes to fetch). Used by the CLI's standalone HTML report.
+    """
+    manifest: dict[str, Any] = {
+        "version": 1,
+        "task_id": task_id or "local",
+        "comparison_type": comparison_type,
+        "sources": {},
+        "chunks": {},
+    }
+    render_data: dict[str, Any] = {}
+    for payload in source_payloads:
+        source = dict(payload["source"])
+        source_id = str(source.get("id") or "")
+        manifest["sources"][source_id] = source
+        manifest["chunks"].update(payload.get("chunks") or {})
+        render_data[source_id] = payload.get("render_data") or {}
+    return manifest, render_data
 
 
 async def _store_evidence_manifest(
@@ -490,6 +523,9 @@ async def extract_experiment_specific_paper_text(
         if client_choice == "qwen":
             # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
             return _qwen_chat(messages)
+        if client_choice == "gpustack":
+            # gpt-oss-120b via Uni Bern GPUStack (reachable only inside the Bern network).
+            return _gpustack_chat(messages)
         if client_choice == "claude":
             # Long extraction output; allow a larger token budget than the comparison call.
             return _claude_chat(
@@ -525,6 +561,7 @@ async def general_preregistration_comparison(
     multiple_experiments: str | bool | None = None,
     experiment_number: str | None = None,
     experiment_text: str | None = None,
+    evidence_out: dict[str, Any] | None = None,
 ) -> ComparisonResult:
     processed_count = 0
     if prereg_ext == ".pdf":
@@ -698,15 +735,17 @@ async def general_preregistration_comparison(
     query_embedding_cache: dict[str, Any] = {}
     evidence_manifest: dict[str, Any] | None = None
     evidence_ttl_seconds = await _current_task_ttl(redis_client, task_id)
-    if task_id and redis_client:
-        await redis_client.hset(
-            task_id,
-            mapping={
-                "status": "Preparing evidence viewer sources",
-                "evidence_status": "preparing",
-                "evidence_error": "",
-            },
-        )
+    want_evidence = bool(task_id and redis_client) or evidence_out is not None
+    if want_evidence:
+        if task_id and redis_client:
+            await redis_client.hset(
+                task_id,
+                mapping={
+                    "status": "Preparing evidence viewer sources",
+                    "evidence_status": "preparing",
+                    "evidence_error": "",
+                },
+            )
         prereg_payload = build_file_evidence_source(
             source_id="registration",
             label="Preregistration",
@@ -772,13 +811,25 @@ async def general_preregistration_comparison(
             chunk_prefix="PAPER",
             source_payload=paper_payload,
         )
-        evidence_manifest = await _store_evidence_manifest(
-            redis_client=redis_client,
-            task_id=task_id,
-            comparison_type="general_preregistration",
-            source_payloads=[prereg_payload, paper_payload],
-            ttl_seconds=evidence_ttl_seconds,
-        )
+        source_payloads = [prereg_payload, paper_payload]
+        if task_id and redis_client:
+            evidence_manifest = await _store_evidence_manifest(
+                redis_client=redis_client,
+                task_id=task_id,
+                comparison_type="general_preregistration",
+                source_payloads=source_payloads,
+                ttl_seconds=evidence_ttl_seconds,
+            )
+        else:
+            evidence_manifest, _ = _assemble_inline_bundle(
+                task_id, "general_preregistration", source_payloads
+            )
+        if evidence_out is not None:
+            inline_manifest, inline_render_data = _assemble_inline_bundle(
+                task_id, "general_preregistration", source_payloads
+            )
+            evidence_out["manifest"] = inline_manifest
+            evidence_out["render_data"] = inline_render_data
     logger.info(
         "general_preregistration_comparison start",
         extra={
@@ -1749,6 +1800,10 @@ def run_comparison(
         # prose-wrapped/truncated reply). An unparseable reply still degrades
         # per-dimension (handled below) rather than aborting.
         result_json = _qwen_chat(messages, use_json_mode=True)
+    elif client_choice == "gpustack":
+        # gpt-oss-120b via Uni Bern GPUStack, in JSON-object mode so the reply is a
+        # clean JSON object. An unparseable reply still degrades per-dimension below.
+        result_json = _gpustack_chat(messages, use_json_mode=True)
     elif client_choice == "claude":
         result_json = _claude_chat(
             model=_claude_model(),

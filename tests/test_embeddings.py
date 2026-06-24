@@ -2,12 +2,52 @@ import pickle
 
 import numpy as np
 
+import backend.services.embeddings as embeddings
 from backend.services.embeddings import (
     build_corpus,
     build_corpus_from_segments,
     extract_chunks_tokens_with_spans,
     save_embeddings,
 )
+
+
+def _capture_openai_kwargs(monkeypatch):
+    captured = {}
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", _FakeOpenAI)
+    embeddings._embed_client.cache_clear()
+    return captured
+
+
+def test_embed_client_routes_to_configured_endpoint(monkeypatch):
+    # EMBEDDINGS_BASE_URL/_API_KEY let retrieval embeddings run on a local
+    # OpenAI-compatible provider (e.g. GPUStack) instead of hosted OpenAI.
+    captured = _capture_openai_kwargs(monkeypatch)
+    monkeypatch.setenv("EMBEDDINGS_BASE_URL", "https://gpustack.unibe.ch/v1")
+    monkeypatch.setenv("EMBEDDINGS_API_KEY", "gpustack_test")
+    try:
+        embeddings._embed_client()
+        assert captured["base_url"] == "https://gpustack.unibe.ch/v1"
+        assert captured["api_key"] == "gpustack_test"
+    finally:
+        embeddings._embed_client.cache_clear()
+
+
+def test_embed_client_defaults_to_hosted_openai(monkeypatch):
+    captured = _capture_openai_kwargs(monkeypatch)
+    monkeypatch.delenv("EMBEDDINGS_BASE_URL", raising=False)
+    monkeypatch.delenv("EMBEDDINGS_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    try:
+        embeddings._embed_client()
+        assert captured["base_url"] is None  # hosted OpenAI default
+        assert captured["api_key"] == "sk-openai"
+    finally:
+        embeddings._embed_client.cache_clear()
 
 
 def test_build_corpus_handles_empty_embeddings(tmp_path):

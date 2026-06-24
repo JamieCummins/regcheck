@@ -663,6 +663,84 @@ def test_qwen_uses_json_object_mode_only_for_comparison(monkeypatch):
     assert "response_format" not in captured
 
 
+def test_gpustack_is_not_openai_family_and_uses_campus_endpoint():
+    # gpt-oss-120b is served on Uni Bern's GPUStack, so it must NOT route through
+    # the hosted OpenAI client, and its base URL is the campus endpoint.
+    assert "gpustack" not in comparisons._OPENAI_CLIENTS
+    assert comparisons._gpustack_model() == "gpt-oss-120b"
+    assert llm.DEFAULT_GPUSTACK_BASE_URL == "https://gpustack.unibe.ch/v1"
+
+
+@pytest.mark.asyncio
+async def test_gpustack_routes_through_gpustack_endpoint(monkeypatch):
+    # GPUStack must use its own OpenAI-compatible client (never hosted OpenAI), send
+    # gpt-oss sampling defaults, and return text with any <think> block stripped.
+    def _no_openai():
+        raise AssertionError("gpustack must not touch the hosted OpenAI client")
+
+    monkeypatch.setattr(comparisons, "get_openai_client", _no_openai)
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="<think>weighing it</think>INTRO ... EXPERIMENT 2 ... DISCUSSION"
+                    )
+                )
+            ]
+        )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    # _gpustack_chat lives in llm and calls llm.get_gpustack_client, so patch there.
+    monkeypatch.setattr(llm, "get_gpustack_client", lambda: fake_client)
+
+    out = await comparisons.extract_experiment_specific_paper_text(
+        "Full paper text spanning several experiments.",
+        "2",
+        client_choice="gpustack",
+    )
+
+    assert "EXPERIMENT 2" in out
+    assert "<think>" not in out and "weighing it" not in out  # stray reasoning stripped
+    assert captured["model"] == "gpt-oss-120b"
+    assert captured["temperature"] == 1.0
+    assert captured["top_p"] == 1.0
+    # Isolation call returns free text, so it must NOT force JSON-object mode.
+    assert "response_format" not in captured
+
+
+def test_gpustack_json_mode_uses_prompt_not_response_format(monkeypatch):
+    # gpt-oss-120b's json_object guided decoding is broken on GPUStack (it leaks
+    # harmony tokens + invalid JSON), so the comparison call must NOT send
+    # response_format; it appends a JSON-only instruction and relies on the prompt
+    # + extraction instead.
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"deviation_judgement":"no"}'))]
+        )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create)))
+    monkeypatch.setattr(llm, "get_gpustack_client", lambda: fake_client)
+
+    # Comparison call → no response_format; a JSON-only system message is appended.
+    llm._gpustack_chat([{"role": "user", "content": "x"}], use_json_mode=True)
+    assert "response_format" not in captured
+    assert any(m["role"] == "system" and "JSON" in m["content"] for m in captured["messages"])
+
+    # Isolation call (free text) → no response_format and no JSON nudge.
+    llm._gpustack_chat([{"role": "user", "content": "x"}])
+    assert "response_format" not in captured
+    assert all("JSON" not in (m.get("content") or "") for m in captured["messages"])
+
+
 @pytest.mark.asyncio
 async def test_multi_study_isolation_failure_is_surfaced(tmp_path, monkeypatch):
     """Multi-study isolation is best-effort, but a failure must be VISIBLE: the run

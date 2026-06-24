@@ -12,9 +12,12 @@ import asyncio
 import csv
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Iterable
+
+from backend.services.llm import DEFAULT_GPUSTACK_BASE_URL
 
 from backend.services.comparisons import (
     animals_trial_comparison,
@@ -58,10 +61,33 @@ def _normalized_suffix(path: str) -> str:
     return suffix.lower()
 
 
+def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> None:
+    """Write a self-contained, browsable HTML report when --report-html is set."""
+    report_path = getattr(args, "report_html", None)
+    if not report_path:
+        return
+    from backend.services.report_html import write_report_html
+
+    evidence = evidence_out or {}
+    title = f"RegCheck · {Path(args.paper).stem}"
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    meta = f"Model: {args.client} · parser: {args.parser_choice} · {len(items)} dimensions"
+    write_report_html(
+        report_path,
+        title=title,
+        items=items,
+        manifest=evidence.get("manifest"),
+        render_data=evidence.get("render_data"),
+        meta=meta,
+    )
+    logger.info("Wrote browsable HTML report to %s", report_path)
+
+
 async def _run_general(args) -> dict:
     logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
     dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
     logger.info("Running general preregistration comparison (dimensions=%d)", len(dimensions))
+    evidence_out: dict | None = {} if getattr(args, "report_html", None) else None
     result = await general_preregistration_comparison(
         args.preregistration,
         _normalized_suffix(args.preregistration),
@@ -75,9 +101,12 @@ async def _run_general(args) -> dict:
         multiple_experiments=args.multiple_experiments,
         experiment_number=args.experiment_number,
         experiment_text=args.experiment_text,
+        evidence_out=evidence_out,
     )
     logger.info("Completed general comparison.")
-    return result.model_dump()
+    payload = result.model_dump()
+    _maybe_write_html_report(args, payload, evidence_out)
+    return payload
 
 
 async def _run_clinical(args) -> dict:
@@ -204,8 +233,15 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "qwen", "claude"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    general.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     general.add_argument(
         "--parser-choice",
@@ -247,6 +283,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+    general.add_argument(
+        "--report-html",
+        help=(
+            "Also write a self-contained, browsable HTML report (Overview + Evidence "
+            "panels with in-document quote tracing) to this path; open it in any browser."
+        ),
+    )
 
     clinical = subparsers.add_parser(
         "clinical", help="Compare a clinical trial registration (by ID) to a paper."
@@ -268,8 +311,15 @@ def build_parser() -> argparse.ArgumentParser:
     clinical.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "qwen", "claude"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    clinical.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     clinical.add_argument(
         "--parser-choice",
@@ -323,8 +373,15 @@ def build_parser() -> argparse.ArgumentParser:
     animals.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "qwen", "claude"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    animals.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     animals.add_argument(
         "--parser-choice",
@@ -357,6 +414,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _apply_runtime_env(args) -> None:
+    """Translate CLI provider/embedding selections into the env vars the service
+    layer reads, so a single ``--client gpustack`` run keeps BOTH the LLM and the
+    retrieval embeddings on GPUStack without extra setup.
+
+    Precedence is preserved: anything already exported (e.g. in ``.env``) wins over
+    these conveniences.
+    """
+    client = getattr(args, "client", None)
+
+    # Embeddings model: an explicit --embedding-model wins; otherwise, when running
+    # against GPUStack, default to its embedding model rather than an OpenAI-only one.
+    embedding_model = getattr(args, "embedding_model", None)
+    if not embedding_model and client == "gpustack":
+        embedding_model = "qwen3-embedding-0.6b"
+    if embedding_model:
+        os.environ["EMBEDDINGS_MODEL"] = embedding_model
+
+    # Point embeddings at GPUStack too when using it for chat, unless the operator
+    # has already aimed them somewhere explicitly.
+    if client == "gpustack":
+        base_url = (os.environ.get("GPUSTACK_BASE_URL") or DEFAULT_GPUSTACK_BASE_URL).strip()
+        os.environ.setdefault("EMBEDDINGS_BASE_URL", base_url)
+        gpustack_key = (os.environ.get("GPUSTACK_API_KEY") or "").strip()
+        if gpustack_key:
+            os.environ.setdefault("EMBEDDINGS_API_KEY", gpustack_key)
+        if getattr(args, "parser_choice", None) in {"grobid", "dpt2", "external"}:
+            print(
+                f"Note: --parser-choice {args.parser_choice} sends the PDF to a remote parser. "
+                "For a fully-local GPUStack pipeline use --parser-choice pymupdf "
+                "(or a self-hosted GROBID via GROBID_URL).",
+                file=sys.stderr,
+            )
+
+
 def main(argv: Iterable[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -364,6 +456,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    _apply_runtime_env(args)
     try:
         if args.command == "general":
             payload = asyncio.run(_run_general(args))
