@@ -56,6 +56,7 @@
         copyLink: document.getElementById("copy-report-link-btn"),
         copyLinkLabel: document.getElementById("copy-report-link-label"),
         download: document.getElementById("report-download-btn"),
+        focusBtn: document.getElementById("report-focus-btn"),
         toast: document.getElementById("report-toast"),
         log: document.getElementById("report-log"),
         logList: document.getElementById("report-log-list"),
@@ -1435,10 +1436,73 @@
 
     function onKey(event) {
         if (event.target && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA")) return;
+        // Esc leaves focus mode first. When focus mode rides on the native
+        // Fullscreen API the browser consumes Esc itself (and fullscreenchange
+        // clears the class), so this only fires for the CSS-only fallback.
+        if (event.key === "Escape" && document.body.classList.contains("report-focus") && !nativeFullscreenElement()) {
+            event.preventDefault();
+            exitFocusMode();
+            return;
+        }
         if (state.view !== "documents") return;
         if (event.key === "Escape") { event.preventDefault(); backToDecision(); }
         else if (event.key === "ArrowLeft") { event.preventDefault(); stepQuote(-1); }
         else if (event.key === "ArrowRight") { event.preventDefault(); stepQuote(1); }
+    }
+
+    /* ── focus / full-screen mode ────────────────────────────────────────── */
+
+    function nativeFullscreenElement() {
+        return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    function setFocusButtonState(active) {
+        if (!els.focusBtn) return;
+        els.focusBtn.setAttribute("aria-pressed", active ? "true" : "false");
+        els.focusBtn.title = active ? "Exit full screen" : "Full screen (more room for documents)";
+        els.focusBtn.setAttribute("aria-label", active ? "Exit full screen" : "Full screen");
+    }
+
+    function enterFocusMode() {
+        document.body.classList.add("report-focus");
+        setFocusButtonState(true);
+        // Best-effort native fullscreen (also hides the browser chrome). If it is
+        // unsupported or rejected, the CSS class alone still gives the full-bleed,
+        // chrome-free layout.
+        const el = document.documentElement;
+        const request = el.requestFullscreen || el.webkitRequestFullscreen;
+        if (request && !nativeFullscreenElement()) {
+            try {
+                const result = request.call(el);
+                if (result && typeof result.catch === "function") result.catch(() => {});
+            } catch (_error) { /* keep CSS-only focus mode */ }
+        }
+    }
+
+    function exitFocusMode() {
+        document.body.classList.remove("report-focus");
+        setFocusButtonState(false);
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit && nativeFullscreenElement()) {
+            try {
+                const result = exit.call(document);
+                if (result && typeof result.catch === "function") result.catch(() => {});
+            } catch (_error) { /* class already removed */ }
+        }
+    }
+
+    function toggleFocusMode() {
+        if (document.body.classList.contains("report-focus")) exitFocusMode();
+        else enterFocusMode();
+    }
+
+    function onFullscreenChange() {
+        // Keep the CSS state in sync when the user exits native fullscreen via Esc
+        // or the browser's own control rather than our button.
+        if (!nativeFullscreenElement() && document.body.classList.contains("report-focus")) {
+            document.body.classList.remove("report-focus");
+            setFocusButtonState(false);
+        }
     }
 
     /* ── wire up ─────────────────────────────────────────────────────────── */
@@ -1465,6 +1529,9 @@
             });
         });
     }
+    if (els.focusBtn) els.focusBtn.addEventListener("click", toggleFocusMode);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     window.addEventListener("keydown", onKey);
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
