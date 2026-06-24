@@ -14,8 +14,14 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+# Strip external @import url(...) (e.g. Google Fonts) so the report is genuinely
+# self-contained — no network calls. Fonts fall back to the system stack, which is
+# the right trade for an offline file (and consistent with the local-models intent).
+_EXTERNAL_IMPORT_RE = re.compile(r"@import\s+url\(\s*['\"]?https?:[^)]*\)\s*;", re.IGNORECASE)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _STATIC = _ROOT / "static"
@@ -52,14 +58,15 @@ def build_standalone_report_html(
         "manifest": manifest or None,
         "render_data": render_data or {},
     }
-    custom_css = _read("css/custom-styles.css")
-    report_css = _read("css/report.css")
+    custom_css = _EXTERNAL_IMPORT_RE.sub("", _read("css/custom-styles.css"))
+    report_css = _EXTERNAL_IMPORT_RE.sub("", _read("css/report.css"))
     quote_locator_js = _read("js/quote-locator.js")
     report_js = _read("js/report.js")
     safe_title = html.escape(title or "RegCheck Report")
     meta_html = (
-        f'<div class="report-page footer" style="margin-top:auto;font-size:.72rem;color:var(--rc-muted);'
-        f'padding-top:1rem;border-top:1px solid var(--rc-border)">{html.escape(meta)}</div>'
+        f'<div class="report-doc-meta" style="flex:0 0 auto;margin-top:.55rem;font-size:.72rem;'
+        f'color:var(--rc-muted);padding-top:.55rem;border-top:1px solid var(--rc-border)">'
+        f'{html.escape(meta)}</div>'
         if meta
         else ""
     )
