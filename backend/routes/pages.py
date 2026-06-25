@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+
+from ..services.dimensions import discipline_sets_for_ui
 
 router = APIRouter()
 
@@ -15,7 +19,12 @@ async def index(request: Request):
 @router.get("/compare", response_class=HTMLResponse, name="compare")
 async def compare(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("general_preregistration.html", {"request": request})
+    # The discipline dimension presets are defined once in the backend and injected
+    # here so the wizard, API, and CLI all resolve the same dimensions/definitions.
+    return templates.TemplateResponse(
+        "general_preregistration.html",
+        {"request": request, "discipline_sets_json": json.dumps(discipline_sets_for_ui())},
+    )
 
 
 @router.get("/clinical_trials", response_class=HTMLResponse, name="clinical_trials")

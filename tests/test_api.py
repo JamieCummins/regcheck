@@ -183,3 +183,26 @@ def test_api_v1_owner_scoping_and_auth():
         # Delete owned → gone.
         assert client.delete("/api/v1/reports/ra", headers=h).status_code == 200
         assert client.get("/api/v1/reports/ra", headers=h).status_code == 404
+
+
+def test_api_resolve_dimensions_set_or_data():
+    """The API accepts a built-in dimension_set preset OR a custom dimensions_data
+    JSON (exactly one)."""
+    from fastapi import HTTPException
+
+    from backend.routes import api
+
+    # Preset → JSON of the backend's dimensions for that discipline.
+    out = api._resolve_api_dimensions("psychology", None)
+    dims = json.loads(out)
+    assert len(dims) == 9 and dims[0]["dimension"] == "Hypotheses"
+
+    # Custom JSON passes through unchanged.
+    raw = '[{"dimension":"X","definition":""}]'
+    assert api._resolve_api_dimensions(None, raw) == raw
+    assert api._resolve_api_dimensions("", raw) == raw  # blank set ignored
+
+    # Both / neither / unknown → 400.
+    for bad_args in [("psychology", raw), (None, None), ("bogus", None)]:
+        with pytest.raises(HTTPException):
+            api._resolve_api_dimensions(*bad_args)

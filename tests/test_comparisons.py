@@ -413,9 +413,14 @@ def test_preclinical_defaults_are_the_curated_set():
     ]
 
 
+def _dim_defs(rows):
+    """dimension/definition pairs only — ignore the retrieval 'keywords' field."""
+    return [{"dimension": r["dimension"], "definition": r["definition"]} for r in rows]
+
+
 def test_resolve_dimensions_user_values_win_verbatim():
     """User-specified dimensions (UI or API) are used exactly as given —
-    including empty definitions. No name-based fallback may fire."""
+    including empty definitions. No name-based fallback may fire on definitions."""
     user = [
         {"dimension": "Eligibility – inclusion criteria", "definition": ""},
         {"name": "Custom dimension", "definition": "  my definition  "},
@@ -423,15 +428,19 @@ def test_resolve_dimensions_user_values_win_verbatim():
         "not-a-dict",
     ]
     resolved = comparisons._resolve_dimensions(user, comparisons.CLINICAL_DEFAULT_DIMENSIONS)
-    assert resolved == [
+    assert _dim_defs(resolved) == [
         {"dimension": "Eligibility – inclusion criteria", "definition": ""},
         {"dimension": "Custom dimension", "definition": "my definition"},
     ]
+    # Retrieval keywords are attached by name: a known dimension gets them, a custom
+    # one gets none. (Keywords steer retrieval only; they never change definitions.)
+    assert resolved[0]["keywords"]  # matched a known clinical dimension
+    assert resolved[1]["keywords"] == []  # unknown custom dimension
 
 
 def test_resolve_dimensions_falls_back_to_explicit_defaults_only():
     resolved = comparisons._resolve_dimensions(None, comparisons.CLINICAL_DEFAULT_DIMENSIONS)
-    assert resolved == comparisons.CLINICAL_DEFAULT_DIMENSIONS
+    assert _dim_defs(resolved) == _dim_defs(comparisons.CLINICAL_DEFAULT_DIMENSIONS)
     # Copies, not aliases: mutating a resolved item must not corrupt the canon.
     resolved[0]["definition"] = "mutated"
     assert comparisons.CLINICAL_DEFAULT_DIMENSIONS[0]["definition"] != "mutated"
@@ -440,51 +449,57 @@ def test_resolve_dimensions_falls_back_to_explicit_defaults_only():
     assert comparisons._resolve_dimensions([]) == []
 
 
-def test_wizard_clinical_preset_matches_backend(tmp_path):
-    """The wizard's 'Clinical / Medical' preset (static/js/wizard.js) must stay
-    identical to CLINICAL_DEFAULT_DIMENSIONS — guards against the two clinical
-    sources drifting apart."""
-    import json
-    import re
-    from pathlib import Path
+def test_discipline_presets_are_single_sourced():
+    """The discipline presets now live in one backend data file (loaded into the
+    registry, injected into the wizard, and offered to the CLI). All four load."""
+    from backend.services import dimensions as dm
 
-    wizard = Path(__file__).resolve().parent.parent / "static" / "js" / "wizard.js"
-    src = wizard.read_text(encoding="utf-8")
-    m = re.search(
-        r'key:\s*"clinical",.*?dims:\s*(\[.*?\])\n\s{12}\},',
-        src,
-        re.DOTALL,
-    )
-    assert m, "clinical preset block not found in wizard.js"
-    # Convert the JS array literal (unquoted keys) into JSON.
-    js_array = m.group(1)
-    js_array = re.sub(r'(\{|,)\s*(name|definition):', r'\1"\2":', js_array)
-    preset = json.loads(js_array)
+    assert dm.discipline_keys() == ["psychology", "clinical", "economics", "preclinical"]
+    assert len(dm.get_discipline_dimensions("psychology")) == 9
+    assert len(dm.get_discipline_dimensions("economics")) == 10
+    assert dm.get_discipline_dimensions("nope") is None
+    # UI payload uses the field name the wizard expects.
+    ui = {s["key"]: s for s in dm.discipline_sets_for_ui()}
+    assert ui["psychology"]["dims"][0]["name"] == "Hypotheses"
+
+
+def test_clinical_preset_matches_backend_defaults():
+    """The 'clinical' preset (single source) must stay identical to
+    CLINICAL_DEFAULT_DIMENSIONS — guards against the comparison default drifting
+    from the discipline preset."""
+    from backend.services import dimensions as dm
+
     backend = [
-        {"name": d["dimension"], "definition": d["definition"]}
-        for d in comparisons.CLINICAL_DEFAULT_DIMENSIONS
+        {"dimension": d["dimension"], "definition": d["definition"]}
+        for d in dm.CLINICAL_DEFAULT_DIMENSIONS
     ]
-    assert preset == backend
+    assert _dim_defs(dm.get_discipline_dimensions("clinical")) == backend
 
 
-def test_wizard_preclinical_preset_matches_backend():
-    """The wizard's 'Preclinical / Animal' preset must stay identical to
-    PRECLINICAL_DEFAULT_DIMENSIONS (the two are generated from one source)."""
-    import json
-    import re
-    from pathlib import Path
+def test_preclinical_preset_matches_backend_defaults():
+    """The 'preclinical' preset must stay identical to PRECLINICAL_DEFAULT_DIMENSIONS."""
+    from backend.services import dimensions as dm
 
-    wizard = Path(__file__).resolve().parent.parent / "static" / "js" / "wizard.js"
-    src = wizard.read_text(encoding="utf-8")
-    m = re.search(r'key:\s*"preclinical",.*?dims:\s*(\[.*?\])\n\s{12}\}', src, re.DOTALL)
-    assert m, "preclinical preset block not found in wizard.js"
-    js_array = re.sub(r'(\{|,)\s*(name|definition):', r'\1"\2":', m.group(1))
-    preset = json.loads(js_array)
     backend = [
-        {"name": d["dimension"], "definition": d["definition"]}
-        for d in comparisons.PRECLINICAL_DEFAULT_DIMENSIONS
+        {"dimension": d["dimension"], "definition": d["definition"]}
+        for d in dm.PRECLINICAL_DEFAULT_DIMENSIONS
     ]
-    assert preset == backend
+    assert _dim_defs(dm.get_discipline_dimensions("preclinical")) == backend
+
+
+def test_hosted_route_rejects_unreachable_providers():
+    """The hosted app/API validates the model provider (parity with parser
+    validation). gpustack is reachable only from the Bern network, so the hosted
+    worker can't run it — it's rejected here and offered on the CLI only."""
+    from fastapi import HTTPException
+
+    from backend.routes import comparisons as routes
+
+    for ok in ("openai", "deepseek", "qwen", "claude", "OpenAI", " claude "):
+        assert routes._normalize_client(ok) in {"openai", "deepseek", "qwen", "claude"}
+    for bad in ("gpustack", "bogus", ""):
+        with pytest.raises(HTTPException):
+            routes._normalize_client(bad)
 
 
 def test_split_system_for_anthropic_separates_system_and_conversation():
@@ -795,3 +810,35 @@ async def test_multi_study_isolation_failure_is_surfaced(tmp_path, monkeypatch):
     assert st.get("multi_study_isolation") == "failed"        # ...but flagged
     assert "model context exceeded" in (st.get("multi_study_isolation_error") or "")
     assert len(res.items) == 1
+
+
+def test_compute_top_k_scales_for_short_corpora():
+    assert comparisons._compute_top_k(16) == 8    # ceil(16*0.45)=8 beats min_k=6
+    assert comparisons._compute_top_k(100) == 10  # ~10% rate for large corpora
+    assert comparisons._compute_top_k(200) == 20  # capped at max_k
+    assert comparisons._compute_top_k(0) == 0
+    assert comparisons._compute_top_k(3) == 3     # never exceeds total
+
+
+def test_promote_keyword_hits_surfaces_out_of_topk_chunk():
+    base = [("PAPER_0001", "introduction text", 0.60), ("PAPER_0002", "more text", 0.50)]
+    extra = [
+        ("PAPER_0011", "Eight participants were excluded (attention check), N = 192", 0.42),
+        ("PAPER_0020", "wholly unrelated content", 0.05),
+    ]
+    all_rows = base + extra
+    out = comparisons._promote_keyword_hits(base, all_rows, ["excluded", "attention check"])
+    ids = [c[0] for c in out]
+    assert "PAPER_0011" in ids       # promoted though it sat outside the base top-k
+    assert "PAPER_0020" not in ids   # below the similarity floor -> not promoted
+    # No keywords -> selection unchanged.
+    assert comparisons._promote_keyword_hits(base, all_rows, []) == base
+
+
+def test_keyword_index_resolves_known_dimensions():
+    from backend.services import dimensions as dm
+
+    assert any("attention check" in k for k in dm.keywords_for_dimension("Inclusion and exclusion criteria"))
+    assert "n =" in [k.lower() for k in dm.keywords_for_dimension("Sample size")]
+    assert dm.keywords_for_dimension("Totally novel custom dimension") == []
+    assert dm.keywords_for_dimension("Sample size", ["custom-only"]) == ["custom-only"]

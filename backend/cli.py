@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -24,8 +25,13 @@ from backend.services.comparisons import (
     clinical_trial_comparison,
     general_preregistration_comparison,
 )
+from backend.services.dimensions import discipline_keys, get_discipline_dimensions
 
 logger = logging.getLogger("backend.cli")
+
+# The web app's built-in discipline presets, surfaced to the CLI via --dimension-set
+# so the same named dimension sets are available everywhere.
+DISCIPLINE_KEYS = discipline_keys()
 
 
 def _load_dimensions_from_csv(csv_path: Path) -> list[dict[str, str]]:
@@ -61,6 +67,46 @@ def _normalized_suffix(path: str) -> str:
     return suffix.lower()
 
 
+def _resolve_dimensions_arg(args, *, require: bool) -> list[dict[str, str]] | None:
+    """Resolve dimensions from --dimension-set (a built-in discipline preset, same
+    as the web app) or --dimensions-csv. At most one may be given."""
+    csv_path = getattr(args, "dimensions_csv", None)
+    set_key = getattr(args, "dimension_set", None)
+    if csv_path and set_key:
+        raise ValueError("Use only one of --dimensions-csv or --dimension-set.")
+    if set_key:
+        dims = get_discipline_dimensions(set_key)
+        if not dims:
+            raise ValueError(f"Unknown dimension set: {set_key}")
+        logger.info("Using '%s' discipline preset (%d dimensions)", set_key, len(dims))
+        return dims
+    if csv_path:
+        logger.info("Loading dimensions from CSV: %s", csv_path)
+        return _load_dimensions_from_csv(Path(csv_path))
+    if require:
+        raise ValueError("Provide dimensions via --dimensions-csv or --dimension-set.")
+    return None
+
+
+def _resolve_general_prereg(args) -> tuple[str, str]:
+    """Resolve the preregistration source: an OSF link (--osf-url, resolved here the
+    same way the worker does) or a local file (--preregistration). Exactly one."""
+    osf_url = getattr(args, "osf_url", None)
+    prereg = getattr(args, "preregistration", None)
+    if osf_url and prereg:
+        raise ValueError("Use only one of --preregistration or --osf-url.")
+    if osf_url:
+        from backend.services import osf
+
+        dest = tempfile.mkdtemp(prefix="regcheck-osf-")
+        logger.info("Resolving OSF preregistration: %s", osf_url)
+        path, ext = osf.fetch_osf_preregistration(osf_url, dest_dir=dest)
+        return path, ext
+    if not prereg:
+        raise ValueError("Provide a preregistration via --preregistration or --osf-url.")
+    return prereg, _normalized_suffix(prereg)
+
+
 def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> None:
     """Write a self-contained, browsable HTML report when --report-html is set."""
     report_path = getattr(args, "report_html", None)
@@ -69,7 +115,7 @@ def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> 
     from backend.services.report_html import write_report_html
 
     evidence = evidence_out or {}
-    title = f"RegCheck · {Path(args.paper).stem}"
+    title = getattr(args, "report_title", None) or f"RegCheck · {Path(args.paper).stem}"
     items = payload.get("items", []) if isinstance(payload, dict) else []
     meta = f"Model: {args.client} · parser: {args.parser_choice} · {len(items)} dimensions"
     write_report_html(
@@ -84,13 +130,13 @@ def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> 
 
 
 async def _run_general(args) -> dict:
-    logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-    dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=True)
+    prereg_path, prereg_ext = _resolve_general_prereg(args)
     logger.info("Running general preregistration comparison (dimensions=%d)", len(dimensions))
     evidence_out: dict | None = {} if getattr(args, "report_html", None) else None
     result = await general_preregistration_comparison(
-        args.preregistration,
-        _normalized_suffix(args.preregistration),
+        prereg_path,
+        prereg_ext,
         args.paper,
         _normalized_suffix(args.paper),
         args.client,
@@ -110,10 +156,7 @@ async def _run_general(args) -> dict:
 
 
 async def _run_clinical(args) -> dict:
-    dimensions = None
-    if args.dimensions_csv:
-        logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-        dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
         "Running clinical trial comparison for %s (dimensions=%s)",
         args.registration_id,
@@ -138,10 +181,7 @@ async def _run_animals(args) -> dict:
         raise ValueError(
             "Animal trial comparisons currently require --registration-csv until API support is available."
         )
-    dimensions = None
-    if args.dimensions_csv:
-        logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-        dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
         "Running animals (PCT) comparison for %s using CSV %s (dimensions=%s)",
         args.registration_id,
@@ -217,18 +257,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     general.add_argument(
         "--preregistration",
-        required=True,
-        help="Path to the preregistration file (.pdf or .docx).",
+        help="Path to the preregistration file (.pdf/.docx/.txt/.html). Or use --osf-url.",
+    )
+    general.add_argument(
+        "--osf-url",
+        help="OSF link to a registration or file to use as the preregistration (alternative to --preregistration; mirrors the web app's OSF source).",
     )
     general.add_argument(
         "--paper",
         required=True,
-        help="Path to the published paper file (.pdf or .docx).",
+        help="Path to the published paper file (.pdf/.docx/.txt/.html).",
     )
     general.add_argument(
         "--dimensions-csv",
-        required=True,
-        help="CSV file with columns 'dimension' and optional 'definition'.",
+        help="CSV file with columns 'dimension' and optional 'definition'. Or use --dimension-set.",
+    )
+    general.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=(
+            "Use one of the web app's built-in discipline presets instead of a CSV "
+            f"({', '.join(DISCIPLINE_KEYS)})."
+        ),
     )
     general.add_argument(
         "--client",
@@ -245,9 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     general.add_argument(
         "--parser-choice",
-        default="grobid",
+        default="pymupdf",
         choices=["grobid", "dpt2", "pymupdf", "external"],
-        help="PDF parser to extract paper text.",
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     general.add_argument(
         "--append-previous-output",
@@ -290,6 +340,10 @@ def build_parser() -> argparse.ArgumentParser:
             "panels with in-document quote tracing) to this path; open it in any browser."
         ),
     )
+    general.add_argument(
+        "--report-title",
+        help="Title shown in the --report-html report (defaults to 'RegCheck · <paper filename>').",
+    )
 
     clinical = subparsers.add_parser(
         "clinical", help="Compare a clinical trial registration (by ID) to a paper."
@@ -309,6 +363,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV with 'dimension' and 'definition' columns to override defaults.",
     )
     clinical.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=f"Use a built-in discipline preset instead of defaults ({', '.join(DISCIPLINE_KEYS)}).",
+    )
+    clinical.add_argument(
         "--client",
         default="openai",
         choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
@@ -323,9 +382,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     clinical.add_argument(
         "--parser-choice",
-        default="grobid",
+        default="pymupdf",
         choices=["grobid", "dpt2", "pymupdf", "external"],
-        help="PDF parser to extract paper text.",
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     clinical.add_argument(
         "--append-previous-output",
@@ -371,6 +430,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV with 'dimension' and 'definition' columns to override defaults.",
     )
     animals.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=f"Use a built-in discipline preset instead of defaults ({', '.join(DISCIPLINE_KEYS)}).",
+    )
+    animals.add_argument(
         "--client",
         default="openai",
         choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
@@ -385,9 +449,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     animals.add_argument(
         "--parser-choice",
-        default="grobid",
+        default="pymupdf",
         choices=["grobid", "dpt2", "pymupdf", "external"],
-        help="PDF parser to extract paper text.",
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     animals.add_argument(
         "--append-previous-output",

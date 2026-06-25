@@ -6,6 +6,11 @@ There is no other source — run_comparison never substitutes one by name.
 """
 from __future__ import annotations
 
+import json
+import re
+from functools import lru_cache
+from pathlib import Path
+
 
 # Canonical default comparison dimensions. Dimensions and their definitions
 # are resolved ONCE, at selection time, via _resolve_dimensions():
@@ -298,6 +303,89 @@ PRECLINICAL_DEFAULT_DIMENSIONS: list[dict[str, str]] = [
 ]
 
 
+# ---- discipline dimension presets (single source of truth) -------------------
+# The named presets the web wizard offers ("Psychology", "Clinical / Medical",
+# "Economics", "Preclinical / Animal") live in one data file so the web app, the
+# API, and the CLI all resolve the same dimensions + definitions. The wizard loads
+# them via the /compare template (injected JSON); the CLI via --dimension-set.
+_DISCIPLINE_DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "discipline_dimensions.json"
+
+
+@lru_cache(maxsize=1)
+def _discipline_data() -> dict:
+    try:
+        return json.loads(_DISCIPLINE_DATA_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # pragma: no cover - data file ships with the app
+        return {"order": [], "sets": {}}
+
+
+def discipline_keys() -> list[str]:
+    """Preset keys in display order (e.g. ['psychology', 'clinical', ...])."""
+    data = _discipline_data()
+    return list(data.get("order") or data.get("sets", {}).keys())
+
+
+def get_discipline_dimensions(key: str) -> list[dict[str, str]] | None:
+    """Return the {dimension, definition} list for a preset key, or None if unknown."""
+    entry = _discipline_data().get("sets", {}).get((key or "").strip().lower())
+    if not entry:
+        return None
+    return [dict(d) for d in entry.get("dimensions", [])]
+
+
+def _norm_dim_name(name: str) -> str:
+    return re.sub(r"\s+", " ", (name or "").replace("–", "-").replace("—", "-").strip().lower())
+
+
+@lru_cache(maxsize=1)
+def _dimension_keyword_index() -> dict[str, tuple[str, ...]]:
+    """Normalized dimension name -> retrieval keywords, unioned across all preset sets.
+    Lets the hybrid retrieval guarantee surface high-value chunks (sample size,
+    exclusions, …) for any dimension whose name matches a known preset dimension —
+    including the *_DEFAULT_DIMENSIONS comparison defaults and user-supplied CSV/API
+    dimensions, none of which carry keywords themselves."""
+    index: dict[str, list[str]] = {}
+    for entry in _discipline_data().get("sets", {}).values():
+        for dim in entry.get("dimensions", []):
+            kws = dim.get("keywords") or []
+            if not kws:
+                continue
+            merged = index.setdefault(_norm_dim_name(dim.get("dimension", "")), [])
+            for k in kws:
+                if k not in merged:
+                    merged.append(k)
+    return {name: tuple(kws) for name, kws in index.items()}
+
+
+def keywords_for_dimension(name: str, explicit: list[str] | None = None) -> list[str]:
+    """Resolve retrieval keywords for a dimension: an explicit per-dimension list (from a
+    preset) wins; otherwise fall back to the name-matched index."""
+    if explicit:
+        return list(explicit)
+    return list(_dimension_keyword_index().get(_norm_dim_name(name), ()))
+
+
+def discipline_sets_for_ui() -> list[dict]:
+    """Presets shaped for the wizard: [{key, label, dims:[{name, definition}]}].
+    Uses the ``name`` field the front-end expects; the glyph stays in the UI."""
+    data = _discipline_data()
+    sets = data.get("sets", {})
+    out: list[dict] = []
+    for key in discipline_keys():
+        entry = sets.get(key) or {}
+        out.append(
+            {
+                "key": key,
+                "label": entry.get("label", key.title()),
+                "dims": [
+                    {"name": d.get("dimension", ""), "definition": d.get("definition", "")}
+                    for d in entry.get("dimensions", [])
+                ],
+            }
+        )
+    return out
+
+
 def _normalize_selected_dimensions(
     selected_dimensions: list[dict[str, str]] | None,
 ) -> list[dict[str, str]]:
@@ -311,7 +399,13 @@ def _normalize_selected_dimensions(
         name = (item.get("dimension") or item.get("name") or "").strip()
         if not name:
             continue
-        normalized.append({"dimension": name, "definition": (item.get("definition") or "").strip()})
+        normalized.append(
+            {
+                "dimension": name,
+                "definition": (item.get("definition") or "").strip(),
+                "keywords": keywords_for_dimension(name, item.get("keywords")),
+            }
+        )
     return normalized
 
 
@@ -324,4 +418,11 @@ def _resolve_dimensions(
     normalized = _normalize_selected_dimensions(selected_dimensions)
     if normalized:
         return normalized
-    return [dict(item) for item in defaults or []]
+    # Default sets (e.g. CLINICAL_/PRECLINICAL_DEFAULT_DIMENSIONS) carry no keywords;
+    # enrich by name so the hybrid retrieval guarantee applies to them too.
+    resolved: list[dict[str, str]] = []
+    for item in defaults or []:
+        enriched = dict(item)
+        enriched["keywords"] = keywords_for_dimension(item.get("dimension", ""), item.get("keywords"))
+        resolved.append(enriched)
+    return resolved
