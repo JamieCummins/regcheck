@@ -212,13 +212,57 @@ class ComparisonResult(BaseModel):
 
 
 def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k: int = 20) -> int:
-    """Compute a bounded top-k based on a proportion of available segments."""
+    """Compute a bounded top-k based on a proportion of available segments.
+
+    Short corpora (e.g. an isolated single-study text) get a larger *fraction* so a
+    single key fact — a sample size or an exclusion count — isn't cut: at <=40 segments
+    we show at least ~45%. Larger corpora keep the ~10% rate. Always bounded by max_k.
+    """
     if total_segments <= 0:
         return 0
     estimated = math.ceil(total_segments * pct)
     bounded = max(min_k, estimated)
+    if total_segments <= 40:
+        bounded = max(bounded, math.ceil(total_segments * 0.45))
     bounded = min(max_k, bounded)
     return min(total_segments, bounded)
+
+
+def _promote_keyword_hits(
+    base_rows: list[tuple[str, str, float]],
+    all_rows: list[tuple[str, str, float]],
+    keywords: list[str] | None,
+    *,
+    reserve: int = 2,
+    floor_ratio: float = 0.4,
+) -> list[tuple[str, str, float]]:
+    """Hybrid retrieval guarantee: ensure the best keyword-matching chunks for a
+    dimension are shown even when embedding similarity ranked them just outside top-k
+    (e.g. a sample-size or exclusion sentence). Promotes up to ``reserve`` not-already-
+    selected chunks whose text contains a dimension keyword and whose similarity is at
+    least ``floor_ratio`` of the top chunk's — so a stray keyword in an otherwise
+    irrelevant chunk isn't force-promoted. ``all_rows`` must be sorted by similarity
+    descending (as ``retrieve_relevant_chunks`` returns)."""
+    if not keywords:
+        return base_rows
+    kws = [k.lower() for k in keywords if k]
+    if not kws or not all_rows:
+        return base_rows
+    have = {cid for cid, _t, _s in base_rows}
+    top_sim = base_rows[0][2] if base_rows else all_rows[0][2]
+    floor = floor_ratio * float(top_sim)
+    promoted: list[tuple[str, str, float]] = []
+    for cid, text, sim in all_rows:
+        if cid in have:
+            continue
+        if sim < floor:
+            break  # sorted desc: nothing further can clear the floor
+        low = (text or "").lower()
+        if any(k in low for k in kws):
+            promoted.append((cid, text, sim))
+            if len(promoted) >= reserve:
+                break
+    return base_rows + promoted
 
 
 def _corpus_cache_key(role: str, text: str) -> str:
@@ -457,44 +501,66 @@ async def extract_experiment_specific_paper_text(
     client_choice: str = "openai",
     reasoning_effort: str | None = None,
 ) -> str:
-    """Use a generative LLM to isolate intro, the relevant study, and general discussion text.
-
-    The model is also instructed to inline summaries of referenced studies in square brackets.
+    """Use a generative LLM to isolate the content needed to evaluate one target study:
+    the Introduction, any general/shared content governing all studies (general method,
+    shared materials/measures/procedures, transparency/disclosure statements), the target
+    study's own section (including method blocks shared across sibling studies), and the
+    General Discussion. Cross-references to other studies are inlined as verbatim square-
+    bracket quotes; section headings are preserved (this also helps boundary-aware chunking).
     (``experiment_label``/``experiment_*`` arg names are kept for API/form stability.)
     """
     if not full_paper_text.strip() or not experiment_label.strip():
         return full_paper_text
 
     note = (experiment_note or "").strip()
-    user_prompt = (
-        "You will receive the full text of a paper that reports multiple studies (sometimes labelled 'experiments') "
-        "and must extract a subset of its content. "
-        f"The relevant study to focus on is identified as '{experiment_label}'. \n\n"
-        "When the relevant study refers to another study/experiment rather than providing content (e.g., 'our method was identical to Study 2'), "
-        "append in square brackets direct quotes of the referenced study relevant to this portion immediately after that reference. "
-        "Preserve the paper's wording in all cases. Do not add extra commentary or headings. \n"
-        "For example, if the relevant study states 'we used the same procedure as Study 2', "
-        "and Study 2's procedure section states 'Participants were shown images for 500ms each', "
-        "then the extracted text should be: 'we used the same procedure as Study 2 [\"Participants were shown images for 500ms each.\"]'."
-        "If a requested section is missing, simply omit it; do not invent content under any circumstances.\n\n"
-        "Return ONLY the following paper content, in order, as plain text:\n"
-        "1) The Full Introduction section of the paper.\n"
-        f"2) The full text of the relevant study ({experiment_label}), including its methods, results, "
-        "and any discussion specific to that study, as well as square-bracket quotes of referenced studies.\n"
-        "3) The General Discussion section.\n\n"
+    note_block = (
+        f"Additional context from the user about the target study: {note}\n\n" if note else ""
     )
-    if note:
-        user_prompt += f"\n\nAdditional context from the user about the relevant study: {note}"
-    user_prompt += f"\n\nFull paper text:\n{full_paper_text}"
+    user_prompt = (
+        'You will receive the full text of a paper that reports multiple studies\n'
+        '(sometimes labelled "experiments"). You are required to extract ONLY the following, in order, as plain text. Preserve the paper\'s original\n'
+        'wording and keep section headings (e.g., "Method", "Participants", "Results"). This should pertain only to the study number defined at the end of this description:\n\n'
+        '1) The full Introduction.\n\n'
+        '2) Any GENERAL or SHARED content that governs all studies, even if it is not\n'
+        '   repeated inside the target study\'s own section. This includes: a general\n'
+        '   method / "overview of experiments" section; shared materials, measures,\n'
+        '   procedures, scenarios, or stimuli; recruitment and sampling details stated\n'
+        '   once for the whole series; and any transparency, open-practices,\n'
+        '   data-availability, or disclosure statements (e.g., "we report all data\n'
+        '   exclusions ... in all experiments"). Include these verbatim.\n\n'
+        '3) The full text of the target study (defined below) - its\n'
+        '   participants/sample, design, manipulations, measures, procedure, exclusions,\n'
+        '   analyses, results, and any study-specific discussion. If the target study\'s\n'
+        '   method or materials are described JOINTLY with other studies (e.g., a single\n'
+        '   "Method" section covering Studies 3a-3c), include that shared section in full.\n\n'
+        '4) The General Discussion.\n\n'
+        'Cross-references: when the target study refers to another study instead of\n'
+        'restating content (e.g., "we used the same procedure as Study 2", "identical to\n'
+        'Experiment 1 except ..."), append - immediately after that reference - a verbatim\n'
+        'quote of the referenced content in square brackets. Example: \'we used the same\n'
+        'procedure as Study 2 ["Participants were shown images for 500 ms each."]\'.\n\n'
+        'Rules:\n'
+        '- Preserve original wording and section headings. Do not paraphrase, summarise,\n'
+        '  comment, re-order, or invent.\n'
+        '- If a requested section is absent, omit it — never fabricate content.\n'
+        '- When uncertain whether shared/general content applies to the target study,\n'
+        '  INCLUDE it.\n\n'
+        f"The target study that you need to extract is the Study labelled: '{experiment_label}'.\n\n"
+        f"{note_block}"
+        'Performing the above extractions, based on the above labelled experiment, on the below full paper text:\n'
+        f"{full_paper_text}"
+    )
 
     def _invoke_llm() -> str:
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an expert academic text extractor. Your job is to extract only the requested sections "
-                    "from a paper that reports multiple studies while preserving the original language, annotating relevant "
-                    "information of other studies where referenced in-text in square brackets following that reference."
+                    "You are an expert academic text extractor. From a paper that reports "
+                    "multiple studies (sometimes labelled 'experiments'), you extract — verbatim — "
+                    "only the content needed to evaluate ONE target study against its preregistration. "
+                    "You preserve the original wording and section headings, and you never invent, "
+                    "paraphrase, or summarise content."
                 ),
             },
             {"role": "user", "content": user_prompt},
@@ -892,6 +958,7 @@ async def general_preregistration_comparison(
                 client_choice,
                 dimension_name,
                 dimension_definition=dimension_definition,
+                dimension_keywords=dimension_info.get("keywords") or [],
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1127,6 +1194,7 @@ async def clinical_trial_comparison(
                 client_choice,
                 dimension,
                 dimension_definition=dimension_definition,
+                dimension_keywords=dimension_info.get("keywords") or [],
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1364,6 +1432,7 @@ async def animals_trial_comparison(
                 client_choice,
                 dimension,
                 dimension_definition=dimension_definition,
+                dimension_keywords=dimension_info.get("keywords") or [],
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1545,6 +1614,7 @@ def run_comparison(
     comparison_context: ComparisonContext = "clinical_trial",
     evidence_manifest: dict[str, Any] | None = None,
     query_embedding_cache: dict[str, Any] | None = None,
+    dimension_keywords: list[str] | None = None,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -1611,23 +1681,23 @@ def run_comparison(
         query_embedding = get_embedding(augmented_query, model=embedding_model)
         _qcache[_qkey] = query_embedding
 
-    candidate_factor = 3
-    prereg_candidate_k = min(
-        len(prereg_corpus.segments), max(prereg_top_k * candidate_factor, prereg_top_k + 5)
+    # Score the whole corpus by similarity (cosine is computed over all segments
+    # regardless), so the keyword guarantee can reach chunks ranked outside top-k.
+    prereg_scored = retrieve_relevant_chunks(
+        query_embedding, prereg_corpus, top_k=len(prereg_corpus.segments)
     )
-    paper_candidate_k = min(
-        len(paper_corpus.segments), max(paper_top_k * candidate_factor, paper_top_k + 5)
-    )
-
-    prereg_candidates = retrieve_relevant_chunks(
-        query_embedding, prereg_corpus, top_k=prereg_candidate_k
-    )
-    paper_candidates = retrieve_relevant_chunks(
-        query_embedding, paper_corpus, top_k=paper_candidate_k
+    paper_scored = retrieve_relevant_chunks(
+        query_embedding, paper_corpus, top_k=len(paper_corpus.segments)
     )
 
-    prereg_top_rows = prereg_candidates[:prereg_top_k]
-    paper_top_rows = paper_candidates[:paper_top_k]
+    # Base selection = top-k by similarity; then promote the best keyword-matching
+    # chunks for this dimension (hybrid retrieval) so high-value facts aren't cut.
+    prereg_top_rows = _promote_keyword_hits(
+        prereg_scored[:prereg_top_k], prereg_scored, dimension_keywords
+    )
+    paper_top_rows = _promote_keyword_hits(
+        paper_scored[:paper_top_k], paper_scored, dimension_keywords
+    )
 
     def _sort_by_numeric_id(rows: list[tuple[str, str, float]]) -> list[tuple[str, str, float]]:
         def _id_num(cid: str) -> int:

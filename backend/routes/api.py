@@ -16,6 +16,7 @@ from ..core.rate_limit import comparison_rate_limit
 from ..db import models
 from ..db.session import get_db
 from ..services import reports as reports_service
+from ..services.dimensions import discipline_keys, get_discipline_dimensions
 from . import comparisons as comparisons_routes
 
 router = APIRouter(prefix="/api/v1")
@@ -29,6 +30,27 @@ def _report_links(request: Request, task_id: str) -> dict[str, str]:
         "report_url": f"{base}/api/v1/reports/{task_id}",
         "view_url": f"{base}/result/{task_id}",
     }
+
+
+def _resolve_api_dimensions(dimension_set: str | None, dimensions_data: str | None) -> str:
+    """Resolve the dimensions for an API request into a dimensions_data JSON string.
+    Callers may pass either ``dimension_set`` (a built-in discipline preset, same as
+    the web app / CLI) or ``dimensions_data`` (a custom JSON list) — exactly one."""
+    set_key = (dimension_set or "").strip()
+    raw = (dimensions_data or "").strip()
+    if set_key and raw:
+        raise HTTPException(status_code=400, detail="Provide only one of 'dimension_set' or 'dimensions_data'.")
+    if set_key:
+        dims = get_discipline_dimensions(set_key)
+        if not dims:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown dimension_set '{dimension_set}'. Choose one of: {', '.join(discipline_keys())}.",
+            )
+        return json.dumps(dims)
+    if raw:
+        return raw
+    raise HTTPException(status_code=400, detail="Provide dimensions via 'dimension_set' or 'dimensions_data'.")
 
 
 async def _owned_report_or_404(db: AsyncSession, user: models.User, task_id: str) -> models.Report:
@@ -54,7 +76,8 @@ async def api_compare(
     preregistration: UploadFile | None = File(None),
     osf_url: str | None = Form(None),
     paper: UploadFile | None = File(None),
-    dimensions_data: str = Form(...),
+    dimensions_data: str | None = Form(None),
+    dimension_set: str | None = Form(None),
     visibility: str | None = Form(None),
 ):
     comparison_type = (
@@ -62,6 +85,7 @@ async def api_compare(
         if comparisons_routes._bool_from_yes(clinical_registration)
         else "general_preregistration"
     )
+    dimensions_data = _resolve_api_dimensions(dimension_set, dimensions_data)
     task_id = await comparisons_routes._queue_comparison(
         request,
         comparison_type=comparison_type,

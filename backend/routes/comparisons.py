@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse
 from ..core.rate_limit import comparison_rate_limit
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 from ..services import reports as reports_service
+from ..services.llm import HOSTED_CLIENTS
 from ..services.osf import extract_osf_guid
 
 router = APIRouter()
@@ -209,6 +210,18 @@ def _normalize_parser_choice(parser_choice: str) -> str:
     return normalized
 
 
+def _normalize_client(client: str) -> str:
+    """Validate the model provider for the hosted app/API. gpustack is rejected here
+    because the Heroku worker can't reach the Uni Bern network — it's CLI-only."""
+    normalized = (client or "").strip().lower()
+    if normalized not in HOSTED_CLIENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported model provider '{client}'.",
+        )
+    return normalized
+
+
 def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> str | None:
     effort_normalized = (reasoning_effort or "").strip().lower()
     # ChatGPT (gpt-5) is the only reasoning-effort model exposed to users.
@@ -274,6 +287,7 @@ async def _queue_comparison(
     dimension_names = [item["dimension"] for item in selected_dimensions]
 
     append_previous = _bool_from_yes(append_previous_output)
+    client = _normalize_client(client)
     parser_choice_normalized = _normalize_parser_choice(parser_choice)
     effort_normalized = _normalize_reasoning_effort(client, reasoning_effort)
     logger.info(

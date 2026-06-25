@@ -238,6 +238,7 @@
     {% include '_partials/footer.html' %}
   </div>
   <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+  <script>window.REGCHECK_DISCIPLINES = {{ discipline_sets_json | default('[]', true) | safe }};</script>
   <script src="{{ url_for('static', path='js/wizard.js') }}?v={{ static_version }}"></script>
 </body>
 </html>

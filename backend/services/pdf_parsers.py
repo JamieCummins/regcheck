@@ -335,9 +335,22 @@ def extract_body_text(xml_content: str) -> str:
     namespace = {"tei": "http://www.tei-c.org/ns/1.0"}
     root = ET.fromstring(xml_content)
     body = root.find(".//tei:body", namespace)
-    if body is not None:
-        return "".join(body.itertext()).strip()
-    return "Body tag not found."
+    if body is None:
+        return "Body tag not found."
+    # Emit each TEI heading (<head>) and paragraph (<p>) on its own line so section
+    # headings stay line-separated (GROBID TEI has no inline whitespace between
+    # <head> and <p>, which would otherwise glue "Method" onto the next paragraph and
+    # defeat boundary-aware chunking). Falls back to flat itertext for atypical TEI.
+    lines: list[str] = []
+    for el in body.iter():
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag in ("head", "p"):
+            txt = " ".join("".join(el.itertext()).split())
+            if txt:
+                lines.append(txt)
+    if lines:
+        return "\n".join(lines).strip()
+    return "".join(body.itertext()).strip()
 
 
 async def extract_pdf_text(

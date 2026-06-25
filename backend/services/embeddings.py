@@ -184,13 +184,118 @@ def _split_oversize_span(
     return chunks
 
 
+_SECTION_HEADING_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?\s+)?"
+    r"(?:abstract|introduction|general\s+method|general\s+discussion|methods?|materials?"
+    r"|procedure|participants|measures?|design|results?|discussion|analys[ie]s"
+    r"|statistical\s+analysis|transparency|open\s+practices|data\s+availability"
+    r"|preregist\w*|experiment\s+\w+|study\s+\w+)\b",
+    re.IGNORECASE,
+)
+
+
+_PAGE_FURNITURE_RE = re.compile(
+    r"^(?:page\s+)?\d+(?:\s+of\s+\d+)?$|^p\.?\s*\d+$|^\d+\s*/\s*\d+$",
+    re.IGNORECASE,
+)
+
+
+def _is_heading_line(line: str, ignore: frozenset[str] | set[str] | None = None) -> bool:
+    """Heuristically detect a section-heading line, parser-agnostically (markdown,
+    section words, ALL-CAPS, or short title-case). Used only to add chunk boundaries,
+    so a false positive merely splits a chunk and a false negative just falls back to
+    the token-window behaviour — both safe. ``ignore`` holds lines identified as page
+    furniture (running headers/footers that repeat across the document)."""
+    s = line.strip()
+    if not s:
+        return False
+    if ignore and s in ignore:  # repeated running header/footer
+        return False
+    if _PAGE_FURNITURE_RE.match(s):  # page numbers ("Page 5 of 92", "p. 5", "5/92")
+        return False
+    if re.match(r"^#{1,6}\s+\S", s):  # markdown heading
+        return True
+    words = s.split()
+    if len(words) > 10:
+        return False
+    core = s.rstrip(":").strip()
+    if not core:
+        return False
+    if _SECTION_HEADING_RE.match(core):  # section-word heading (optionally numbered)
+        return True
+    letters = [c for c in core if c.isalpha()]
+    if len(letters) >= 3 and all(c.isupper() for c in letters):  # ALL-CAPS line
+        return True
+    # Short title-case line with no terminal punctuation (e.g. "Procedure and Materials").
+    if core[-1] not in ".?!,;" and len(words) <= 8:
+        significant = [w for w in words if len(w) > 3]
+        if significant and sum(1 for w in significant if w[:1].isupper()) / len(significant) >= 0.6:
+            return True
+    return False
+
+
+def _split_into_heading_blocks(text: str) -> list[tuple[str, int]]:
+    """Split text into (block_text, char_offset) so that a section heading starts a new
+    block (and thus a new chunk) instead of being glued onto the preceding body. Returns
+    the whole text as a single block when no headings are found, so heading-less or
+    unparseable text behaves exactly as before."""
+    if not text:
+        return [("", 0)]
+    lines = text.splitlines(keepends=True)
+    # Lines that repeat many times are page furniture (running headers/footers that
+    # PDF parsers emit on every page), not section headings — a real heading recurs a
+    # handful of times at most, a running header dozens. Threshold well above any
+    # legitimate per-experiment heading repeat.
+    freq: dict[str, int] = {}
+    for ln in lines:
+        s = ln.strip()
+        if s and len(s.split()) <= 12:
+            freq[s] = freq.get(s, 0) + 1
+    ignore = frozenset(s for s, n in freq.items() if n >= 8)
+    blocks: list[tuple[str, int]] = []
+    cur_start = 0
+    cur_parts: list[str] = []
+    cur_has_body = False
+    pos = 0
+    for line in lines:
+        is_heading = _is_heading_line(line, ignore)
+        # Only break when a heading follows actual body text — consecutive/nested
+        # headings stay with their body rather than forming heading-only chunks.
+        if is_heading and cur_has_body and cur_parts:
+            blocks.append(("".join(cur_parts), cur_start))
+            cur_start = pos
+            cur_parts = []
+            cur_has_body = False
+        cur_parts.append(line)
+        if not is_heading and line.strip():
+            cur_has_body = True
+        pos += len(line)
+    if cur_parts:
+        blocks.append(("".join(cur_parts), cur_start))
+    return blocks or [(text, 0)]
+
+
 def extract_chunks_tokens_with_spans(
     text: str,
     max_chunk_tokens: int = 300,
     encoding_name: str = "text-embedding-3-large",
 ) -> list[TextChunk]:
-    """Token-based chunking with character spans into the original text."""
+    """Boundary-aware token chunking with character spans into the original text.
+
+    Chunks never span a section heading, so a methods fact (e.g. an exclusion count or
+    sample size) stays out of the same chunk as adjacent results text — which keeps its
+    embedding focused and retrievable. Falls back to plain token-window chunking when no
+    headings are detectable."""
     tokenizer = _get_tokenizer(encoding_name)
+    out: list[TextChunk] = []
+    for block_text, block_offset in _split_into_heading_blocks(text):
+        for chunk in _chunk_block_with_spans(block_text, tokenizer, max_chunk_tokens):
+            out.append(TextChunk(chunk.text, chunk.start + block_offset, chunk.end + block_offset))
+    return [c for c in out if c.text]
+
+
+def _chunk_block_with_spans(text: str, tokenizer, max_chunk_tokens: int) -> list[TextChunk]:
+    """Sentence-aware token-window chunking within a single heading block."""
     sentence_spans = _fallback_sentence_spans(text)
     chunks: list[TextChunk] = []
     current: list[TextChunk] = []

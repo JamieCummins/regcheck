@@ -41,6 +41,12 @@ DEFAULT_GPUSTACK_MODEL = "gpt-oss-120b"
 # (Qwen also uses the OpenAI SDK but against Groq's base URL — see get_groq_openai_client.)
 _OPENAI_CLIENTS = {"openai"}
 
+# Providers usable from the HOSTED app/API (the Heroku worker can reach them).
+# gpustack is intentionally excluded: it is reachable only from inside the Uni Bern
+# network, so it is offered on the local CLI only. The CLI accepts ALL_CLIENTS.
+HOSTED_CLIENTS = frozenset({"openai", "deepseek", "qwen", "claude"})
+ALL_CLIENTS = HOSTED_CLIENTS | {"gpustack"}
+
 
 def _env_str(name: str, default: str | None = None) -> str:
     value = (os.environ.get(name) or "").strip()

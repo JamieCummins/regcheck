@@ -119,3 +119,26 @@ def test_build_corpus_from_segments_keeps_metadata(monkeypatch):
     assert corpus.chunk_ids == ["PAPER_0001", "PAPER_0002"]
     assert corpus.metadata[0]["source_id"] == "paper"
     assert corpus.embeddings.shape == (2, 3)
+
+
+def test_boundary_aware_chunking_splits_at_headings():
+    # A methods fact (exclusion/sample size) must not share a chunk with adjacent results.
+    text = (
+        "Method\n"
+        "Participants were recruited via Prolific. Eight participants were excluded for "
+        "failing the attention check, leading to a final sample size of N = 192.\n\n"
+        "## Results\nThe effect was significant, t(190) = 2.30, p = .011.\n"
+    )
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=200)
+    excl = [c.text for c in chunks if "N = 192" in c.text]
+    assert excl, "exclusion fact should be present in some chunk"
+    assert not any("t(190)" in t for t in excl), "exclusion fact must be split from results stats"
+    # Character spans must map back to the source text.
+    for c in chunks:
+        assert c.text.strip() == text[c.start:c.end].strip()
+
+
+def test_chunking_falls_back_without_headings():
+    text = "This is sentence one. This is sentence two. This is sentence three."
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=200)
+    assert len(chunks) == 1  # no headings -> single block -> prior behaviour

@@ -155,7 +155,8 @@
         <table>
           <thead><tr><th>Field</th><th>Required</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td><code>dimensions_data</code></td><td>yes</td><td>JSON array of the dimensions to compare (see below).</td></tr>
+            <tr><td><code>dimensions_data</code></td><td>cond.</td><td>JSON array of the dimensions to compare (see below). Provide this <em>or</em> <code>dimension_set</code>.</td></tr>
+            <tr><td><code>dimension_set</code></td><td>cond.</td><td>A built-in discipline preset to use instead of <code>dimensions_data</code> — the same sets the web app offers: <code>psychology</code>, <code>clinical</code>, <code>economics</code>, or <code>preclinical</code>. Provide this <em>or</em> <code>dimensions_data</code> (not both).</td></tr>
             <tr><td><code>paper</code></td><td>yes</td><td>The published paper file (<code>.pdf</code>, <code>.docx</code>, <code>.txt</code>, or <code>.html</code>).</td></tr>
             <tr><td><code>preregistration</code></td><td>cond.</td><td>The preregistration file (<code>.pdf</code>, <code>.docx</code>, <code>.txt</code>, or <code>.html</code>). Required unless <code>clinical_registration=yes</code> or an <code>osf_url</code> is given.</td></tr>
             <tr><td><code>osf_url</code></td><td>cond.</td><td>An OSF link (e.g. <code>https://osf.io/abc12/</code>) used as the preregistration instead of a file — resolves either an OSF registration (its form responses) or a hosted file (downloaded &amp; processed).</td></tr>
@@ -171,7 +172,7 @@
         </table>
 
         <h3>The <code>dimensions_data</code> field</h3>
-        <p>A JSON-encoded array of objects, each with a <code>dimension</code> name and an optional <code>definition</code>. Order is preserved; at least one is required.</p>
+        <p>A JSON-encoded array of objects, each with a <code>dimension</code> name and an optional <code>definition</code>. Order is preserved; at least one is required. To use one of the web app's built-in presets instead, send <code>dimension_set</code> (e.g. <code>dimension_set=psychology</code>) and omit <code>dimensions_data</code>.</p>
         <pre><code>[
   { "dimension": "Sample size", "definition": "The planned or realised number of participants…" },
   { "dimension": "Hypotheses", "definition": "The specific, directional predictions stated before data collection…" }
