@@ -148,6 +148,7 @@ async def _run_general(args) -> dict:
         experiment_number=args.experiment_number,
         experiment_text=args.experiment_text,
         evidence_out=evidence_out,
+        num_voters=_resolve_num_voters(args),
     )
     logger.info("Completed general comparison.")
     payload = result.model_dump()
@@ -171,6 +172,7 @@ async def _run_clinical(args) -> dict:
         selected_dimensions=dimensions,
         append_previous_output=args.append_previous_output,
         reasoning_effort=args.reasoning_effort,
+        num_voters=_resolve_num_voters(args),
     )
     logger.info("Completed clinical comparison.")
     return result.model_dump()
@@ -198,6 +200,7 @@ async def _run_animals(args) -> dict:
         selected_dimensions=dimensions,
         append_previous_output=args.append_previous_output,
         reasoning_effort=args.reasoning_effort,
+        num_voters=_resolve_num_voters(args),
     )
     logger.info("Completed animals comparison.")
     return result.model_dump()
@@ -244,6 +247,46 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _resolve_num_voters(args) -> int:
+    """Resolve the per-dimension vote count from the judgement-method flags.
+
+    'single-judge' (or unset) → 1 judgement per dimension (unchanged behaviour).
+    'consensus-vote' → --number-of-voters independent judgements per dimension.
+    """
+    method = getattr(args, "judgement_method", "single-judge")
+    if method != "consensus-vote":
+        return 1
+    n = int(getattr(args, "number_of_voters", 5) or 5)
+    if n < 1:
+        raise ValueError("--number-of-voters must be a positive integer.")
+    return n
+
+
+def _add_judgement_args(p: argparse.ArgumentParser) -> None:
+    """Optional within-study output normalisation, shared by every subcommand."""
+    p.add_argument(
+        "--judgement-method",
+        default="single-judge",
+        choices=["single-judge", "consensus-vote"],
+        help=(
+            "How each dimension's verdict is decided. 'single-judge' (default) is one "
+            "model judgement per dimension. 'consensus-vote' judges each dimension "
+            "--number-of-voters times on the SAME retrieved evidence and reports the "
+            "plurality verdict (recall-biased tiebreak), with a consensus note appended "
+            "to the rationale. The report format is unchanged."
+        ),
+    )
+    p.add_argument(
+        "--number-of-voters",
+        type=int,
+        default=5,
+        help=(
+            "Number of independent judgements per dimension when "
+            "--judgement-method consensus-vote (default 5; ignored for single-judge)."
+        ),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -345,6 +388,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Title shown in the --report-html report (defaults to 'RegCheck · <paper filename>').",
     )
 
+    _add_judgement_args(general)
+
     clinical = subparsers.add_parser(
         "clinical", help="Compare a clinical trial registration (by ID) to a paper."
     )
@@ -407,6 +452,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+
+    _add_judgement_args(clinical)
 
     animals = subparsers.add_parser(
         "animals", help="Compare a preclinical (PCT) registration to a paper."
@@ -474,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+    _add_judgement_args(animals)
 
     return parser
 

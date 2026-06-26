@@ -8,6 +8,8 @@ import io
 import json
 import logging
 import os
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, TypeVar
 
@@ -51,6 +53,7 @@ from .llm import (
     _claude_max_tokens,
     _claude_model,
     _claude_response_text,
+    _claude_structured,
     _deepseek_model,
     _env_int,
     _env_str,
@@ -628,6 +631,7 @@ async def general_preregistration_comparison(
     experiment_number: str | None = None,
     experiment_text: str | None = None,
     evidence_out: dict[str, Any] | None = None,
+    num_voters: int = 1,
 ) -> ComparisonResult:
     processed_count = 0
     if prereg_ext == ".pdf":
@@ -924,7 +928,27 @@ async def general_preregistration_comparison(
             query_embedding_cache = await _prebuild_query_embeddings(
                 dimensions_to_compare, embedding_model=_embedding_model()
             )
+        if num_voters > 1:
+            # Strand-based consensus: independent voters, each with its own append chain.
+            result_obj.items.extend(
+                await _run_strand_consensus(
+                    runner=runner,
+                    dimensions=dimensions_to_compare,
+                    num_voters=num_voters,
+                    preregistration_input=preregistration_input,
+                    extracted_paper_sections=extracted_paper_sections,
+                    client_choice=client_choice,
+                    append_previous_output=append_previous_output,
+                    corpus_cache=corpus_cache,
+                    query_embedding_cache=query_embedding_cache,
+                    reasoning_effort=reasoning_effort,
+                    evidence_manifest=evidence_manifest,
+                    comparison_context="preregistration",
+                )
+            )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
+            if num_voters > 1:
+                break  # strand consensus (above) already produced every dimension's item
             if not isinstance(dimension_info, dict):
                 continue
             dimension_name = (dimension_info.get("dimension") or dimension_info.get("name") or "").strip()
@@ -959,6 +983,7 @@ async def general_preregistration_comparison(
                 dimension_name,
                 dimension_definition=dimension_definition,
                 dimension_keywords=dimension_info.get("keywords") or [],
+                num_voters=num_voters,
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1033,6 +1058,7 @@ async def clinical_trial_comparison(
     selected_dimensions: list[dict[str, str]] | None = None,
     append_previous_output: bool = False,
     reasoning_effort: str | None = None,
+    num_voters: int = 1,
 ) -> ComparisonResult:
     logger.info("Started clinical trial comparison", extra={"task_id": task_id})
     extract_nct = nct_extractor or extract_nct_id
@@ -1195,6 +1221,7 @@ async def clinical_trial_comparison(
                 dimension,
                 dimension_definition=dimension_definition,
                 dimension_keywords=dimension_info.get("keywords") or [],
+                num_voters=num_voters,
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1268,6 +1295,7 @@ async def animals_trial_comparison(
     selected_dimensions: list[dict[str, str]] | None = None,
     append_previous_output: bool = False,
     reasoning_effort: str | None = None,
+    num_voters: int = 1,
 ) -> ComparisonResult:
     logger.info(
         "Started animals trial comparison",
@@ -1433,6 +1461,7 @@ async def animals_trial_comparison(
                 dimension,
                 dimension_definition=dimension_definition,
                 dimension_keywords=dimension_info.get("keywords") or [],
+                num_voters=num_voters,
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
@@ -1599,6 +1628,334 @@ def _search_first_text_fragment(payload: Any) -> str:
 ComparisonContext = Literal["preregistration", "clinical_trial"]
 
 
+# Anthropic tool schema mirroring ComparisonItem — forcing this tool gives Claude
+# schema-constrained (always-parseable) JSON, the equivalent of OpenAI's .parse().
+_COMPARISON_TOOL: dict[str, Any] = {
+    "name": "record_comparison",
+    "description": "Record the structured preregistration-vs-paper comparison for this dimension.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "dimension": {"type": "string"},
+            "paper_content_quotes": {
+                "type": "string",
+                "description": "Direct quotes from the paper excerpts, keeping their [PAPER_####] evidence IDs; join multiple quotes with two newlines.",
+            },
+            "paper_content_summary": {"type": "string"},
+            "registration_content_quotes": {
+                "type": "string",
+                "description": "Direct quotes from the registration excerpts, keeping their [PREREG_####] evidence IDs; join multiple quotes with two newlines.",
+            },
+            "registration_content_summary": {"type": "string"},
+            "deviation_judgement": {
+                "type": "string",
+                "description": "'yes' if any deviation exists on this dimension, 'no' if fully consistent, or 'missing' if evidence is insufficient to judge.",
+            },
+            "deviation_information": {"type": "string"},
+        },
+        "required": [
+            "dimension",
+            "paper_content_quotes",
+            "paper_content_summary",
+            "registration_content_quotes",
+            "registration_content_summary",
+            "deviation_judgement",
+            "deviation_information",
+        ],
+    },
+}
+
+
+def _dispatch_judgement(
+    messages: list[dict[str, str]],
+    *,
+    client_choice: str,
+    reasoning_effort: str | None,
+) -> str:
+    """Send the assembled prompt to the chosen provider and return the raw reply text
+    (expected to be a single JSON object). Provider-specific extraction only; parsing,
+    retrying, and validation are handled by the caller."""
+    if client_choice in _OPENAI_CLIENTS:
+        openai_client = get_openai_client()
+        model = _openai_family_model(client_choice)
+        normalized_effort = (reasoning_effort or "medium").strip().lower()
+        if normalized_effort not in {"low", "medium", "high"}:
+            normalized_effort = "medium"
+        try:
+            response = openai_client.chat.completions.parse(
+                model=model,
+                messages=messages,
+                reasoning_effort=normalized_effort,
+                response_format=ComparisonItem,
+            )
+            return response.choices[0].message.content
+        except Exception as exc:
+            logger.info(
+                "OpenAI parse() failed; falling back to JSON mode",
+                extra={"model": model},
+                exc_info=exc,
+            )
+            return _openai_chat_json(
+                openai_client,
+                model=model,
+                messages=messages,
+                reasoning_effort=normalized_effort,
+            )
+    if client_choice == "deepseek":
+        deepseek_client = get_deepseek_client()
+        response = deepseek_client.chat.completions.create(
+            model=_deepseek_model(),
+            messages=messages,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        message = response.choices[0].message
+        raw_content = _message_content_to_text(message)
+        if not raw_content:
+            message_dump = None
+            if hasattr(message, "model_dump_json"):
+                try:
+                    message_dump = json.loads(message.model_dump_json())
+                except Exception:
+                    message_dump = message.model_dump()
+            elif hasattr(message, "model_dump"):
+                message_dump = message.model_dump()
+            raw_content = _search_first_text_fragment(message_dump)
+            if not raw_content:
+                response_dump = None
+                if hasattr(response, "model_dump_json"):
+                    try:
+                        response_dump = json.loads(response.model_dump_json())
+                    except Exception:
+                        response_dump = response.model_dump()
+                elif hasattr(response, "model_dump"):
+                    response_dump = response.model_dump()
+                raw_content = _search_first_text_fragment(response_dump)
+            if not raw_content:
+                logger.warning(
+                    "DeepSeek response returned empty content",
+                    extra={"response_id": getattr(response, "id", None), "message_dump": message_dump},
+                )
+        return _strip_deepseek_reasoning(raw_content)
+    if client_choice == "qwen":
+        return _qwen_chat(messages, use_json_mode=True)
+    if client_choice == "gpustack":
+        return _gpustack_chat(messages, use_json_mode=True)
+    if client_choice == "claude":
+        # Forced tool call => schema-constrained JSON (Claude has no response_format),
+        # which removes the sporadic unescaped-quote parse failures.
+        return _claude_structured(messages, model=_claude_model(), tool=_COMPARISON_TOOL)
+    raise ValueError("Invalid client selection")
+
+
+def _degraded_item(dimension_query: str, paper_top: list[str], prereg_top: list[str]) -> ComparisonItem:
+    """Fallback shown when no parseable judgement could be produced for a dimension
+    (keeps the deterministic retrieved quotes so the evidence panel is still useful)."""
+    return ComparisonItem(
+        dimension=dimension_query,
+        deviation_judgement="Insufficient evidence",
+        deviation_information=(
+            "RegCheck couldn’t parse the model’s response for this dimension, so no "
+            "judgement was made. The retrieved quotes are shown below; re-running or "
+            "choosing a different model may help."
+        ),
+        paper_content_quotes="\n\n".join(paper_top),
+        registration_content_quotes="\n\n".join(prereg_top),
+    )
+
+
+def _is_degraded_item(item: ComparisonItem) -> bool:
+    """True if this item is the parse-failure fallback (so it counts as a NON-VOTE when
+    aggregating across strands), matching the sentinel set by ``_degraded_item``."""
+    return (item.deviation_information or "").startswith("RegCheck couldn’t parse")
+
+
+async def _run_strand_consensus(
+    *,
+    runner: Callable[..., ComparisonResult],
+    dimensions: list[dict[str, Any]],
+    num_voters: int,
+    preregistration_input: str,
+    extracted_paper_sections: str,
+    client_choice: str,
+    append_previous_output: bool,
+    corpus_cache: dict[str, EmbeddingCorpus] | None,
+    query_embedding_cache: dict[str, Any] | None,
+    reasoning_effort: str | None,
+    evidence_manifest: dict[str, Any] | None,
+    comparison_context: ComparisonContext,
+) -> list[ComparisonItem]:
+    """Independent-voter ("strand") consensus for the preregistration flow.
+
+    Runs ``num_voters`` independent passes over the dimensions; each strand carries its
+    OWN append-previous chain, so the strands never share context. Aggregating per
+    dimension across strands therefore yields a GENUINELY independent vote (an honest
+    confidence tally), while within a strand the model still sees its own prior dimensions
+    (preserving cross-dimension coherence). This is the fix for append-previous coupling,
+    where all voters of a dimension shared one stochastic history and collapsed to a
+    non-reproducible unanimity. Retrieval is deterministic, so every strand reuses the
+    shared corpus/query caches; only the first strand writes the (CLI-unused, web-only)
+    evidence manifest, avoiding concurrent mutation."""
+    valid_dims = [
+        d
+        for d in dimensions
+        if isinstance(d, dict) and (d.get("dimension") or d.get("name") or "").strip()
+    ]
+
+    async def _one_strand(strand_idx: int) -> list[ComparisonItem]:
+        strand_items: list[ComparisonItem] = []
+        manifest = evidence_manifest if strand_idx == 0 else None
+        for dim in valid_dims:
+            name = (dim.get("dimension") or dim.get("name") or "").strip()
+            definition = (dim.get("definition") or "").strip()
+            prev = list(strand_items) if (append_previous_output and strand_items) else None
+            comparison = await asyncio.to_thread(
+                runner,
+                preregistration_input,
+                extracted_paper_sections,
+                client_choice,
+                name,
+                dimension_definition=definition,
+                dimension_keywords=dim.get("keywords") or [],
+                num_voters=1,
+                corpus_cache=corpus_cache,
+                query_embedding_cache=query_embedding_cache,
+                reasoning_effort=reasoning_effort,
+                previous_dimension_responses=prev,
+                comparison_context=comparison_context,
+                evidence_manifest=manifest,
+            )
+            strand_items.append(comparison.items[0])
+        return strand_items
+
+    strands = await asyncio.gather(*[_one_strand(s) for s in range(num_voters)])
+    aggregated: list[ComparisonItem] = []
+    for k in range(len(valid_dims)):
+        votes = [strands[s][k] for s in range(num_voters)]
+        genuine = [v for v in votes if not _is_degraded_item(v)]
+        aggregated.append(
+            _aggregate_dimension_votes(genuine, num_voters) if genuine else votes[0]
+        )
+    return aggregated
+
+
+_JUDGEMENT_ATTEMPTS = 2
+
+
+def _judge_dimension_once(
+    messages: list[dict[str, str]],
+    *,
+    client_choice: str,
+    dimension_query: str,
+    paper_top: list[str],
+    prereg_top: list[str],
+    reasoning_effort: str | None,
+) -> ComparisonItem | None:
+    """One independent model judgement for a dimension, on the already-assembled
+    ``messages``. Returns a ComparisonItem, or ``None`` when the reply can't be parsed
+    into JSON even after a retry — i.e. a NON-VOTE. Providers without schema-constrained
+    decoding (Claude/gpustack) occasionally emit malformed JSON (e.g. an unescaped quote
+    inside a value); a fresh draw almost never repeats it, so we re-sample once. Treating
+    an unparseable reply as ``None`` rather than a verdict means it neither poisons a
+    consensus tally as a spurious 'missing' vote nor silently degrades a single judgement
+    without a second chance. Quote fields are overridden with the deterministic excerpts.
+    The consensus-vote path calls this N times on the SAME ``messages`` (retrieval +
+    prompt are built once upstream), so only the stochastic judgement repeats."""
+    parsed_payload: Any = None
+    for attempt in range(_JUDGEMENT_ATTEMPTS):
+        result_json = _dispatch_judgement(
+            messages, client_choice=client_choice, reasoning_effort=reasoning_effort
+        )
+        cleaned_json = _extract_json_payload(result_json)
+        if cleaned_json:
+            try:
+                parsed_payload = json.loads(cleaned_json)
+                break
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Failed to decode JSON completion (attempt %d/%d)",
+                    attempt + 1,
+                    _JUDGEMENT_ATTEMPTS,
+                    extra={"client": client_choice, "raw_result": result_json, "cleaned_result": cleaned_json},
+                )
+        else:
+            logger.warning(
+                "Received empty completion content (attempt %d/%d)",
+                attempt + 1,
+                _JUDGEMENT_ATTEMPTS,
+                extra={"client": client_choice},
+            )
+
+    if not isinstance(parsed_payload, dict):
+        return None
+
+    normalized_payload = _normalize_comparison_payload(parsed_payload)
+    try:
+        parsed_item = ComparisonItem.model_validate(normalized_payload)
+    except ValidationError as ve:
+        logger.warning(
+            "Validation failed for ComparisonItem; attempting salvage",
+            extra={"errors": ve.errors(), "payload_keys": list(normalized_payload.keys())},
+        )
+        fallback = {
+            k: ("\n\n".join(map(str, v)) if isinstance(v, list) else (json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else ("" if v is None else str(v))))
+            for k, v in normalized_payload.items()
+        }
+        parsed_item = ComparisonItem.model_validate(fallback)
+    parsed_item.paper_content_quotes = "\n\n".join(paper_top)
+    parsed_item.registration_content_quotes = "\n\n".join(prereg_top)
+    return parsed_item
+
+
+def _normalize_verdict(value: str | None) -> str:
+    """Map any verdict label to one of {'yes','no','missing'} for tallying votes."""
+    s = (value or "").strip().lower()
+    if s.startswith("yes") or "deviat" in s or "inconsist" in s:
+        return "yes"
+    if s.startswith("no") or "consist" in s:
+        return "no"
+    return "missing"  # includes "missing" and the degraded "Insufficient evidence"
+
+
+def _aggregate_dimension_votes(items: list[ComparisonItem], voters: int) -> ComparisonItem:
+    """Consensus-vote aggregation over the PARSED judgements (``items``); ``voters`` is the
+    total attempted, so ``voters - len(items)`` is the number of unparseable replies that
+    were excluded as non-votes. The verdict is the plurality across the parsed judgements
+    (recall-biased tiebreak yes > no > missing). The report carries the full output of ONE
+    canonical winning judgement — the most grounded (most distinct evidence IDs cited;
+    ties → longest rationale, then earliest) — so quotes, summaries, and rationale stay
+    internally consistent. A one-line consensus note (incl. any exclusions) is appended."""
+    votes = [_normalize_verdict(it.deviation_judgement) for it in items]
+    counts = Counter(votes)
+    order = {"yes": 0, "no": 1, "missing": 2}
+    winner = min(("yes", "no", "missing"), key=lambda k: (-counts.get(k, 0), order[k]))
+    winners = [it for it, v in zip(items, votes) if v == winner]
+
+    def _grounding(it: ComparisonItem) -> int:
+        text = " ".join(
+            filter(None, [it.paper_content_summary, it.registration_content_summary, it.deviation_information])
+        )
+        return len(set(re.findall(r"(?:PAPER|PREREG)_\d+", text)))
+
+    # max() returns the first item achieving the max, so this is deterministic given order.
+    canonical = max(winners, key=lambda it: (_grounding(it), len(it.deviation_information or "")))
+
+    parsed = len(items)
+    excluded = max(0, voters - parsed)
+    labels = {"yes": "deviation", "no": "consistent", "missing": "insufficient evidence"}
+    breakdown = ", ".join(f"{counts[v]} {labels[v]}" for v in ("yes", "no", "missing") if counts.get(v))
+    excl_note = (
+        f"; {excluded} unparseable {'reply' if excluded == 1 else 'replies'} excluded" if excluded else ""
+    )
+    note = (
+        f"(Consensus verdict from {parsed} of {voters} parsed judgements: {labels[winner]} — "
+        f"{counts.get(winner, 0)}/{parsed}; {breakdown}{excl_note}.)"
+    )
+    base = (canonical.deviation_information or "").rstrip()
+    canonical.deviation_information = f"{base}\n\n{note}" if base else note
+    return canonical
+
+
 def run_comparison(
     preregistration_input: str,
     extracted_paper_sections: str,
@@ -1615,6 +1972,7 @@ def run_comparison(
     evidence_manifest: dict[str, Any] | None = None,
     query_embedding_cache: dict[str, Any] | None = None,
     dimension_keywords: list[str] | None = None,
+    num_voters: int = 1,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -1767,7 +2125,9 @@ def run_comparison(
         f"{intro_line}\n\n"
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
         " Second, make a judgement as to whether the content of the registration and paper relative to the specified dimension are consistent or not."
-        " You are looking closely for any deviation or divergence between the paper and the registration, particularly those that might cause conceptual, statistical, or interpretative issues with the study.\n\n"
+        " You are looking closely for any deviation or divergence between the paper and the registration, of any kind or size.\n\n"
+        "A deviation is anything the paper adds to, changes, or omits relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule. (Merely reporting additional descriptive detail or full results that a preregistration would not enumerate is not, by itself, a deviation.)\n\n"
+        "Your task is to determine whether or not the preregistration and the paper deviate from one another on this dimension. It may be the case that (i) a deviation is very minor, or (ii) a deviation is disclosed. Your task is NOT to judge severity, nor to determine whether deviations are accurately disclosed; your task is simply to flag deviations, regardless of how big or small they are. The severity question is one of human judgement, and the disclosure aspect is a separate question. Therefore, even if a deviation is minor or explicitly disclosed — for example a supplementary or more conservative analysis, an added measure or covariate, or an analysis labelled \"exploratory\" or \"added in response to reviewer feedback\" — it must still be recorded as a deviation. If a deviation is disclosed, note this in the deviation rationale ('deviation_information'), but it must NOT affect the deviation judgement itself ('deviation_judgement').\n\n"
         f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "
         f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
         "Use ONLY the provided evidence excerpts. Each excerpt is labeled with an ID in square brackets.\n\n"
@@ -1780,7 +2140,7 @@ def run_comparison(
         "'deviation_judgement', and 'deviation_information'. Each field MUST be a string.\n"
         "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
         "- For the summaries and deviation information, also cite the evidence IDs you relied upon.\n"
-        "- 'deviation_judgement' should be 'yes', 'no', or 'missing' if you lack enough evidence.\n"
+        "- 'deviation_judgement' should be 'yes' if any deviation exists on this dimension; 'no' if the registration and paper are fully consistent on this dimension; or 'missing' if you lack enough evidence to judge.\n"
         "If evidence is insufficient to judge, set deviation_judgement to 'missing' and explain briefly.\n"
     )
     if history_context:
@@ -1799,138 +2159,32 @@ def run_comparison(
         {"role": "user", "content": master_prompt},
     ]
 
-    if client_choice in _OPENAI_CLIENTS:
-        openai_client = get_openai_client()
-        model = _openai_family_model(client_choice)
-        normalized_effort = (reasoning_effort or "medium").strip().lower()
-        if normalized_effort not in {"low", "medium", "high"}:
-            normalized_effort = "medium"
-        try:
-            response = openai_client.chat.completions.parse(
-                model=model,
-                messages=messages,
-                reasoning_effort=normalized_effort,
-                response_format=ComparisonItem,
-            )
-            result_json = response.choices[0].message.content
-        except Exception as exc:
-            logger.info(
-                "OpenAI parse() failed; falling back to JSON mode",
-                extra={"model": model},
-                exc_info=exc,
-            )
-            result_json = _openai_chat_json(
-                openai_client,
-                model=model,
-                messages=messages,
-                reasoning_effort=normalized_effort,
-            )
-    elif client_choice == "deepseek":
-        deepseek_client = get_deepseek_client()
-        response = deepseek_client.chat.completions.create(
-            model=_deepseek_model(),
-            messages=messages,
-            temperature=0,
-            response_format={"type": "json_object"},
+    # Consensus-vote: judge the IDENTICAL prompt N times (retrieval + prompt were assembled
+    # once above, so only the stochastic judgement repeats), then aggregate by plurality.
+    # num_voters == 1 is the unchanged single-judge path. _judge_dimension_once returns
+    # None for an unparseable reply (a non-vote), so parse failures neither poison the
+    # tally nor decide a dimension; we only fall back to the degraded item if EVERY
+    # judgement failed to parse.
+    voters = max(1, int(num_voters or 1))
+    judged = [
+        _judge_dimension_once(
+            messages,
+            client_choice=client_choice,
+            dimension_query=dimension_query,
+            paper_top=paper_top,
+            prereg_top=prereg_top,
+            reasoning_effort=reasoning_effort,
         )
-        message = response.choices[0].message
-        raw_content = _message_content_to_text(message)
-        if not raw_content:
-            message_dump = None
-            if hasattr(message, "model_dump_json"):
-                try:
-                    message_dump = json.loads(message.model_dump_json())
-                except Exception:
-                    message_dump = message.model_dump()
-            elif hasattr(message, "model_dump"):
-                message_dump = message.model_dump()
-            raw_content = _search_first_text_fragment(message_dump)
-            if not raw_content:
-                response_dump = None
-                if hasattr(response, "model_dump_json"):
-                    try:
-                        response_dump = json.loads(response.model_dump_json())
-                    except Exception:
-                        response_dump = response.model_dump()
-                elif hasattr(response, "model_dump"):
-                    response_dump = response.model_dump()
-                raw_content = _search_first_text_fragment(response_dump)
-            if not raw_content:
-                logger.warning(
-                    "DeepSeek response returned empty content",
-                    extra={
-                        "response_id": getattr(response, "id", None),
-                        "message_dump": message_dump,
-                    },
-                )
-        result_json = _strip_deepseek_reasoning(raw_content)
-    elif client_choice == "qwen":
-        # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint, in
-        # JSON-object mode so the reply is a clean JSON object (stops the occasional
-        # prose-wrapped/truncated reply). An unparseable reply still degrades
-        # per-dimension (handled below) rather than aborting.
-        result_json = _qwen_chat(messages, use_json_mode=True)
-    elif client_choice == "gpustack":
-        # gpt-oss-120b via Uni Bern GPUStack, in JSON-object mode so the reply is a
-        # clean JSON object. An unparseable reply still degrades per-dimension below.
-        result_json = _gpustack_chat(messages, use_json_mode=True)
-    elif client_choice == "claude":
-        result_json = _claude_chat(
-            model=_claude_model(),
-            messages=messages,
-        )
+        for _ in range(voters)
+    ]
+    genuine = [j for j in judged if j is not None]
+    if not genuine:
+        item = _degraded_item(dimension_query, paper_top, prereg_top)
+    elif voters == 1:
+        item = genuine[0]
     else:
-        raise ValueError("Invalid client selection")
-
-    cleaned_json = _extract_json_payload(result_json)
-    parsed_payload: Any = None
-    if cleaned_json:
-        try:
-            parsed_payload = json.loads(cleaned_json)
-        except json.JSONDecodeError:
-            logger.error(
-                "Failed to decode JSON completion",
-                extra={"client": client_choice, "raw_result": result_json, "cleaned_result": cleaned_json},
-            )
-    else:
-        logger.error("Received empty completion content", extra={"client": client_choice})
-
-    if not isinstance(parsed_payload, dict):
-        # The model returned something we couldn't parse into a result for THIS
-        # dimension. Degrade just this dimension to "Insufficient evidence" (keeping
-        # the deterministic retrieved quotes) rather than failing the whole report —
-        # one flaky per-dimension response shouldn't discard the others.
-        degraded = ComparisonItem(
-            dimension=dimension_query,
-            deviation_judgement="Insufficient evidence",
-            deviation_information=(
-                "RegCheck couldn’t parse the model’s response for this dimension, so no "
-                "judgement was made. The retrieved quotes are shown below; re-running or "
-                "choosing a different model may help."
-            ),
-            paper_content_quotes="\n\n".join(paper_top),
-            registration_content_quotes="\n\n".join(prereg_top),
-        )
-        return ComparisonResult(items=[degraded])
-
-    # Normalize common LLM deviations before validation
-    normalized_payload = _normalize_comparison_payload(parsed_payload)
-
-    try:
-        parsed_item = ComparisonItem.model_validate(normalized_payload)
-    except ValidationError as ve:
-        logger.warning(
-            "Validation failed for ComparisonItem; attempting salvage",
-            extra={"errors": ve.errors(), "payload_keys": list(normalized_payload.keys())},
-        )
-        # As a last resort, coerce everything to string
-        fallback = {k: ("\n\n".join(map(str, v)) if isinstance(v, list) else (json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else ("" if v is None else str(v)))) for k, v in normalized_payload.items()}
-        parsed_item = ComparisonItem.model_validate(fallback)
-    # Override quote fields with deterministic top retrievals (highest similarity chunks, with IDs)
-    parsed_item.paper_content_quotes = "\n\n".join(paper_top)
-    parsed_item.registration_content_quotes = "\n\n".join(prereg_top)
-
-    return ComparisonResult(items=[parsed_item])
+        item = _aggregate_dimension_votes(genuine, voters)
+    return ComparisonResult(items=[item])
 
 
 def _load_pct_registration_text(pct_id: str, csv_path: str) -> str:
