@@ -12,6 +12,7 @@ imports these helpers and orchestrates them.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from functools import lru_cache
@@ -536,4 +537,47 @@ def _claude_chat(
         if _is_provider_auth_error(exc):
             _raise_provider_auth_error("Claude", "CLAUDE_API_KEY", exc)
         raise
+    return _claude_response_text(response)
+
+
+def _claude_structured(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    tool: dict[str, Any],
+    max_tokens: int | None = None,
+) -> str:
+    """Call Claude with a FORCED tool call and return the tool input as a JSON string.
+
+    Claude has no `response_format` schema mode like OpenAI's `.parse()`; left to plain
+    text it occasionally emits malformed JSON (e.g. an unescaped quote inside a value),
+    which `json.loads` then rejects. Forcing a single tool (``tool_choice`` = that tool)
+    makes Anthropic emit the arguments as a structured `tool_use` block whose ``.input``
+    is an already-parsed dict — schema-constrained at decode time, so the malformed-JSON
+    failure mode disappears. We re-serialise with ``json.dumps`` so callers keep their
+    existing "string in → json.loads" contract."""
+    client = get_claude_client()
+    system, convo = _split_system_for_anthropic(messages)
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens or _claude_max_tokens(),
+        "messages": convo or [{"role": "user", "content": ""}],
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": tool["name"]},
+    }
+    if system:
+        kwargs["system"] = system
+    try:
+        response = client.messages.create(**kwargs)
+    except Exception as exc:
+        if _is_provider_auth_error(exc):
+            _raise_provider_auth_error("Claude", "CLAUDE_API_KEY", exc)
+        raise
+    for block in getattr(response, "content", None) or []:
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool["name"]:
+            try:
+                return json.dumps(block.input, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return json.dumps(dict(block.input or {}), ensure_ascii=False)
+    # Forced tool_choice should always yield a tool_use block; fall back to text just in case.
     return _claude_response_text(response)

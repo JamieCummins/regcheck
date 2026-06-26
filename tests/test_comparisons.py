@@ -10,7 +10,10 @@ os.environ.setdefault("CLAUDE_API_KEY", "test")
 import backend.services.comparisons as comparisons  # noqa: E402
 import backend.services.llm as llm  # noqa: E402
 from backend.services.comparisons import (  # noqa: E402
+    ComparisonItem,
     ComparisonResult,
+    _aggregate_dimension_votes,
+    _normalize_verdict,
     clinical_trial_comparison,
     general_preregistration_comparison,
 )
@@ -221,9 +224,10 @@ def test_run_comparison_degrades_on_unparseable_response(monkeypatch):
         f"prereg:{hashlib.sha256(prereg.encode()).hexdigest()}": _corpus("PREREG"),
         f"paper:{hashlib.sha256(paper.encode()).hexdigest()}": _corpus("PAPER"),
     }
-    # Avoid the embeddings API for the query; make the model return non-JSON prose.
+    # Avoid the embeddings API for the query; make every judgement attempt return
+    # non-JSON prose (so both attempts fail to parse and the dimension degrades).
     monkeypatch.setattr(comparisons, "get_embedding", lambda text, model=None: np.array([1.0, 0.0, 0.0], dtype=np.float32))
-    monkeypatch.setattr(comparisons, "_claude_chat", lambda **kw: "I considered the dimension but produced no JSON object.")
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", lambda *a, **kw: "I considered the dimension but produced no JSON object.")
 
     result = comparisons.run_comparison(prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache)
 
@@ -842,3 +846,160 @@ def test_keyword_index_resolves_known_dimensions():
     assert "n =" in [k.lower() for k in dm.keywords_for_dimension("Sample size")]
     assert dm.keywords_for_dimension("Totally novel custom dimension") == []
     assert dm.keywords_for_dimension("Sample size", ["custom-only"]) == ["custom-only"]
+
+
+def _vote_item(verdict, rationale="", paper_summary="", reg_summary=""):
+    return ComparisonItem(
+        dimension="Sample size",
+        deviation_judgement=verdict,
+        deviation_information=rationale,
+        paper_content_summary=paper_summary,
+        registration_content_summary=reg_summary,
+    )
+
+
+def test_normalize_verdict_maps_label_variants():
+    assert _normalize_verdict("yes") == "yes"
+    assert _normalize_verdict("Deviation") == "yes"
+    assert _normalize_verdict("inconsistent") == "yes"
+    assert _normalize_verdict("no") == "no"
+    assert _normalize_verdict("Consistent") == "no"
+    assert _normalize_verdict("missing") == "missing"
+    assert _normalize_verdict("Insufficient evidence") == "missing"  # degraded label
+    assert _normalize_verdict("") == "missing"
+    assert _normalize_verdict(None) == "missing"
+
+
+def test_aggregate_votes_takes_plurality_and_appends_consensus_note():
+    items = [_vote_item("yes", f"r{i}") for i in range(6)] + [_vote_item("no") for _ in range(2)]
+    agg = _aggregate_dimension_votes(items, 8)
+    assert _normalize_verdict(agg.deviation_judgement) == "yes"
+    assert "6/8" in agg.deviation_information
+    assert "6 deviation, 2 consistent" in agg.deviation_information
+    assert "Consensus verdict from 8 of 8 parsed judgements" in agg.deviation_information
+
+
+def test_aggregate_votes_excludes_unparseable_from_tally():
+    # Only 6 of 8 voters produced a parseable judgement; the 2 failures are non-votes.
+    items = [_vote_item("yes", f"r{i}") for i in range(4)] + [_vote_item("no") for _ in range(2)]
+    agg = _aggregate_dimension_votes(items, 8)
+    assert _normalize_verdict(agg.deviation_judgement) == "yes"
+    assert "6 of 8 parsed judgements" in agg.deviation_information
+    assert "4/6" in agg.deviation_information                       # tally is over parsed, not attempted
+    assert "2 unparseable replies excluded" in agg.deviation_information
+    # singular grammar
+    agg1 = _aggregate_dimension_votes([_vote_item("yes") for _ in range(7)], 8)
+    assert "1 unparseable reply excluded" in agg1.deviation_information
+
+
+def test_judge_dimension_once_returns_none_on_unparseable(monkeypatch):
+    # An unparseable reply (e.g. an unescaped quote from Claude) is a NON-VOTE: after a
+    # retry it returns None rather than a spurious 'Insufficient evidence' verdict.
+    calls = {"n": 0}
+
+    def _bad(*_a, **_k):
+        calls["n"] += 1
+        return '{"dimension": "X", "deviation_judgement": "yes" "oops": unescaped}'
+
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _bad)
+    out = comparisons._judge_dimension_once(
+        [{"role": "user", "content": "x"}],
+        client_choice="claude",
+        dimension_query="X",
+        paper_top=["[PAPER_0001] q"],
+        prereg_top=["[PREREG_0001] q"],
+        reasoning_effort=None,
+    )
+    assert out is None
+    assert calls["n"] == 2  # one retry before giving up
+
+    # A valid reply on the retry is salvaged (returns a real item, not None).
+    seq = iter(["garbage{", '{"dimension": "X", "deviation_judgement": "no"}'])
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", lambda *_a, **_k: next(seq))
+    out2 = comparisons._judge_dimension_once(
+        [{"role": "user", "content": "x"}],
+        client_choice="claude",
+        dimension_query="X",
+        paper_top=["[PAPER_0001] q"],
+        prereg_top=["[PREREG_0001] q"],
+        reasoning_effort=None,
+    )
+    assert out2 is not None and _normalize_verdict(out2.deviation_judgement) == "no"
+
+
+def test_aggregate_votes_tiebreak_is_recall_biased():
+    # 4 yes / 4 no -> deviation (yes > no); 0 yes / 4 no / 4 missing -> no (no > missing).
+    assert _normalize_verdict(_aggregate_dimension_votes(
+        [_vote_item("yes") for _ in range(4)] + [_vote_item("no") for _ in range(4)], 8
+    ).deviation_judgement) == "yes"
+    assert _normalize_verdict(_aggregate_dimension_votes(
+        [_vote_item("no") for _ in range(4)] + [_vote_item("missing") for _ in range(4)], 8
+    ).deviation_judgement) == "no"
+
+
+def test_aggregate_votes_canonical_is_most_grounded_winner():
+    # Among the winning ('yes') runs, the rationale citing the most distinct evidence
+    # IDs is carried into the report (quotes/summaries/rationale stay self-consistent).
+    items = [
+        _vote_item("yes", "thin", paper_summary="[PAPER_0001]"),
+        _vote_item("yes", "grounded", paper_summary="[PAPER_0007]", reg_summary="[PREREG_0003] [PREREG_0009]"),
+        _vote_item("no"),
+    ]
+    agg = _aggregate_dimension_votes(items, 3)
+    assert _normalize_verdict(agg.deviation_judgement) == "yes"
+    assert agg.deviation_information.startswith("grounded")
+
+
+def test_aggregate_votes_missing_plurality():
+    items = [_vote_item("missing") for _ in range(5)] + [_vote_item("yes") for _ in range(3)]
+    agg = _aggregate_dimension_votes(items, 8)
+    assert _normalize_verdict(agg.deviation_judgement) == "missing"
+    assert "insufficient evidence — 5/8" in agg.deviation_information
+
+
+@pytest.mark.asyncio
+async def test_strand_consensus_runs_independent_voters(tmp_path):
+    # num_voters>1 in the general flow => N independent strands, each with its OWN
+    # append-previous chain, aggregated per dimension (not N coupled voters per dim).
+    import threading
+
+    prereg = tmp_path / "prereg.txt"
+    prereg.write_text("prereg")
+    paper = tmp_path / "paper.pdf"
+    paper.write_text("paper")
+
+    async def fake_pdf_parser(path: str) -> str:
+        return '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body>paper body</body></text></TEI>'
+
+    calls = []
+    lock = threading.Lock()
+
+    def fake_run(prereg_in, paper_secs, client, dim, *, num_voters=1,
+                 previous_dimension_responses=None, **kw):
+        with lock:
+            calls.append((dim, num_voters, len(previous_dimension_responses or [])))
+        verdict = "yes" if dim == "DimA" else "no"
+        return ComparisonResult(items=[ComparisonItem(
+            dimension=dim, deviation_judgement=verdict,
+            deviation_information="rationale", paper_content_summary="[PAPER_0001]")])
+
+    res = await general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".pdf", "claude", "grobid",
+        selected_dimensions=[{"dimension": "DimA", "definition": ""},
+                             {"dimension": "DimB", "definition": ""}],
+        append_previous_output=True,
+        pdf_parser=fake_pdf_parser,
+        comparison_runner=fake_run,
+        num_voters=3,
+    )
+    # 3 strands x 2 dimensions = 6 single-judge calls (NOT 2 calls of num_voters=3)
+    assert len(calls) == 6
+    assert all(nv == 1 for _, nv, _ in calls)
+    # DimA is first in every strand (no prior); DimB sees exactly its own strand's 1 prior
+    assert sorted(prev for dim, _, prev in calls if dim == "DimA") == [0, 0, 0]
+    assert sorted(prev for dim, _, prev in calls if dim == "DimB") == [1, 1, 1]
+    # two aggregated dimensions, each a consensus over the 3 strands
+    assert [it.dimension for it in res.items] == ["DimA", "DimB"]
+    assert _normalize_verdict(res.items[0].deviation_judgement) == "yes"
+    assert _normalize_verdict(res.items[1].deviation_judgement) == "no"
+    assert "from 3 of 3 parsed judgements" in res.items[0].deviation_information
