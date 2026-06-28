@@ -457,6 +457,20 @@
             .join("");
     }
 
+    // PDF-extracted quote text carries hard line breaks, end-of-line hyphenation, and
+    // whitespace runs that read badly in the callout. Normalise to flowing prose for
+    // DISPLAY only — the locator still matches against the raw chunk text.
+    function cleanQuoteText(text) {
+        return (text || "")
+            .replace(/\u00AD/g, "")                          // strip soft hyphens
+            .replace(/([A-Za-z])-\s*\n\s*([a-z])/g, "$1$2")  // join words hyphenated across a line break
+            .replace(/\s*\n+\s*/g, " ")                       // hard line breaks → spaces
+            .replace(/[ \t\u00A0]{2,}/g, " ")                 // collapse runs of spaces
+            .replace(/\s+([,.;:!?%)\]])/g, "$1")              // no space before closing punctuation
+            .replace(/([(\[])\s+/g, "$1")                     // no space after opening bracket
+            .trim();
+    }
+
     // Resolve a quote's text by its ID within the current dimension (for the callout).
     function quoteTextById(id) {
         const item = currentItem();
@@ -489,7 +503,7 @@
                 <span class="quote-callout__id quote-callout__id--${info.role}">${escapeHtml(id)}</span>
                 <button type="button" class="quote-callout__close" aria-label="Close">&times;</button>
             </div>
-            <div class="quote-callout__text">${escapeHtml(info.text || "Quote text unavailable.")}</div>
+            <div class="quote-callout__text">${escapeHtml(cleanQuoteText(info.text) || "Quote text unavailable.")}</div>
             <button type="button" class="quote-callout__open">Open in Evidence &rsaquo;</button>
         `;
         document.body.appendChild(box);

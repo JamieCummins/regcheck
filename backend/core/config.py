@@ -54,6 +54,38 @@ class Settings:
         return self.google_oauth_enabled or self.orcid_oauth_enabled
 
 
+def _resolve_redis_url() -> str:
+    """Resolve the Redis URL from the environment, robust to Heroku's randomly-
+    coloured add-on var names. Preference order:
+      1. Explicit REDIS_TLS_URL / REDIS_URL (set by the primary attachment).
+      2. Any HEROKU_REDIS_<COLOUR>_TLS_URL, then HEROKU_REDIS_<COLOUR>_URL — so a
+         recreated or differently-coloured add-on is picked up automatically
+         instead of resolving a stale hardcoded colour to a dead endpoint.
+      3. Other managed providers (REDISCLOUD_URL, REDISGREEN_URL).
+      4. localhost (dev only; production is guarded by the DYNO check below).
+    TLS variants are preferred throughout (Heroku Redis requires TLS)."""
+
+    def _val(name: str) -> str | None:
+        return (os.environ.get(name) or "").strip() or None
+
+    explicit = _val("REDIS_TLS_URL") or _val("REDIS_URL")
+    if explicit:
+        return explicit
+
+    heroku_keys = sorted(
+        k for k in os.environ if k.startswith("HEROKU_REDIS_") and k.endswith("_URL")
+    )
+    ordered = [k for k in heroku_keys if k.endswith("_TLS_URL")] + [
+        k for k in heroku_keys if not k.endswith("_TLS_URL")
+    ]
+    for key in ordered:
+        value = _val(key)
+        if value:
+            return value
+
+    return _val("REDISCLOUD_URL") or _val("REDISGREEN_URL") or "redis://localhost:6379/0"
+
+
 @lru_cache()
 def get_settings() -> Settings:
     """Return cached application settings."""
@@ -65,15 +97,7 @@ def get_settings() -> Settings:
         "true",
         "yes",
     }
-    redis_url = (
-        os.environ.get("REDIS_TLS_URL")
-        or os.environ.get("REDIS_URL")
-        or os.environ.get("HEROKU_REDIS_OLIVE_TLS_URL")
-        or os.environ.get("HEROKU_REDIS_OLIVE_URL")
-        or os.environ.get("REDISCLOUD_URL")
-        or os.environ.get("REDISGREEN_URL")
-        or "redis://localhost:6379/0"
-    )
+    redis_url = _resolve_redis_url()
     if os.environ.get("DYNO") and redis_url.startswith("redis://localhost"):
         raise RuntimeError("REDIS_URL/REDIS_TLS_URL must be set for production deployments.")
     session_secret_env = (os.environ.get("SESSION_SECRET") or "").strip()
