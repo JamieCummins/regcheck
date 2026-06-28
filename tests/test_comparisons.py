@@ -1003,3 +1003,52 @@ async def test_strand_consensus_runs_independent_voters(tmp_path):
     assert _normalize_verdict(res.items[0].deviation_judgement) == "yes"
     assert _normalize_verdict(res.items[1].deviation_judgement) == "no"
     assert "from 3 of 3 parsed judgements" in res.items[0].deviation_information
+
+
+def test_isolation_cache_reuses_extraction(tmp_path, monkeypatch):
+    # The (CLI-only) isolation cache: identical inputs reuse the extracted text instead of
+    # re-calling the model, so repeated runs are reproducible. cache_dir=None => always fresh.
+    calls = {"n": 0}
+
+    def fake_claude(**kw):
+        calls["n"] += 1
+        return "## ISOLATED TEXT for the target study"
+
+    monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
+    paper = "Experiment 1 ...\nExperiment 3a ...\nGeneral Discussion ..."
+    run = lambda **kw: _run_coro(comparisons.extract_experiment_specific_paper_text(paper, **kw))
+
+    out1 = run(experiment_label="3a", client_choice="claude", cache_dir=str(tmp_path))
+    out2 = run(experiment_label="3a", client_choice="claude", cache_dir=str(tmp_path))
+    assert out1 == out2 == "## ISOLATED TEXT for the target study"
+    assert calls["n"] == 1                                    # 2nd call served from cache
+    assert list(tmp_path.glob("isolation_*.txt"))            # a cache file was written
+
+    run(experiment_label="3a", client_choice="claude", cache_dir=None)
+    assert calls["n"] == 2                                    # no cache_dir => recompute
+
+    run(experiment_label="3b", client_choice="claude", cache_dir=str(tmp_path))
+    assert calls["n"] == 3                                    # different label => different key
+
+
+def test_isolation_union_ensemble_recovers_dropped_spans(monkeypatch):
+    # isolation_passes=3 => run the extraction 3x and union the spans, so content one
+    # draw drops is recovered from another (the measured failure mode on real papers).
+    drafts = iter([
+        "Shared method. Participants N = 50. We ran the planned t-test.",
+        "Shared method. Participants N = 50. Twelve participants were excluded for failing the attention check.",
+        "Shared method. We used the same coding and analytical approach as in Experiment 1.",
+    ])
+    calls = {"n": 0}
+
+    def fake_claude(**kw):
+        calls["n"] += 1
+        return next(drafts)
+
+    monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
+    out = _run_coro(comparisons.extract_experiment_specific_paper_text(
+        "Experiment 3a paper text ...", experiment_label="3a",
+        client_choice="claude", isolation_passes=3))
+    assert calls["n"] == 3                                       # three parallel passes
+    assert "twelve participants were excluded" in out.lower()    # recovered from pass 2
+    assert "same coding and analytical approach" in out.lower()  # recovered from pass 3
