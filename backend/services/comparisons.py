@@ -24,9 +24,14 @@ from .documents import (
 from .dimensions import default_dimensions_for
 from .embeddings import (
     EmbeddingCorpus,
+    _ollama_embedding_available,
+    _ollama_embedding_model,
+    _openai_key_available,
     build_corpus,
     get_embedding,
+    ollama_embed_segments,
     retrieve_relevant_chunks,
+    tfidf_embed_query,
 )
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
 from .trials import extract_nct_id, extract_nested_trial
@@ -40,6 +45,8 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 DEFAULT_OPENAI_MODEL = "gpt-5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MAX_SEGMENTS = 1200
 DEFAULT_MAX_CONCURRENT_TASKS = 8
 
@@ -79,6 +86,14 @@ def _deepseek_model() -> str:
 
 def _groq_model() -> str:
     return _env_str("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+
+
+def _ollama_model() -> str:
+    return _env_str("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+
+
+def _ollama_base_url() -> str:
+    return _env_str("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
 
 
 def _max_embedding_segments() -> int:
@@ -271,6 +286,10 @@ def get_deepseek_client() -> OpenAI:
             "Missing DEEPSEEK_API_KEY. Please contact administrators."
         )
     return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+
+
+def get_ollama_client() -> OpenAI:
+    return OpenAI(api_key="ollama", base_url=_ollama_base_url())
 
 
 dimension_definitions: dict[str, str] = {
@@ -468,6 +487,12 @@ async def extract_experiment_specific_paper_text(
                 temperature=0,
             )
             return _message_content_to_text(response.choices[0].message)
+        if client_choice == "ollama":
+            return _openai_chat_text(
+                get_ollama_client(),
+                model=_ollama_model(),
+                messages=messages,
+            )
         raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
     content = await asyncio.to_thread(_invoke_llm)
@@ -1273,8 +1298,6 @@ def run_comparison(
     prereg_top_k = top_k if top_k is not None else _compute_top_k(len(prereg_corpus.segments))
     paper_top_k = top_k if top_k is not None else _compute_top_k(len(paper_corpus.segments))
 
-    query_embedding = get_embedding(augmented_query, model=embedding_model)
-
     candidate_factor = 3
     prereg_candidate_k = min(
         len(prereg_corpus.segments), max(prereg_top_k * candidate_factor, prereg_top_k + 5)
@@ -1283,12 +1306,34 @@ def run_comparison(
         len(paper_corpus.segments), max(paper_top_k * candidate_factor, paper_top_k + 5)
     )
 
-    prereg_candidates = retrieve_relevant_chunks(
-        query_embedding, prereg_corpus, top_k=prereg_candidate_k
-    )
-    paper_candidates = retrieve_relevant_chunks(
-        query_embedding, paper_corpus, top_k=paper_candidate_k
-    )
+    if _openai_key_available():
+        query_embedding = get_embedding(augmented_query, model=embedding_model)
+        prereg_candidates = retrieve_relevant_chunks(
+            query_embedding, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            query_embedding, paper_corpus, top_k=paper_candidate_k
+        )
+    elif _ollama_embedding_available():
+        query_embedding = ollama_embed_segments(
+            [augmented_query],
+            model=_ollama_embedding_model(),
+        )[0]
+        prereg_candidates = retrieve_relevant_chunks(
+            query_embedding, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            query_embedding, paper_corpus, top_k=paper_candidate_k
+        )
+    else:
+        prereg_query_emb = tfidf_embed_query(augmented_query, prereg_corpus.vectorizer)
+        paper_query_emb = tfidf_embed_query(augmented_query, paper_corpus.vectorizer)
+        prereg_candidates = retrieve_relevant_chunks(
+            prereg_query_emb, prereg_corpus, top_k=prereg_candidate_k
+        )
+        paper_candidates = retrieve_relevant_chunks(
+            paper_query_emb, paper_corpus, top_k=paper_candidate_k
+        )
 
     prereg_top_rows = prereg_candidates[:prereg_top_k]
     paper_top_rows = paper_candidates[:paper_top_k]
@@ -1464,6 +1509,12 @@ def run_comparison(
                 temperature=0,
             )
         result_json = _message_content_to_text(response.choices[0].message)
+    elif client_choice == "ollama":
+        result_json = _openai_chat_json(
+            get_ollama_client(),
+            model=_ollama_model(),
+            messages=messages,
+        )
     else:
         raise ValueError("Invalid client selection")
 

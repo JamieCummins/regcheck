@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .core.config import get_settings
 from .core.logging import configure_logging
 from .core.redis import create_redis_client
-from .routes import api, comparisons, pages, status
+from .routes import api, batch, comparisons, pages, status
 from .routes import survey
 
 
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.redis = create_redis_client(settings.redis_url)
     app.state.templates = Jinja2Templates(directory=settings.templates_dir)
+    app.state.background_tasks: set = set()
 
     @app.on_event("startup")
     async def warm_redis_connection() -> None:
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
 
     app.include_router(pages.router)
     app.include_router(comparisons.router)
+    app.include_router(batch.router)
     app.include_router(survey.router)
     app.include_router(status.router)
     app.include_router(api.router)

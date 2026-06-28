@@ -7,9 +7,11 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Any
 
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,30 @@ def extract_chunks_tokens(
     # Remove empties
     return [c for c in chunks if c]
 
+def tfidf_embed_text(text: str) -> tuple[list[str], np.ndarray, TfidfVectorizer]:
+    """Segment text and produce TF-IDF embeddings — no API key required.
+
+    Uses the same token-based chunker as the OpenAI path so segment boundaries
+    are consistent regardless of which embedding backend is active.
+    """
+    segments = extract_chunks_tokens(text)
+    if not segments:
+        segments = [text] if text.strip() else [""]
+    vectorizer = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True)
+    try:
+        matrix = vectorizer.fit_transform(segments)
+        return segments, matrix.toarray().astype(np.float32), vectorizer
+    except ValueError:
+        # Empty vocabulary (empty or stopword-only text) — return zero embeddings
+        return segments, np.zeros((len(segments), 1), dtype=np.float32), vectorizer
+
+
+def tfidf_embed_query(query: str, vectorizer: TfidfVectorizer) -> np.ndarray:
+    """Transform a single query string using an already-fitted TF-IDF vectorizer."""
+    if not getattr(vectorizer, "vocabulary_", None):
+        return np.zeros(1, dtype=np.float32)
+    return vectorizer.transform([query]).toarray()[0].astype(np.float32)
+
 
 def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-3-large") -> np.ndarray:
     from openai import OpenAI
@@ -146,6 +172,36 @@ def openai_embed_text(
 ) -> tuple[list[str], np.ndarray]:
     segments = extract_chunks_tokens(text, max_chunk_tokens=max_chunk_tokens, encoding_name=model)
     embeddings = openai_embed_segments(segments, model=model)
+    return list(segments), embeddings
+
+
+def ollama_embed_segments(
+    segments: Sequence[str],
+    model: str = "nomic-embed-text-v2-moe",
+    base_url: str | None = None,
+) -> np.ndarray:
+    from openai import OpenAI
+
+    client = OpenAI(api_key="ollama", base_url=base_url or _ollama_base_url())
+    max_batch = 2048
+    embeddings: list[list[float]] = []
+    for start in range(0, len(segments), max_batch):
+        batch = segments[start : start + max_batch]
+        response = client.embeddings.create(input=list(batch), model=model)
+        embeddings.extend(d.embedding for d in response.data)
+    return np.asarray(embeddings, dtype=np.float32)
+
+
+def ollama_embed_text(
+    text: str,
+    model: str = "nomic-embed-text-v2-moe",
+    base_url: str | None = None,
+    *,
+    max_chunk_tokens: int = 300,
+) -> tuple[list[str], np.ndarray]:
+    # Use the standard tiktoken tokenizer for chunk sizing
+    segments = extract_chunks_tokens(text, max_chunk_tokens=max_chunk_tokens, encoding_name="text-embedding-3-large")
+    embeddings = ollama_embed_segments(segments, model=model, base_url=base_url)
     return list(segments), embeddings
 
 
@@ -259,6 +315,22 @@ class EmbeddingCorpus:
     embeddings: np.ndarray
     chunk_ids: list[str]
     norms: np.ndarray
+    vectorizer: Any = None # populated only in TF-IDF mode, none when using OpenAI embeddings
+
+def _openai_key_available() -> bool:
+    return bool(os.environ.get("OPENAI_API_KEY", "").strip())
+
+
+def _ollama_embedding_available() -> bool:
+    return bool(os.environ.get("OLLAMA_EMBEDDING_MODEL", "").strip())
+
+
+def _ollama_embedding_model() -> str:
+    return os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text").strip()
+
+
+def _ollama_base_url() -> str:
+    return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip()
 
 
 def build_corpus(
@@ -271,10 +343,31 @@ def build_corpus(
 ) -> EmbeddingCorpus:
     segments: list[str]
     embeddings: np.ndarray
-    if embeddings_path and os.path.exists(embeddings_path):
-        segments, embeddings = load_embeddings(embeddings_path)
+    vectorizer: Any = None
+
+    if _openai_key_available():
+        # OpenAI path (supports cached embeddings on disk)
+        if embeddings_path and os.path.exists(embeddings_path):
+            segments, embeddings = load_embeddings(embeddings_path)
+        else:
+            segments, embeddings = openai_embed_text(text, model=model, max_chunk_tokens=max_chunk_tokens)
+            if embeddings_path:
+                save_embeddings(segments, embeddings, embeddings_path)
+    elif _ollama_embedding_available():
+        # Ollama path — dense embeddings via local model, no API key required
+        if embeddings_path and os.path.exists(embeddings_path):
+            segments, embeddings = load_embeddings(embeddings_path)
+        else:
+            segments, embeddings = ollama_embed_text(
+                text,
+                model=_ollama_embedding_model(),
+                max_chunk_tokens=max_chunk_tokens,
+            )
+            if embeddings_path:
+                save_embeddings(segments, embeddings, embeddings_path)
     else:
-        segments, embeddings = openai_embed_text(text, model=model, max_chunk_tokens=max_chunk_tokens)
+        # TF-IDF fallback — no external service required
+        segments, embeddings, vectorizer = tfidf_embed_text(text)
 
     embeddings = _coerce_embeddings_matrix(embeddings, len(segments))
     if embeddings.shape[0] != len(segments):
@@ -292,9 +385,7 @@ def build_corpus(
 
     if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
         segments = segments[:max_segments]
-        embeddings = embeddings[: max_segments]
-    if embeddings_path and not os.path.exists(embeddings_path):
-        save_embeddings(segments, embeddings, embeddings_path)
+        embeddings = embeddings[:max_segments]
 
     chunk_ids = [
         f"{(chunk_prefix or 'CHUNK').upper()}_{i+1:04d}" for i in range(len(segments))
@@ -318,4 +409,5 @@ def build_corpus(
         embeddings=np.asarray(embeddings, dtype=np.float32),
         chunk_ids=list(chunk_ids),
         norms=norms,
+        vectorizer=vectorizer,
     )
