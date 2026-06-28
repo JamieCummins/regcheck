@@ -422,18 +422,6 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
     overflow: hidden;
 }
 
-/* Overview content column: the decision/rationale (top) sits over the registration +
-   paper summaries (bottom), so the text gets the full width instead of a skinny column. */
-.report-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-    min-width: 0;
-    min-height: 0;
-}
-.report-content > .report-detail { flex: 1 1 auto; min-height: 9rem; }
-.report-content > .report-quotes { flex: 0 1 auto; min-height: 0; max-height: 46%; }
-
 .report-dimension-rail,
 .report-detail,
 .report-quotes {
@@ -900,6 +888,62 @@ body.is-col-resizing * {
 .quote-ref:hover,
 .quote-ref:focus-visible { border-color: currentColor; outline: none; }
 
+/* Inline quote callout (clicking a reference shows the quote in place). */
+.quote-callout {
+    position: fixed;
+    z-index: 1080;
+    max-width: 360px;
+    max-height: 50vh;
+    overflow: auto;
+    background: var(--rc-panel);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: 10px;
+    box-shadow: var(--rc-shadow-lg);
+    padding: 0.7rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.quote-callout--reg { border-top: 3px solid var(--report-reg-ink); }
+.quote-callout--ppr { border-top: 3px solid var(--report-paper-ink); }
+.quote-callout__head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.quote-callout__id {
+    font-family: var(--rc-font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+.quote-callout__id--reg { color: var(--report-reg-ink); }
+.quote-callout__id--ppr { color: var(--report-paper-ink); }
+.quote-callout__close {
+    border: none;
+    background: transparent;
+    color: var(--rc-muted);
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.15rem;
+}
+.quote-callout__close:hover { color: var(--rc-text); }
+.quote-callout__text {
+    color: var(--rc-text);
+    font-size: 0.86rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+.quote-callout__open {
+    align-self: flex-start;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    border-radius: 7px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.14s ease, color 0.14s ease;
+}
+.quote-callout__open:hover { border-color: var(--rc-accent); color: var(--rc-accent); }
+
 /* Documents view (step 2) --------------------------------------------------- */
 .report-view--documents {
     display: flex;
@@ -1273,18 +1317,13 @@ body.is-col-resizing * {
     }
 
     .report-view--decision > .report-dimension-rail,
-    .report-view--decision > .report-content,
-    .report-content > .report-detail,
-    .report-content > .report-quotes,
+    .report-view--decision > .report-detail,
+    .report-view--decision > .report-quotes,
     .docs-body > .docs-panel {
         flex: 0 0 auto !important;
         min-width: 0 !important;
         width: 100% !important;
     }
-
-    /* Stacked on mobile: summaries flow below the decision with no height cap. */
-    .report-content { flex-direction: column; }
-    .report-content > .report-quotes { max-height: none; }
 
     .report-splitter { display: none !important; }
 
