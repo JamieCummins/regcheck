@@ -275,77 +275,101 @@ def _split_into_heading_blocks(text: str) -> list[tuple[str, int]]:
     return blocks or [(text, 0)]
 
 
+# Chunk overlap: best practice is a small overlap (~10–20% of chunk size) so a fact that
+# straddles a chunk boundary still appears whole in at least one chunk. Realised as trailing
+# WHOLE sentences (never a partial sentence). Override the absolute budget with
+# EMBEDDING_CHUNK_OVERLAP_TOKENS; otherwise it is _DEFAULT_OVERLAP_RATIO of max_chunk_tokens.
+_DEFAULT_OVERLAP_RATIO = 0.15
+# A single sentence is sliced only if it alone exceeds this (≈ the embedding context limit);
+# otherwise sentences are kept whole even when a chunk flexes past max_chunk_tokens.
+_SENTENCE_HARD_LIMIT_TOKENS = 8000
+
+
+def _default_overlap_tokens(max_chunk_tokens: int) -> int:
+    raw = os.getenv("EMBEDDING_CHUNK_OVERLAP_TOKENS")
+    if raw is not None:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return max(0, round(max_chunk_tokens * _DEFAULT_OVERLAP_RATIO))
+
+
 def extract_chunks_tokens_with_spans(
     text: str,
     max_chunk_tokens: int = 300,
     encoding_name: str = "text-embedding-3-large",
+    overlap_tokens: int | None = None,
 ) -> list[TextChunk]:
     """Boundary-aware token chunking with character spans into the original text.
 
     Chunks never span a section heading, so a methods fact (e.g. an exclusion count or
     sample size) stays out of the same chunk as adjacent results text — which keeps its
-    embedding focused and retrievable. Falls back to plain token-window chunking when no
-    headings are detectable."""
+    embedding focused and retrievable. Whole sentences are never split (the chunk flexes
+    past max_chunk_tokens rather than cut a sentence), and consecutive chunks overlap by a
+    few trailing sentences (~15% of the size) so boundary-straddling facts stay whole."""
     tokenizer = _get_tokenizer(encoding_name)
+    if overlap_tokens is None:
+        overlap_tokens = _default_overlap_tokens(max_chunk_tokens)
     out: list[TextChunk] = []
     for block_text, block_offset in _split_into_heading_blocks(text):
-        for chunk in _chunk_block_with_spans(block_text, tokenizer, max_chunk_tokens):
+        for chunk in _chunk_block_with_spans(block_text, tokenizer, max_chunk_tokens, overlap_tokens):
             out.append(TextChunk(chunk.text, chunk.start + block_offset, chunk.end + block_offset))
     return [c for c in out if c.text]
 
 
-def _chunk_block_with_spans(text: str, tokenizer, max_chunk_tokens: int) -> list[TextChunk]:
-    """Sentence-aware token-window chunking within a single heading block."""
-    sentence_spans = _fallback_sentence_spans(text)
+def _chunk_block_with_spans(
+    text: str, tokenizer, max_chunk_tokens: int, overlap_tokens: int = 0
+) -> list[TextChunk]:
+    """Sentence-aware chunking within a single heading block.
+
+    Whole sentences are never split: a chunk flexes past ``max_chunk_tokens`` rather than cut a
+    sentence, and only a single sentence over ``_SENTENCE_HARD_LIMIT_TOKENS`` (≈ the embedding
+    context) is sliced. Each new chunk re-includes the previous chunk's trailing sentences up
+    to ``overlap_tokens``, so a fact spanning a chunk boundary stays whole in at least one chunk.
+    """
+    sents = _fallback_sentence_spans(text)
+    if not sents:
+        return []
+    lens: list[int] = []
+    for s in sents:
+        try:
+            lens.append(len(tokenizer.encode(s.text)))
+        except Exception:
+            lens.append(max(1, len(s.text.split())))
+
     chunks: list[TextChunk] = []
-    current: list[TextChunk] = []
-    current_tokens = 0
-
-    for sentence in sentence_spans:
-        sent_tokens = tokenizer.encode(sentence.text)
-        sent_len = len(sent_tokens)
-
-        # If a single sentence exceeds the limit, break it into token-sized slices so no chunk
-        # sent to the embeddings API is over the max context.
-        if sent_len > max_chunk_tokens:
-            if current:
-                text_start = current[0].start
-                text_end = current[-1].end
-                joined = (text or "")[text_start:text_end].strip()
-                if joined:
-                    chunks.append(TextChunk(joined, text_start, text_end))
-                current = []
-                current_tokens = 0
+    i, n = 0, len(sents)
+    while i < n:
+        # A single sentence over the hard limit is the only case we ever slice mid-sentence.
+        if lens[i] > _SENTENCE_HARD_LIMIT_TOKENS:
             chunks.extend(
-                _split_oversize_span(
-                    sentence,
-                    tokenizer=tokenizer,
-                    max_chunk_tokens=max_chunk_tokens,
-                )
+                _split_oversize_span(sents[i], tokenizer=tokenizer, max_chunk_tokens=max_chunk_tokens)
             )
+            i += 1
             continue
+        # Greedily take whole sentences up to the limit; always take at least sentence i so a
+        # long-but-under-hard-limit sentence becomes its own (flexible-size) chunk, never cut.
+        j, cur = i, 0
+        while j < n and lens[j] <= _SENTENCE_HARD_LIMIT_TOKENS and (j == i or cur + lens[j] <= max_chunk_tokens):
+            cur += lens[j]
+            j += 1
+        start, end = sents[i].start, sents[j - 1].end
+        body = (text or "")[start:end].strip()
+        if body:
+            chunks.append(TextChunk(body, start, end))
+        if j >= n:
+            break
+        # Next chunk overlaps by trailing whole sentences up to overlap_tokens (always advance >= 1).
+        next_i = j
+        if overlap_tokens > 0:
+            ov, k = 0, j - 1
+            while k > i and ov + lens[k] <= overlap_tokens:
+                ov += lens[k]
+                k -= 1
+            next_i = max(k + 1, i + 1)
+        i = next_i
 
-        if current_tokens + sent_len <= max_chunk_tokens:
-            current.append(sentence)
-            current_tokens += sent_len
-        else:
-            if current:
-                text_start = current[0].start
-                text_end = current[-1].end
-                joined = (text or "")[text_start:text_end].strip()
-                if joined:
-                    chunks.append(TextChunk(joined, text_start, text_end))
-            current = [sentence]
-            current_tokens = sent_len
-
-    if current:
-        text_start = current[0].start
-        text_end = current[-1].end
-        joined = (text or "")[text_start:text_end].strip()
-        if joined:
-            chunks.append(TextChunk(joined, text_start, text_end))
-
-    # Remove empties
     return [c for c in chunks if c.text]
 
 
