@@ -8,6 +8,8 @@ from pathlib import Path
 import docx
 import fitz
 
+from .text_normalize import decode_bytes
+
 __all__ = [
     "extract_text_from_docx",
     "extract_text_from_pdf",
@@ -139,8 +141,7 @@ class _HTMLTextExtractor(HTMLParser):
 
 def extract_text_from_html(file_path: str) -> str:
     """Extract readable text from an HTML document (stdlib parser; no JS execution)."""
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as handle:
-        markup = handle.read()
+    markup = decode_bytes(Path(file_path).read_bytes())  # charset-robust (UTF-8 -> cp1252)
     extractor = _HTMLTextExtractor()
     extractor.feed(markup)
     return extractor.text()
@@ -173,8 +174,7 @@ def clean_document_text(document_text: str) -> str:
 
 
 def _read_txt(path: str) -> str:
-    with open(path, "r", encoding="utf-8", errors="ignore") as handle:
-        return handle.read()
+    return decode_bytes(Path(path).read_bytes())  # charset-robust (UTF-8 -> cp1252)
 
 
 def read_file(file_path: str, file_extension: str) -> str:

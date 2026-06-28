@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .embeddings import extract_chunks_tokens_with_spans
+from .text_normalize import normalize_text
 
 try:  # pragma: no cover - optional dependency
     import fitz
@@ -144,7 +145,7 @@ def build_text_evidence_source(
         max_chunk_tokens=max_chunk_tokens,
         encoding_name=embedding_model,
     )
-    segments = [chunk.text for chunk in chunks]
+    segments = [normalize_text(chunk.text) for chunk in chunks]
     chunk_metadata: list[dict[str, Any]] = []
     manifest_chunks: dict[str, dict[str, Any]] = {}
     for index, chunk in enumerate(chunks, start=1):
@@ -159,7 +160,7 @@ def build_text_evidence_source(
             "source_id": source_id,
             "source_label": label,
             "source_kind": kind,
-            "text": chunk.text,
+            "text": normalize_text(chunk.text),
             "locations": [location],
             "relevance_scores_by_dimension": {},
         }
@@ -182,7 +183,7 @@ def build_text_evidence_source(
         "chunks": manifest_chunks,
         "raw_bytes": raw_bytes,
         "raw_content_type": raw_content_type,
-        "render_data": _plain_text_render_data(text or "", kind=kind, metadata=metadata),
+        "render_data": _plain_text_render_data(normalize_text(text or ""), kind=kind, metadata=metadata),
     }
 
 
@@ -446,7 +447,7 @@ def build_pdf_evidence_source(
             max_chunk_tokens=max_chunk_tokens,
             encoding_name=embedding_model,
         )
-        segments = [chunk.text for chunk in chunks]
+        segments = [normalize_text(chunk.text) for chunk in chunks]
         chunk_metadata: list[dict[str, Any]] = []
         manifest_chunks: dict[str, dict[str, Any]] = {}
         for index, chunk in enumerate(chunks, start=1):
@@ -462,7 +463,7 @@ def build_pdf_evidence_source(
                 "source_id": source_id,
                 "source_label": label,
                 "source_kind": "pdf",
-                "text": chunk.text,
+                "text": normalize_text(chunk.text),
                 "locations": locations,
                 "relevance_scores_by_dimension": {},
             }

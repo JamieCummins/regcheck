@@ -37,6 +37,7 @@ from .evidence import (
     build_text_evidence_source,
 )
 from .pdf_parsers import extract_pdf_text, pdf2dpt, pdf2grobid
+from .text_normalize import decode_bytes
 from .report_artifacts import (
     store_manifest,
     store_source_artifacts,
@@ -850,7 +851,7 @@ async def general_preregistration_comparison(
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
         elif paper_ext == ".txt":
-            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
+            extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
             raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
@@ -1251,7 +1252,7 @@ async def clinical_trial_comparison(
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
         elif paper_ext == ".txt":
-            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
+            extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
             raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
@@ -1487,7 +1488,7 @@ async def animals_trial_comparison(
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
         elif paper_ext == ".txt":
-            extracted_paper_sections = Path(paper_path).read_text(encoding="utf-8", errors="ignore")
+            extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
             raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
     except Exception as exc:
