@@ -142,3 +142,25 @@ def test_chunking_falls_back_without_headings():
     text = "This is sentence one. This is sentence two. This is sentence three."
     chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=200)
     assert len(chunks) == 1  # no headings -> single block -> prior behaviour
+
+
+def test_long_sentence_is_not_split_midway():
+    # A single sentence longer than max_chunk_tokens must stay whole (the chunk flexes past
+    # the limit) rather than being cut mid-sentence.
+    long_sentence = ("alpha " * 80).strip()  # ~80 tokens, no internal sentence terminator
+    text = f"Short start. {long_sentence}. Short finish."
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=20, overlap_tokens=5)
+    assert any(c.text.count("alpha") >= 80 for c in chunks), "long sentence must be kept whole"
+    for c in chunks:
+        assert c.text.strip() == text[c.start:c.end].strip()          # spans map to source
+        assert c.text.rstrip().endswith((".", "!", "?"))              # no mid-sentence cut
+
+
+def test_chunk_overlap_shares_trailing_sentence():
+    text = " ".join(f"This is sentence number {i} with filler to add some length." for i in range(8))
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=40, overlap_tokens=14)
+    assert len(chunks) >= 3
+    assert all(b.start < a.end for a, b in zip(chunks, chunks[1:])), "consecutive chunks should overlap"
+    # overlap_tokens=0 -> no overlap (chunks are contiguous, not overlapping)
+    no_ov = extract_chunks_tokens_with_spans(text, max_chunk_tokens=40, overlap_tokens=0)
+    assert all(b.start >= a.end for a, b in zip(no_ov, no_ov[1:]))
