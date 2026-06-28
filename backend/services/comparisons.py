@@ -544,7 +544,7 @@ async def _evidence_success_fields(
 
 
 # Bump when the isolation prompt below changes so any cached extractions auto-invalidate.
-_ISOLATION_PROMPT_VERSION = "2026-06-26.1"
+_ISOLATION_PROMPT_VERSION = "2026-06-29.1"
 
 
 def _isolation_model_tag(client_choice: str, reasoning_effort: str | None) -> str:
@@ -615,7 +615,9 @@ async def extract_experiment_specific_paper_text(
     the Introduction, any general/shared content governing all studies (general method,
     shared materials/measures/procedures, transparency/disclosure statements), the target
     study's own section (including method blocks shared across sibling studies), and the
-    General Discussion. Cross-references to other studies are inlined as verbatim square-
+    General Discussion. Other studies' OWN hypotheses/predictions/results are excluded (even
+    when stated in the Introduction or General Discussion) so they can't leak into this
+    study's comparison. Cross-references to other studies are inlined as verbatim square-
     bracket quotes; section headings are preserved (this also helps boundary-aware chunking).
     (``experiment_label``/``experiment_*`` arg names are kept for API/form stability.)
     """
@@ -630,7 +632,9 @@ async def extract_experiment_specific_paper_text(
         'You will receive the full text of a paper that reports multiple studies\n'
         '(sometimes labelled "experiments"). You are required to extract ONLY the following, in order, as plain text. Preserve the paper\'s original\n'
         'wording and keep section headings (e.g., "Method", "Participants", "Results"). This should pertain only to the study number defined at the end of this description:\n\n'
-        '1) The full Introduction.\n\n'
+        '1) The full Introduction. (If the Introduction states predictions or\n'
+        '   hypotheses that pertain specifically to a study OTHER than the target,\n'
+        '   omit those particular sentences — keep the general background.)\n\n'
         '2) Any GENERAL or SHARED content that governs all studies, even if it is not\n'
         '   repeated inside the target study\'s own section. This includes: a general\n'
         '   method / "overview of experiments" section; shared materials, measures,\n'
@@ -653,8 +657,16 @@ async def extract_experiment_specific_paper_text(
         '- Preserve original wording and section headings. Do not paraphrase, summarise,\n'
         '  comment, re-order, or invent.\n'
         '- If a requested section is absent, omit it — never fabricate content.\n'
-        '- When uncertain whether shared/general content applies to the target study,\n'
-        '  INCLUDE it.\n\n'
+        '- EXCLUDE content that belongs specifically to a DIFFERENT study/experiment than\n'
+        '  the target: that other study\'s own hypotheses, predictions, manipulations,\n'
+        '  measures, analyses, results, and study-specific discussion. Do NOT carry another\n'
+        '  study\'s predictions or findings into this extraction even when they appear in the\n'
+        '  Introduction or General Discussion. (Genuinely SHARED methodology, materials,\n'
+        '  sampling, and transparency statements that apply to all studies are still included\n'
+        '  per (2); only another study\'s OWN hypotheses/predictions/results are excluded.)\n'
+        '- When uncertain whether shared/general methodology applies to the target study,\n'
+        '  INCLUDE it; but when content is another study\'s OWN hypotheses, predictions, or\n'
+        '  results, EXCLUDE it.\n\n'
         f"The target study that you need to extract is the Study labelled: '{experiment_label}'.\n\n"
         f"{note_block}"
         'Performing the above extractions, based on the above labelled experiment, on the below full paper text:\n'

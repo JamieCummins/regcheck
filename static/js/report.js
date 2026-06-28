@@ -1253,6 +1253,20 @@
         document.body.removeChild(link);
     }
 
+    // Download the report as a single self-contained interactive HTML file (the same
+    // viewer, with the evidence bundle inlined server-side). Only meaningful in the live
+    // app; the offline export itself has no server to call.
+    function canExportHtml() {
+        // Only real, server-backed reports can be exported: not the inlined offline
+        // export itself (__REGCHECK_BUNDLE__), nor the demo/local pseudo-reports.
+        return !!state.taskId && state.taskId !== "demo" && state.taskId !== "local"
+            && !window.__REGCHECK_BUNDLE__;
+    }
+    function downloadHtml() {
+        if (!canExportHtml()) return;
+        window.location.href = `/report/${encodeURIComponent(state.taskId)}/export.html`;
+    }
+
     /* ── PDF download (print-to-PDF of a tidy report layout) ─────────────────── */
     function downloadPdf() {
         if (!state.items.length) return;
@@ -1408,14 +1422,17 @@
         const open = () => {
             menu = document.createElement("div");
             menu.className = "report-download-menu";
+            const canHtml = canExportHtml();
             menu.innerHTML = `
                 <button type="button" data-dl="pdf">RegCheck report (PDF)</button>
+                ${canHtml ? '<button type="button" data-dl="html">Interactive report (HTML)</button>' : ""}
                 <button type="button" data-dl="csv">Data table (CSV)</button>`;
             document.body.appendChild(menu);
             const r = trigger.getBoundingClientRect();
             menu.style.top = `${Math.round(r.bottom + 6)}px`;
             menu.style.right = `${Math.round(window.innerWidth - r.right)}px`;
             menu.querySelector('[data-dl="pdf"]').addEventListener("click", () => { close(); downloadPdf(); });
+            if (canHtml) menu.querySelector('[data-dl="html"]').addEventListener("click", () => { close(); downloadHtml(); });
             menu.querySelector('[data-dl="csv"]').addEventListener("click", () => { close(); downloadCsv(); });
             trigger.setAttribute("aria-expanded", "true");
             // Defer listener attach so this opening click doesn't immediately close it.

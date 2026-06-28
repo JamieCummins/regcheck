@@ -6,8 +6,16 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
+from datetime import date
+
 from ..services import sharing as sharing_service
-from ..services.report_artifacts import load_artifact_bytes, load_manifest, public_manifest
+from ..services.report_artifacts import (
+    load_artifact_bytes,
+    load_manifest,
+    offline_bundle,
+    public_manifest,
+)
+from ..services.report_html import build_standalone_report_html
 
 try:  # pragma: no cover - optional dependency
     import fitz
@@ -49,6 +57,56 @@ async def report_manifest(request: Request, task_id: str):
     await _ensure_access(request, task_id)
     manifest = await _manifest_or_404(request, task_id)
     return JSONResponse(public_manifest(manifest, task_id), headers=PRIVATE_HEADERS)
+
+
+@router.get("/report/{task_id}/export.html")
+async def report_export_html(request: Request, task_id: str):
+    """Download the report as a single self-contained HTML file — the same interactive
+    viewer the CLI's --report-html produces, with the evidence bundle inlined so it
+    renders fully offline (text rendering + quote-string tracing, no server)."""
+    await _ensure_access(request, task_id)
+    redis_client = request.app.state.redis
+    manifest = await _manifest_or_404(request, task_id)
+
+    # Items come from the same place the live viewer reads them (the status hash), so
+    # the export is consistent with what the report currently shows.
+    items: list = []
+    title = "RegCheck Report"
+    try:
+        data = await redis_client.hgetall(task_id)
+    except Exception:  # pragma: no cover - defensive
+        data = None
+    if data:
+        def _f(key: str):
+            return data.get(key) if key in data else data.get(key.encode())
+        result_raw = _f("result_json")
+        if isinstance(result_raw, bytes):
+            result_raw = result_raw.decode("utf-8", "replace")
+        if result_raw:
+            try:
+                items = (json.loads(result_raw) or {}).get("items") or []
+            except json.JSONDecodeError:  # pragma: no cover - defensive
+                items = []
+        name_raw = _f("report_name")
+        if isinstance(name_raw, bytes):
+            name_raw = name_raw.decode("utf-8", "replace")
+        if name_raw and str(name_raw).strip():
+            title = str(name_raw).strip()
+
+    offline_manifest, render_data = await offline_bundle(redis_client, manifest)
+    document = build_standalone_report_html(
+        title=title,
+        items=items,
+        manifest=offline_manifest,
+        render_data=render_data,
+        meta=f"Exported from RegCheck on {date.today().isoformat()}",
+    )
+    filename = "regcheck-report.html"
+    headers = {
+        **PRIVATE_HEADERS,
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+    }
+    return Response(content=document, media_type="text/html; charset=utf-8", headers=headers)
 
 
 @router.get("/report/{task_id}/sources/{source_id}/render-data")
