@@ -347,16 +347,14 @@
         }
 
         if (!state.decisionResizersDone && els.viewDecision) {
-            // Overview is now rail | content, where content stacks the decision (top)
-            // over the registration/paper summaries (bottom). Only these two columns
-            // resize horizontally; the vertical split inside content is CSS-driven.
             const panels = [
                 els.viewDecision.querySelector(".report-dimension-rail"),
-                els.viewDecision.querySelector(".report-content"),
+                els.viewDecision.querySelector(".report-detail"),
+                els.viewDecision.querySelector(".report-quotes"),
             ].filter(Boolean);
-            if (panels.length === 2) {
-                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols.v2",
-                    [150, 420], [1, 4]);
+            if (panels.length === 3) {
+                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols",
+                    [150, 360, 300], [1, 2.7, 2]);
                 state.decisionResizersDone = true;
             }
         }
@@ -459,10 +457,64 @@
             .join("");
     }
 
+    // Resolve a quote's text by its ID within the current dimension (for the callout).
+    function quoteTextById(id) {
+        const item = currentItem();
+        if (!item) return null;
+        const role = /^PREREG/i.test(id) ? "reg" : "ppr";
+        const raw = role === "reg" ? item.registration_content_quotes : item.paper_content_quotes;
+        const q = parseQuotes(raw || "").find((x) => x.id === id);
+        if (!q) return null;
+        const chunk = chunkForQuote(q);
+        return { role, text: (chunk && chunk.text) || q.text || q.raw || "" };
+    }
+
+    function hideQuoteCallout() {
+        const existing = document.getElementById("quote-callout");
+        if (existing) existing.remove();
+    }
+
+    // Trial: clicking a reference shows the quote inline (anchored to the ref) instead of
+    // jumping to the Evidence view; an "Open in Evidence" affordance keeps the deep path.
+    function showQuoteCallout(refEl, id) {
+        hideQuoteCallout();
+        const info = quoteTextById(id);
+        if (!info) { openQuoteRef(id); return; }   // can't resolve — fall back to Evidence
+        const box = document.createElement("div");
+        box.id = "quote-callout";
+        box.className = `quote-callout quote-callout--${info.role}`;
+        box.setAttribute("role", "dialog");
+        box.innerHTML = `
+            <div class="quote-callout__head">
+                <span class="quote-callout__id quote-callout__id--${info.role}">${escapeHtml(id)}</span>
+                <button type="button" class="quote-callout__close" aria-label="Close">&times;</button>
+            </div>
+            <div class="quote-callout__text">${escapeHtml(info.text || "Quote text unavailable.")}</div>
+            <button type="button" class="quote-callout__open">Open in Evidence &rsaquo;</button>
+        `;
+        document.body.appendChild(box);
+        // Anchor below the ref if there's room, otherwise above; clamp to the viewport.
+        const r = refEl.getBoundingClientRect();
+        const bw = box.offsetWidth, bh = box.offsetHeight;
+        const left = Math.min(Math.max(8, r.left), window.innerWidth - bw - 8);
+        let top = r.bottom + 6;
+        if (top + bh > window.innerHeight - 8) top = Math.max(8, r.top - bh - 6);
+        box.style.left = `${Math.round(left)}px`;
+        box.style.top = `${Math.round(top)}px`;
+        box.querySelector(".quote-callout__close").addEventListener("click", hideQuoteCallout);
+        box.querySelector(".quote-callout__open").addEventListener("click", () => {
+            hideQuoteCallout();
+            openQuoteRef(id);
+        });
+    }
+
     function bindQuoteRefs(scope) {
         if (!scope) return;
         scope.querySelectorAll(".quote-ref").forEach((btn) => {
-            btn.addEventListener("click", () => openQuoteRef(btn.dataset.quoteRef));
+            btn.addEventListener("click", (event) => {
+                event.stopPropagation();   // don't let the document dismiss close it immediately
+                showQuoteCallout(btn, btn.dataset.quoteRef);
+            });
         });
     }
 
@@ -1567,6 +1619,12 @@
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     window.addEventListener("keydown", onKey);
+    // Dismiss the quote callout on outside-click, Escape, or any scroll (it's fixed-positioned).
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest(".quote-callout") && !event.target.closest(".quote-ref")) hideQuoteCallout();
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideQuoteCallout(); });
+    window.addEventListener("scroll", hideQuoteCallout, true);
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
