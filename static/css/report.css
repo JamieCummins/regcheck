@@ -894,7 +894,7 @@ body.is-col-resizing * {
     z-index: 1080;
     max-width: 360px;
     max-height: 50vh;
-    overflow: auto;
+    overflow: hidden;   /* the inner __text is the scroll region (head/footer stay put) */
     background: var(--rc-panel);
     border: 1px solid var(--rc-border-strong);
     border-radius: 10px;
@@ -930,6 +930,10 @@ body.is-col-resizing * {
     font-size: 0.86rem;
     line-height: 1.5;
     white-space: pre-wrap;
+    flex: 1 1 auto;
+    min-height: 0;          /* allow the flex child to shrink so it can scroll */
+    overflow-y: auto;
+    overscroll-behavior: contain;   /* don't chain scroll to the page underneath */
 }
 .quote-callout__open {
     align-self: flex-start;

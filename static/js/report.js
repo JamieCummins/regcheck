@@ -1633,12 +1633,17 @@
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     window.addEventListener("keydown", onKey);
-    // Dismiss the quote callout on outside-click, Escape, or any scroll (it's fixed-positioned).
+    // Dismiss the quote callout on outside-click, Escape, or scrolling the page underneath
+    // (it's fixed-positioned). Scrolling INSIDE the callout's own text must NOT dismiss it.
     document.addEventListener("click", (event) => {
         if (!event.target.closest(".quote-callout") && !event.target.closest(".quote-ref")) hideQuoteCallout();
     });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideQuoteCallout(); });
-    window.addEventListener("scroll", hideQuoteCallout, true);
+    window.addEventListener("scroll", (event) => {
+        const target = event.target;
+        if (target && target.closest && target.closest(".quote-callout")) return;  // scrolling within the popup
+        hideQuoteCallout();
+    }, true);
     window.addEventListener("beforeunload", () => {
         if (state.pollHandle) window.clearTimeout(state.pollHandle);
     });
