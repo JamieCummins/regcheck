@@ -42,31 +42,35 @@ def _build_text_pdf_render(text: str, *, title: str) -> bytes | None:
                 lineheight=lineheight, color=(0, 0, 0),
             )
 
-        def _render(page, body: str) -> None:
-            page.clean_contents()
-            page.insert_text((margin, 28), title[:120], fontsize=9, color=(0.28, 0.31, 0.42))
-            _insert(page, body)
+        def _fits(body: str) -> bool:
+            # Probe the fit on a THROWAWAY page. page.clean_contents() does NOT erase
+            # already-drawn text, so probing on the real page would overlay ~log2(N)
+            # copies of the text → the re-extracted PDF is many times larger than the
+            # input with sentences duplicated. Drawing each probe on a scratch page we
+            # immediately delete keeps the real pages clean.
+            scratch = doc.new_page(width=page_width, height=page_height)
+            try:
+                overflow = _insert(scratch, body)
+                return not (isinstance(overflow, (int, float)) and overflow < 0)
+            finally:
+                doc.delete_page(len(doc) - 1)
 
         remaining = text.strip()
         guard = 0
         while remaining and guard < 10000:
             guard += 1
-            page = doc.new_page(width=page_width, height=page_height)
-            # Binary-search the LARGEST prefix that fits without clipping, then advance
-            # by exactly that much. insert_textbox returns >=0 when the text fits and a
-            # negative value when it overflows; the old fixed-2800-char slice could
-            # exceed a page (esp. text with many short lines), clipping + dropping the
-            # overflow → "missing content" + near-blank pages.
+            # Binary-search the LARGEST prefix that fits without clipping (probing on
+            # scratch pages), then draw exactly that prefix ONCE on a fresh real page.
+            # insert_textbox returns >=0 when the text fits and a negative value when it
+            # overflows.
             lo, hi, best = 1, len(remaining), 1
             while lo <= hi:
                 mid = (lo + hi) // 2
-                page.clean_contents()
-                overflow = _insert(page, remaining[:mid])
-                if isinstance(overflow, (int, float)) and overflow < 0:
-                    hi = mid - 1
-                else:
+                if _fits(remaining[:mid]):
                     best = mid
                     lo = mid + 1
+                else:
+                    hi = mid - 1
             # Snap the cut to a paragraph/line/word boundary when one is reasonably
             # close, so we don't split mid-word.
             if best < len(remaining):
@@ -76,7 +80,9 @@ def _build_text_pdf_render(text: str, *, title: str) -> bytes | None:
                     if pos >= int(best * 0.5):
                         best = pos + len(sep)
                         break
-            _render(page, remaining[:best].strip())
+            page = doc.new_page(width=page_width, height=page_height)
+            page.insert_text((margin, 28), title[:120], fontsize=9, color=(0.28, 0.31, 0.42))
+            _insert(page, remaining[:best].strip())
             remaining = remaining[best:].lstrip()
         return doc.tobytes()
     finally:

@@ -191,6 +191,7 @@ def test_private_access_enforcement():
         assert client.get("/result/rr").status_code == 403
         assert client.get("/task_status/rr").status_code == 403
         assert client.get("/report/rr/manifest").status_code == 403
+        assert client.get("/report/rr/export.html").status_code == 403
 
         # Granted viewer: full access.
         as_user(grantee_id)

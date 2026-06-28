@@ -186,3 +186,44 @@ def test_text_pdf_render_paginates_without_dropping_content():
         assert f"Line {i:03d}" in rendered, f"Line {i:03d} was dropped"
     # ...and no blank/near-blank pages.
     assert all(len(doc[i].get_text().strip()) > 30 for i in range(len(doc)))
+    # ...and content is NOT duplicated: the binary-search fit-probes must render on
+    # throwaway pages, not overlay ~log2(N) copies on the live page (which previously
+    # bloated re-extraction ~9x and repeated sentences several times).
+    source = "\n".join(lines)
+    assert len(rendered) < 2 * len(source), (
+        f"render duplicated content: re-extracted {len(rendered)} chars vs source {len(source)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_offline_bundle_strips_urls_and_collects_render_data():
+    """offline_bundle must produce a self-contained, URL-free manifest + per-source
+    render_data (so the exported HTML renders without a server), without mutating the input."""
+    import json
+    from backend.services import report_artifacts as ra
+
+    class _KV:
+        def __init__(self):
+            self.kv = {}
+        async def get(self, k):
+            return self.kv.get(k)
+        async def set(self, k, v, ex=None):
+            self.kv[k] = v
+
+    redis = _KV()
+    await ra._redis_set_bytes(redis, "render:prereg", json.dumps({"kind": "text", "text": "hello world"}).encode(), 3600)
+    manifest = {
+        "version": 1, "task_id": "t",
+        "sources": {"prereg": {
+            "id": "prereg", "label": "Prereg", "kind": "text",
+            "_artifacts": {"render": {"storage": "redis", "key": "render:prereg"}},
+        }},
+        "chunks": {"PREREG_0001": {"id": "PREREG_0001", "text": "hello world"}},
+    }
+    out_manifest, render_data = await ra.offline_bundle(redis, manifest)
+    src = out_manifest["sources"]["prereg"]
+    assert "_artifacts" not in src                                  # storage internals stripped
+    assert "render_data_url" not in src and "page_url_template" not in src  # no server URLs
+    assert render_data["prereg"] == {"kind": "text", "text": "hello world"}  # render inlined
+    assert out_manifest["chunks"]["PREREG_0001"]["text"] == "hello world"   # chunks preserved
+    assert "_artifacts" in manifest["sources"]["prereg"]            # input not mutated (deepcopy)

@@ -378,6 +378,28 @@ def public_manifest(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
     return payload
 
 
+async def offline_bundle(redis_client, manifest: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Assemble a self-contained, URL-free manifest + per-source render_data from the
+    stored artifacts (mirrors comparisons._assemble_inline_bundle, but sourced from a
+    persisted report). The sources carry no page-image/render URLs, so the offline viewer
+    falls back to inline text rendering + quote-string tracing — no server needed."""
+    out_manifest = deepcopy(manifest)
+    render_data: dict[str, Any] = {}
+    for source_id, source in (out_manifest.get("sources") or {}).items():
+        if not isinstance(source, dict):
+            continue
+        artifacts = source.pop("_artifacts", None) or {}
+        raw_bytes = await load_artifact_bytes(redis_client, artifacts.get("render"))
+        if raw_bytes:
+            try:
+                render_data[str(source_id)] = json.loads(raw_bytes.decode("utf-8"))
+            except Exception:  # pragma: no cover - defensive
+                render_data[str(source_id)] = {}
+        # Leave the source URL-free (no render_data_url / page_url_template): the
+        # exported file must render entirely from the inlined bundle.
+    return out_manifest, render_data
+
+
 async def cleanup_expired_s3_artifacts(redis_client, *, limit: int = 100) -> int:
     cfg = get_s3_config()
     if cfg is None:
