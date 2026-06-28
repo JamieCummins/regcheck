@@ -347,14 +347,16 @@
         }
 
         if (!state.decisionResizersDone && els.viewDecision) {
+            // Overview is now rail | content, where content stacks the decision (top)
+            // over the registration/paper summaries (bottom). Only these two columns
+            // resize horizontally; the vertical split inside content is CSS-driven.
             const panels = [
                 els.viewDecision.querySelector(".report-dimension-rail"),
-                els.viewDecision.querySelector(".report-detail"),
-                els.viewDecision.querySelector(".report-quotes"),
+                els.viewDecision.querySelector(".report-content"),
             ].filter(Boolean);
-            if (panels.length === 3) {
-                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols",
-                    [150, 360, 300], [1, 2.7, 2]);
+            if (panels.length === 2) {
+                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols.v2",
+                    [150, 420], [1, 4]);
                 state.decisionResizersDone = true;
             }
         }
@@ -411,7 +413,7 @@
                 <div class="verdict-banner__head">
                     <span class="verdict-banner__label">${info.label}</span>
                 </div>
-                <p class="verdict-banner__body">${linkifyQuoteRefs(item.deviation_information || "No deviation information found.")}</p>
+                <div class="verdict-banner__body">${paragraphsHtml(item.deviation_information || "No deviation information found.")}</div>
             </div>
         `;
         // Quote references (PREREG_0001 / PAPER_0001) jump to the Evidence view.
@@ -441,6 +443,20 @@
         state.view = "documents";
         state.activeQuoteId = id;
         render();   // documents view scrolls the active quote into view on render
+    }
+
+    // Like linkifyQuoteRefs, but split the text into <p> paragraphs on blank lines so
+    // long blocks (esp. the appended consensus note) don't read as one dense wall in a
+    // narrow column. Returns one <p> when there are no paragraph breaks.
+    function paragraphsHtml(text) {
+        const raw = (text || "").trim();
+        if (!raw) return `<p>${linkifyQuoteRefs(text)}</p>`;
+        return raw
+            .split(/\n\s*\n+/)
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .map((part) => `<p>${linkifyQuoteRefs(part)}</p>`)
+            .join("");
     }
 
     function bindQuoteRefs(scope) {
@@ -488,11 +504,11 @@
             <div class="summary-grid summary-grid--pane">
                 <div class="summary-box">
                     <p class="section-title evidence-column__title--reg">Registration summary</p>
-                    <p>${linkifyQuoteRefs(item.registration_content_summary || "No summary available.")}</p>
+                    <div class="summary-box__text">${paragraphsHtml(item.registration_content_summary || "No summary available.")}</div>
                 </div>
                 <div class="summary-box">
                     <p class="section-title evidence-column__title--paper">Paper summary</p>
-                    <p>${linkifyQuoteRefs(item.paper_content_summary || "No summary available.")}</p>
+                    <div class="summary-box__text">${paragraphsHtml(item.paper_content_summary || "No summary available.")}</div>
                 </div>
             </div>
         `;
@@ -567,13 +583,6 @@
                 <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
             </div>
             <div class="docs-body">
-                <section class="docs-panel docs-panel--doc">
-                    <div class="docs-panel__head">
-                        <span class="docs-tag docs-tag--reg">Registration</span>
-                    </div>
-                    <div class="docs-toolbar" id="docs-reg-tools"></div>
-                    <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
-                </section>
                 <section class="docs-panel docs-panel--quotes">
                     <div class="docs-panel__head">
                         <span class="section-title">Quotes</span>
@@ -581,6 +590,13 @@
                     </div>
                     <p class="docs-quotes-hint">Click a quote to locate and highlight it in the document.</p>
                     <div class="docs-panel__scroll" id="docs-quotes"></div>
+                </section>
+                <section class="docs-panel docs-panel--doc">
+                    <div class="docs-panel__head">
+                        <span class="docs-tag docs-tag--reg">Registration</span>
+                    </div>
+                    <div class="docs-toolbar" id="docs-reg-tools"></div>
+                    <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
                 </section>
                 <section class="docs-panel docs-panel--doc">
                     <div class="docs-panel__head">
@@ -597,8 +613,9 @@
         bindLimitControl(els.viewDocuments, renderDocumentsView);
 
         const body = els.viewDocuments.querySelector(".docs-body");
+        // DOM order is now Quotes | Registration | Paper (quotes moved to the left).
         const panels = [...els.viewDocuments.querySelectorAll(".docs-panel")];
-        installResizers(body, panels, "regcheck.report.docsCols", [220, 200, 220], [2, 1.3, 2]);
+        installResizers(body, panels, "regcheck.report.docsCols.v2", [200, 220, 220], [1.3, 2, 2]);
 
         renderMiddleQuotes(regQuotes, pprQuotes);
         Promise.all([
@@ -946,18 +963,28 @@
         });
     }
 
-    function scrollActiveIntoView() {
-        if (!state.activeQuoteId) return;
-        const el = document.getElementById(`docmark-${state.activeQuoteId}`);
-        if (!el) return;
-        const container = el.closest(".docs-panel__scroll");
-        if (!container) return;
+    function centerInScroll(container, el) {
+        if (!container || !el) return;
         window.requestAnimationFrame(() => {
             const cr = container.getBoundingClientRect();
             const er = el.getBoundingClientRect();
             const top = container.scrollTop + (er.top - cr.top) - (container.clientHeight / 2) + (er.height / 2);
             container.scrollTo({ top, behavior: prefersReducedMotion ? "auto" : "smooth" });
         });
+    }
+
+    function scrollActiveIntoView() {
+        if (!state.activeQuoteId) return;
+        // Scroll the active quote's CARD in the quotes column into view, so opening a
+        // different reference visibly moves to that quote rather than leaving the list
+        // where it was (otherwise the user has to hunt for the highlighted card).
+        const card = els.viewDocuments.querySelector(
+            `#docs-quotes .evidence-card[data-quote="${state.activeQuoteId}"]`
+        );
+        if (card) centerInScroll(card.closest(".docs-panel__scroll"), card);
+        // Scroll the document panel to the located highlight (if the quote was anchored).
+        const el = document.getElementById(`docmark-${state.activeQuoteId}`);
+        if (el) centerInScroll(el.closest(".docs-panel__scroll"), el);
     }
 
     function highlightId(quote) {
