@@ -9,12 +9,24 @@
     /* Quote colour-coding: registration = blue, paper = lemon-yellow.
        Paper is deliberately a cooler/greener yellow than the amber "missing"
        verdict so the two don't read as the same colour. */
-    --report-reg-ink: #9bb8e6;
-    --report-paper-ink: #e6cf6a;
+    --report-reg-ink: #aecbf2;
+    --report-paper-ink: #f0d97f;
     --report-reg-bg: rgba(123, 160, 220, 0.12);
     --report-paper-bg: rgba(244, 222, 120, 0.11);
     --report-reg-bg-hover: rgba(123, 160, 220, 0.18);
     --report-paper-bg-hover: rgba(244, 222, 120, 0.17);
+}
+
+/* Light theme: the blue/gold quote + summary-header inks above are tuned for a dark
+   background; on white they fail contrast badly. Override with darker, readable
+   colours (keep the blue/gold identity), and slightly stronger tints behind quote refs. */
+[data-bs-theme="light"] {
+    --report-reg-ink: #2F4DA8;
+    --report-paper-ink: #7A5C00;
+    --report-reg-bg: rgba(47, 77, 168, 0.10);
+    --report-paper-bg: rgba(122, 92, 0, 0.12);
+    --report-reg-bg-hover: rgba(47, 77, 168, 0.16);
+    --report-paper-bg-hover: rgba(122, 92, 0, 0.18);
 }
 
 .report-page,
@@ -410,6 +422,18 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
     overflow: hidden;
 }
 
+/* Overview content column: the decision/rationale (top) sits over the registration +
+   paper summaries (bottom), so the text gets the full width instead of a skinny column. */
+.report-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    min-width: 0;
+    min-height: 0;
+}
+.report-content > .report-detail { flex: 1 1 auto; min-height: 9rem; }
+.report-content > .report-quotes { flex: 0 1 auto; min-height: 0; max-height: 46%; }
+
 .report-dimension-rail,
 .report-detail,
 .report-quotes {
@@ -647,6 +671,9 @@ body.is-col-resizing * {
     font-size: 0.9rem;
 }
 
+.verdict-banner__body p { margin: 0 0 0.7rem; }
+.verdict-banner__body p:last-child { margin-bottom: 0; }
+
 .section-title {
     margin: 0 0 0.45rem;
     color: var(--rc-muted);
@@ -672,12 +699,13 @@ body.is-col-resizing * {
     padding: 0.8rem;
 }
 
-.summary-box p:last-child {
-    margin: 0;
+.summary-box__text p {
+    margin: 0 0 0.6rem;
     color: var(--rc-text);
     line-height: 1.55;
     font-size: 0.88rem;
 }
+.summary-box__text p:last-child { margin-bottom: 0; }
 
 /* Quotes pane (decision view, right column) --------------------------------- */
 .report-quotes {
@@ -1245,13 +1273,18 @@ body.is-col-resizing * {
     }
 
     .report-view--decision > .report-dimension-rail,
-    .report-view--decision > .report-detail,
-    .report-view--decision > .report-quotes,
+    .report-view--decision > .report-content,
+    .report-content > .report-detail,
+    .report-content > .report-quotes,
     .docs-body > .docs-panel {
         flex: 0 0 auto !important;
         min-width: 0 !important;
         width: 100% !important;
     }
+
+    /* Stacked on mobile: summaries flow below the decision with no height cap. */
+    .report-content { flex-direction: column; }
+    .report-content > .report-quotes { max-height: none; }
 
     .report-splitter { display: none !important; }
 
