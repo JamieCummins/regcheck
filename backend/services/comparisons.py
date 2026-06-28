@@ -497,12 +497,73 @@ async def _evidence_success_fields(
 
 
 
+# Bump when the isolation prompt below changes so any cached extractions auto-invalidate.
+_ISOLATION_PROMPT_VERSION = "2026-06-26.1"
+
+
+def _isolation_model_tag(client_choice: str, reasoning_effort: str | None) -> str:
+    """Identify the model + effort used for isolation, so the (CLI-only) isolation cache
+    key changes when the model or reasoning effort changes (no stale extractions)."""
+    if client_choice in _OPENAI_CLIENTS:
+        effort = _normalize_reasoning_effort_value(
+            reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
+        )
+        return f"{_openai_family_model(client_choice, experiment=True)}:{effort}"
+    if client_choice == "deepseek":
+        return _deepseek_model()
+    if client_choice == "qwen":
+        return _qwen_model()
+    if client_choice == "gpustack":
+        return _gpustack_model()
+    if client_choice == "claude":
+        return _claude_model()
+    return client_choice
+
+
+def _union_isolations(drafts: list[str]) -> str:
+    """Union the spans from several independent isolation passes so a sentence is lost
+    only if EVERY pass dropped it (the single pass was measured to vary ~20% on
+    deviation-relevant content — exclusions, analyses, sample tables). The longest draft
+    is the base (most complete single pass; preserves order/headings); substantive
+    sentences other drafts caught but the base missed are appended under a markdown
+    heading so the boundary-aware chunker keeps them as their own retrievable chunks."""
+    drafts = [d for d in drafts if d and d.strip()]
+    if not drafts:
+        return ""
+    if len(drafts) == 1:
+        return drafts[0]
+
+    def _sentences(text: str) -> list[str]:
+        return [re.sub(r"\s+", " ", s).strip() for s in re.split(r"(?<=[.!?])\s+", text)]
+
+    base = max(drafts, key=len)
+    seen = {s.lower() for s in _sentences(base) if len(s) >= 25}
+    extras: list[str] = []
+    for draft in drafts:
+        if draft is base:
+            continue
+        for sentence in _sentences(draft):
+            key = sentence.lower()
+            if len(sentence) >= 25 and key not in seen:
+                seen.add(key)
+                extras.append(sentence)
+    if not extras:
+        return base
+    return (
+        base
+        + "\n\n## Additional content recovered from parallel isolation passes\n\n"
+        + "\n\n".join(extras)
+    )
+
+
 async def extract_experiment_specific_paper_text(
     full_paper_text: str,
     experiment_label: str,
     experiment_note: str | None = None,
     client_choice: str = "openai",
     reasoning_effort: str | None = None,
+    cache_dir: str | None = None,
+    isolation_passes: int = 1,
 ) -> str:
     """Use a generative LLM to isolate the content needed to evaluate one target study:
     the Introduction, any general/shared content governing all studies (general method,
@@ -604,10 +665,51 @@ async def extract_experiment_specific_paper_text(
             )
         raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
 
-    content = await asyncio.to_thread(_invoke_llm)
-    cleaned = (content or "").strip()
+    # Optional, opt-in (CLI-only) isolation cache: the worker/web path passes no cache_dir,
+    # so it always re-extracts fresh per job (no cross-job/cross-user reuse). The CLI passes
+    # a dir so repeated local runs of the same paper reuse the identical isolated text, making
+    # the whole pipeline reproducible across runs. The key folds in the model+effort and a
+    # prompt version, so changing any of those invalidates the entry.
+    passes = max(1, int(isolation_passes or 1))
+    cache_path: Path | None = None
+    if cache_dir:
+        tag = _isolation_model_tag(client_choice, reasoning_effort)
+        key = hashlib.sha256(
+            f"{_ISOLATION_PROMPT_VERSION}\x00{tag}\x00passes={passes}\x00{user_prompt}".encode("utf-8")
+        ).hexdigest()
+        cache_path = Path(cache_dir) / f"isolation_{key}.txt"
+        if cache_path.exists():
+            try:
+                cached = cache_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                logger.warning("Could not read isolation cache; recomputing", exc_info=True)
+                cached = ""
+            if cached:
+                logger.info(
+                    "Study-specific extraction served from cache",
+                    extra={"study_label": experiment_label, "cache_path": str(cache_path)},
+                )
+                return cached
+
+    if passes == 1:
+        cleaned = (await asyncio.to_thread(_invoke_llm) or "").strip()
+    else:
+        # Belt-and-suspenders: run the isolation N times in parallel and union the spans.
+        drafts = await asyncio.gather(*[asyncio.to_thread(_invoke_llm) for _ in range(passes)])
+        cleaned = _union_isolations([(d or "").strip() for d in drafts])
+        logger.info(
+            "Study-specific extraction unioned across %d passes",
+            passes,
+            extra={"study_label": experiment_label},
+        )
     if not cleaned:
         raise ValueError("Received empty experiment-focused extraction from the model")
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(cleaned, encoding="utf-8")
+        except OSError:
+            logger.warning("Could not write isolation cache", exc_info=True)
     return cleaned
 
 
@@ -632,6 +734,8 @@ async def general_preregistration_comparison(
     experiment_text: str | None = None,
     evidence_out: dict[str, Any] | None = None,
     num_voters: int = 1,
+    isolation_cache_dir: str | None = None,
+    isolation_passes: int = 1,
 ) -> ComparisonResult:
     processed_count = 0
     if prereg_ext == ".pdf":
@@ -755,6 +859,8 @@ async def general_preregistration_comparison(
                 experiment_note=experiment_note,
                 client_choice=client_choice,
                 reasoning_effort=reasoning_effort,
+                cache_dir=isolation_cache_dir,
+                isolation_passes=isolation_passes,
             )
             extracted_paper_sections = canonical_paper_text
             logger.info(

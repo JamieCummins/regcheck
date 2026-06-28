@@ -149,6 +149,8 @@ async def _run_general(args) -> dict:
         experiment_text=args.experiment_text,
         evidence_out=evidence_out,
         num_voters=_resolve_num_voters(args),
+        isolation_cache_dir=_resolve_isolation_cache_dir(args),
+        isolation_passes=args.isolation_passes,
     )
     logger.info("Completed general comparison.")
     payload = result.model_dump()
@@ -247,6 +249,22 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _resolve_isolation_cache_dir(args) -> str | None:
+    """Resolve where to cache multi-study isolation extractions (general flow only).
+
+    Default-on for the CLI so repeated local runs of the same paper reuse the identical
+    isolated text (making the pipeline reproducible run-to-run); ``--no-isolation-cache``
+    disables it. This is CLI-only — the API/worker path never passes a cache dir, so it
+    always re-extracts fresh per job (no cross-job/cross-user reuse).
+    """
+    if getattr(args, "no_isolation_cache", False):
+        return None
+    explicit = getattr(args, "isolation_cache_dir", None)
+    if explicit:
+        return explicit
+    return str(Path.home() / ".cache" / "regcheck" / "isolation")
 
 
 def _resolve_num_voters(args) -> int:
@@ -365,6 +383,30 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--experiment-text",
         help="Optional freeform note about the relevant experiment to include in the extraction prompt.",
+    )
+    general.add_argument(
+        "--isolation-cache-dir",
+        help=(
+            "Directory for caching multi-study isolation extractions so repeated local runs "
+            "of the same paper reuse identical isolated text — makes the pipeline reproducible "
+            "run-to-run (default: ~/.cache/regcheck/isolation). Only used with --multiple-experiments."
+        ),
+    )
+    general.add_argument(
+        "--no-isolation-cache",
+        action="store_true",
+        help="Disable the multi-study isolation cache (always re-extract the study text).",
+    )
+    general.add_argument(
+        "--isolation-passes",
+        type=int,
+        default=1,
+        help=(
+            "Run the multi-study isolation N times in parallel and UNION the extracted "
+            "spans (default 1). The single pass varies ~20%% on deviation-relevant content "
+            "(exclusions, analyses, sample tables); N>=3 recovers a span unless every pass "
+            "drops it. Only used with --multiple-experiments."
+        ),
     )
     general.add_argument(
         "--output",
