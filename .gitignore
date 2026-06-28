@@ -26,9 +26,8 @@ nltk_data/
 *.db
 *.rdb
 
-# Large sample documents (not redistributed)
-test_materials/**/*.pdf
-test_materials/**/*.docx
+# Local fixtures / sample documents + curated ground-truth (not redistributed)
+test_materials/
 
 # Native libraries
 *.dylib
