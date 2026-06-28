@@ -109,8 +109,11 @@ def _embedding_model() -> str:
 
 
 def _embedding_max_chunk_tokens() -> int:
-    configured = _env_int("EMBEDDING_MAX_CHUNK_TOKENS", 300)
-    return max(100, configured)
+    # Small-to-big retrieval: chunks are kept SMALL (tight, readable quotes that match short
+    # human extractions and retrieve precisely); the judge is fed expanded neighbour windows
+    # at comparison time (see _expand_with_neighbors). Floor lowered to allow experimentation.
+    configured = _env_int("EMBEDDING_MAX_CHUNK_TOKENS", 120)
+    return max(50, configured)
 
 
 _comparison_semaphore = asyncio.Semaphore(
@@ -266,6 +269,48 @@ def _promote_keyword_hits(
             if len(promoted) >= reserve:
                 break
     return base_rows + promoted
+
+
+def _judge_context_window() -> int:
+    """Small-to-big: how many neighbouring chunks on each side to add around each retrieved
+    hit when building the JUDGE's prompt (0 = no expansion, i.e. judge reads only the tight
+    retrieved chunks). Display/quotes always remain the tight retrieved chunks."""
+    return max(0, _env_int("RAG_JUDGE_CONTEXT_WINDOW", 2))
+
+
+def _expand_with_neighbors(
+    rows: list[tuple[str, str, float]],
+    corpus: "EmbeddingCorpus",
+    window: int,
+) -> list[str]:
+    """Expand the retrieved (tight) chunks into their neighbouring chunks for the JUDGE's
+    prompt, so it reads coherent source windows instead of isolated fragments. Returns
+    labelled ``[CID] text`` strings in source order (retrieved hits keep their relevance
+    score; pulled-in neighbours are unscored), de-duplicated where windows overlap. The
+    tight retrieved chunks remain what's displayed/quoted — only the prompt is expanded."""
+    chunk_ids = list(getattr(corpus, "chunk_ids", []) or [])
+    segments = list(getattr(corpus, "segments", []) or [])
+    if not rows or not chunk_ids or window <= 0:
+        return [f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in rows]
+    idx_of = {cid: i for i, cid in enumerate(chunk_ids)}
+    scored = {cid: sim for cid, _t, sim in rows}
+    n = len(chunk_ids)
+    keep: set[int] = set()
+    for cid, _t, _s in rows:
+        i = idx_of.get(cid)
+        if i is None:
+            continue
+        for j in range(max(0, i - window), min(n, i + window + 1)):
+            keep.add(j)
+    out: list[str] = []
+    for i in sorted(keep):
+        cid = chunk_ids[i]
+        text = segments[i] if i < len(segments) else ""
+        if cid in scored:
+            out.append(f"[{cid}, relevance_score={scored[cid]:.3f}] {text}")
+        else:
+            out.append(f"[{cid}] {text}")
+    return out
 
 
 def _corpus_cache_key(role: str, text: str) -> str:
@@ -2189,8 +2234,13 @@ def run_comparison(
             if not isinstance(current_max, (int, float)) or sim > current_max:
                 chunk_info["max_relevance_score"] = float(sim)
 
+    # Display/quotes use the TIGHT retrieved chunks; the judge's prompt uses expanded
+    # neighbour windows (small-to-big). With RAG_JUDGE_CONTEXT_WINDOW=0 the two are identical.
     prereg_top = [f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in prereg_top_rows]
     paper_top = [f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in paper_top_rows]
+    _ctx_window = _judge_context_window()
+    prereg_prompt = _expand_with_neighbors(prereg_top_rows, prereg_corpus, _ctx_window)
+    paper_prompt = _expand_with_neighbors(paper_top_rows, paper_corpus, _ctx_window)
 
     history_context = ""
     if previous_dimension_responses:
@@ -2238,9 +2288,9 @@ def run_comparison(
         f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
         "Use ONLY the provided evidence excerpts. Each excerpt is labeled with an ID in square brackets.\n\n"
         "Registration excerpts:\n"
-        f"{' '.join(prereg_top)}\n\n"
+        f"{' '.join(prereg_prompt)}\n\n"
         "Paper excerpts:\n"
-        f"{' '.join(paper_top)}\n"
+        f"{' '.join(paper_prompt)}\n"
         "Your output must be a single JSON object (no arrays unless specified, no surrounding text, no code fences) with the following fields: "
         "'dimension', 'paper_content_quotes', 'paper_content_summary', 'registration_content_quotes', 'registration_content_summary', "
         "'deviation_judgement', and 'deviation_information'. Each field MUST be a string.\n"

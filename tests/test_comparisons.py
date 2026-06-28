@@ -1052,3 +1052,57 @@ def test_isolation_union_ensemble_recovers_dropped_spans(monkeypatch):
     assert calls["n"] == 3                                       # three parallel passes
     assert "twelve participants were excluded" in out.lower()    # recovered from pass 2
     assert "same coding and analytical approach" in out.lower()  # recovered from pass 3
+
+
+def test_expand_with_neighbors_dedups_and_orders():
+    import numpy as np
+    from backend.services.embeddings import EmbeddingCorpus
+    ids = [f"C{i}" for i in range(8)]
+    corpus = EmbeddingCorpus(segments=[f"t{i}" for i in range(8)],
+                             embeddings=np.zeros((8, 2), dtype=np.float32),
+                             chunk_ids=ids, norms=np.ones(8, dtype=np.float32), metadata=[{}] * 8)
+    rows = [("C5", "t5", 0.4), ("C1", "t1", 0.6)]  # out of source order
+    out = comparisons._expand_with_neighbors(rows, corpus, window=2)
+    labels = [e.split("]")[0].lstrip("[").split(",")[0] for e in out]
+    assert labels == ["C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7"]   # ±2 windows, deduped + ordered
+    assert any("C1, relevance_score" in e for e in out) and any("C5, relevance_score" in e for e in out)  # hits scored
+    assert any(e.startswith("[C3]") for e in out)                       # neighbour unscored
+    assert comparisons._expand_with_neighbors(rows, corpus, window=0) == [
+        "[C5, relevance_score=0.400] t5", "[C1, relevance_score=0.600] t1"]  # window 0 = passthrough
+
+
+def test_small_to_big_prompt_expands_but_display_stays_tight(monkeypatch):
+    import hashlib
+    import numpy as np
+    from backend.services.embeddings import EmbeddingCorpus
+
+    pe = np.array([[1, 0, 0], [1, 0, 0], [0, 1, 0], [1, 0, 0], [1, 0, 0]], dtype=np.float32)  # chunk 2 aligns
+    paper_corpus = EmbeddingCorpus(segments=[f"paper sentence {i}" for i in range(5)], embeddings=pe,
+                                   chunk_ids=[f"PAPER_{i:04d}" for i in range(5)],
+                                   norms=np.linalg.norm(pe, axis=1), metadata=[{} for _ in range(5)])
+    prr = np.array([[0, 1, 0]], dtype=np.float32)
+    prereg_corpus = EmbeddingCorpus(segments=["prereg sentence 0"], embeddings=prr, chunk_ids=["PREREG_0000"],
+                                    norms=np.linalg.norm(prr, axis=1), metadata=[{}])
+    prereg, paper = "p", "x"
+    corpus_cache = {
+        f"prereg:{hashlib.sha256(prereg.encode()).hexdigest()}": prereg_corpus,
+        f"paper:{hashlib.sha256(paper.encode()).hexdigest()}": paper_corpus,
+    }
+    monkeypatch.setattr(comparisons, "get_embedding", lambda text, model=None: np.array([0, 1, 0], dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_judge_context_window", lambda: 1)
+    captured = {}
+
+    def fake_dispatch(messages, **kw):
+        captured["prompt"] = messages[-1]["content"]
+        return ('{"dimension":"Sample size","deviation_judgement":"no","paper_content_summary":"s",'
+                '"registration_content_summary":"s","deviation_information":"r"}')
+
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", fake_dispatch)
+    result = comparisons.run_comparison(prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache, top_k=1)
+    item = result.items[0]
+    prompt = captured["prompt"]
+    # Judge prompt expands to the hit's neighbours (PAPER_0002 -> 0001/0002/0003)...
+    assert "PAPER_0001" in prompt and "PAPER_0002" in prompt and "PAPER_0003" in prompt
+    # ...but the DISPLAYED quotes stay tight (just the retrieved hit, no neighbours).
+    assert "PAPER_0002" in item.paper_content_quotes
+    assert "PAPER_0001" not in item.paper_content_quotes and "PAPER_0003" not in item.paper_content_quotes
