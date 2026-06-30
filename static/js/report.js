@@ -767,7 +767,13 @@
         const link = raw
             ? `<a class="source-raw-link" href="${escapeHtml(raw)}" target="_blank" rel="noopener">Open the original file &rsaquo;</a>`
             : "";
-        scroll.innerHTML = `<div class="source-placeholder source-placeholder--fallback"><p>${escapeHtml(message)}</p>${link}</div>`;
+        // On a live report where the whole evidence set is missing/errored, offer a
+        // one-click path to run it again (the original uploads are not retained after
+        // the job, so this re-runs from the upload step rather than silently failing).
+        const rerun = (state.taskId && state.manifestUnavailable)
+            ? `<a class="source-rerun-btn" href="/compare">Run a new comparison &rsaquo;</a>`
+            : "";
+        scroll.innerHTML = `<div class="source-placeholder source-placeholder--fallback"><p>${escapeHtml(message)}</p>${rerun}${link}</div>`;
         scroll.dataset.mode = "unavailable";
     }
 
@@ -1025,9 +1031,17 @@
     function setActiveQuote(id) {
         state.activeQuoteId = id;
         refreshActiveHighlight();
-        // Reflect selection in the middle quote cards.
+        // Reflect selection in the middle quote cards. The active card also briefly
+        // flashes so that clicking a passage in a document visibly "lights up" the
+        // quote it maps to (reverse tracing), not just scrolls the list.
         els.viewDocuments.querySelectorAll("#docs-quotes .evidence-card").forEach((card) => {
-            card.classList.toggle("is-active", card.dataset.quote === id);
+            const isActive = card.dataset.quote === id;
+            card.classList.toggle("is-active", isActive);
+            if (isActive && !prefersReducedMotion) {
+                card.classList.remove("is-flash");
+                void card.offsetWidth;   // restart the animation if it was already active
+                card.classList.add("is-flash");
+            }
         });
         scrollActiveIntoView();
     }

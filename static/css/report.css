@@ -705,8 +705,13 @@ body.is-col-resizing * {
     margin-top: 1.1rem;
 }
 
-/* In the Overview right pane the summaries sit on their own (no top margin). */
-.summary-grid--pane { margin-top: 0; }
+/* In the Overview right pane the summaries stack vertically so each gets the full
+   pane width — side-by-side made them cramped, narrow columns (now ~50-word each). */
+.summary-grid--pane {
+    margin-top: 0;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+}
 
 .summary-box {
     background: var(--rc-surface-2);
@@ -839,6 +844,22 @@ body.is-col-resizing * {
     border-color: var(--rc-border-strong);
     background: var(--rc-surface-3);
     transform: translateY(-1px);
+}
+
+/* Active quote card — the one the current document highlight maps to. Persistent
+   accent so it's clear which card a clicked passage refers to (reverse tracing),
+   plus a brief flash so it visibly "lights up" on arrival. */
+.evidence-card.is-active {
+    border-color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 13%, var(--rc-surface-2));
+}
+@keyframes evidence-card-flash {
+    0%   { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 70%, transparent); }
+    100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 0%, transparent); }
+}
+.evidence-card.is-flash { animation: evidence-card-flash 0.9s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+    .evidence-card.is-flash { animation: none; }
 }
 
 .evidence-card.is-disabled {
@@ -1242,6 +1263,20 @@ body.is-col-resizing * {
     text-decoration: none;
 }
 .source-raw-link:hover { border-color: var(--rc-accent); color: var(--rc-accent); background: var(--rc-surface-2); }
+.source-rerun-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--rc-accent);
+    border-radius: var(--rc-radius-sm);
+    background: var(--rc-accent);
+    color: #ffffff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+.source-rerun-btn:hover { background: var(--rc-accent-strong); border-color: var(--rc-accent-strong); color: #ffffff; }
 
 .docs-panel__scroll {
     flex: 1 1 auto;

@@ -82,7 +82,14 @@ def normalize_text(text: str) -> str:
         if unicodedata.category(ch).startswith("C"):  # control / format / surrogate / unassigned
             continue
         out.append(ch)
-    return "".join(out)
+    result = "".join(out)
+    # Tidy the "ladder of empty lines" PDF extraction leaves around page footers/headers:
+    # drop trailing spaces (so whitespace-only lines are truly blank), then collapse any
+    # run of 3+ newlines to a single paragraph break. Done here, at the extraction
+    # boundary (before chunks/spans are computed), so corpus + display stay aligned.
+    result = re.sub(r"[ \t]+\n", "\n", result)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result
 
 
 _ISOLATED_NEWLINE = re.compile(r"(?<!\n)\n(?!\n)")
