@@ -13642,5 +13642,25 @@
         "comparison_type": "general_preregistration"
       }
     }
+  },
+  "settings": {
+    "comparison_type": "preregistration",
+    "client": "openai",
+    "parser_choice": "pymupdf",
+    "reasoning_effort": "medium",
+    "append_previous_output": false,
+    "multiple_experiments": false,
+    "experiment_number": null,
+    "dimensions": [
+      "Hypotheses",
+      "Data source",
+      "Inclusion and exclusion criteria",
+      "Sample size",
+      "Manipulated variables",
+      "Measured variables",
+      "Statistical models",
+      "Transformations",
+      "Missing data"
+    ]
   }
 }

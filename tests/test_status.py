@@ -89,6 +89,44 @@ def test_task_status_marks_existing_manifest_as_ready():
     assert payload["evidence_artifact_bytes"] == 12345
 
 
+def test_task_status_exposes_parsed_settings():
+    redis = FakeRedis()
+    settings = {
+        "comparison_type": "preregistration",
+        "client": "openai",
+        "parser_choice": "pymupdf",
+        "reasoning_effort": "medium",
+        "append_previous_output": False,
+        "multiple_experiments": False,
+        "experiment_number": None,
+        "dimensions": ["Hypotheses", "Sample size"],
+    }
+    redis.hashes["task-1"] = {
+        "state": "SUCCESS",
+        "status": "Report complete",
+        "result_json": json.dumps({"items": []}),
+        "settings_json": json.dumps(settings),
+    }
+
+    payload = _client(redis).get("/task_status/task-1").json()
+
+    assert payload["settings"] == settings
+
+
+def test_task_status_settings_is_null_when_absent_or_corrupt():
+    redis = FakeRedis()
+    redis.hashes["task-1"] = {
+        "state": "PENDING",
+        "status": "Task queued",
+        "result_json": json.dumps({"items": []}),
+        "settings_json": "{not valid json",
+    }
+
+    payload = _client(redis).get("/task_status/task-1").json()
+
+    assert payload["settings"] is None
+
+
 def test_task_status_preserves_evidence_error_even_when_manifest_exists():
     redis = FakeRedis()
     redis.hashes["task-1"] = {

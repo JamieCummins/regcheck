@@ -7,12 +7,20 @@ from pathlib import Path
 from typing import Any
 
 from .embeddings import extract_chunks_tokens_with_spans
-from .text_normalize import normalize_text
+from .text_normalize import normalize_text, reflow_text
 
 try:  # pragma: no cover - optional dependency
     import fitz
 except ModuleNotFoundError:  # pragma: no cover
     fitz = None
+
+
+def _display_text(text: str) -> str:
+    """Text as SHOWN in the viewer: normalised, then reflowed so PDF hard line-wraps
+    read as prose (paragraphs kept). Reflow is length-preserving, so applying it to
+    BOTH the rendered document text and the chunk/quote text keeps the quote locator
+    aligned. Never use for the raw cache-key text or the chunk spans."""
+    return reflow_text(normalize_text(text))
 
 
 def _chunk_id(prefix: str, index: int) -> str:
@@ -145,13 +153,17 @@ def build_text_evidence_source(
     raw_filename: str | None = None,
     max_chunk_tokens: int = 300,
     embedding_model: str = "text-embedding-3-large",
+    reflow: bool = True,
 ) -> dict[str, Any]:
+    # Prose reflows hard line-wraps for readability; structured JSON-row sources keep
+    # their newlines (each row is "path\nvalue"), so they opt out with reflow=False.
+    disp = _display_text if reflow else normalize_text
     chunks = extract_chunks_tokens_with_spans(
         text or "",
         max_chunk_tokens=max_chunk_tokens,
         encoding_name=embedding_model,
     )
-    segments = [normalize_text(chunk.text) for chunk in chunks]
+    segments = [disp(chunk.text) for chunk in chunks]
     chunk_metadata: list[dict[str, Any]] = []
     manifest_chunks: dict[str, dict[str, Any]] = {}
     for index, chunk in enumerate(chunks, start=1):
@@ -166,7 +178,7 @@ def build_text_evidence_source(
             "source_id": source_id,
             "source_label": label,
             "source_kind": kind,
-            "text": normalize_text(chunk.text),
+            "text": disp(chunk.text),
             "locations": [location],
             "relevance_scores_by_dimension": {},
         }
@@ -189,7 +201,7 @@ def build_text_evidence_source(
         "chunks": manifest_chunks,
         "raw_bytes": raw_bytes,
         "raw_content_type": raw_content_type,
-        "render_data": _plain_text_render_data(normalize_text(text or ""), kind=kind, metadata=metadata),
+        "render_data": _plain_text_render_data(disp(text or ""), kind=kind, metadata=metadata),
     }
 
 
@@ -453,7 +465,7 @@ def build_pdf_evidence_source(
             max_chunk_tokens=max_chunk_tokens,
             encoding_name=embedding_model,
         )
-        segments = [normalize_text(chunk.text) for chunk in chunks]
+        segments = [_display_text(chunk.text) for chunk in chunks]
         chunk_metadata: list[dict[str, Any]] = []
         manifest_chunks: dict[str, dict[str, Any]] = {}
         for index, chunk in enumerate(chunks, start=1):
@@ -469,7 +481,7 @@ def build_pdf_evidence_source(
                 "source_id": source_id,
                 "source_label": label,
                 "source_kind": "pdf",
-                "text": normalize_text(chunk.text),
+                "text": _display_text(chunk.text),
                 "locations": locations,
                 "relevance_scores_by_dimension": {},
             }
@@ -496,7 +508,11 @@ def build_pdf_evidence_source(
         render_data = {
             "kind": "pdf",
             "render_mode": render_mode,
-            "text": source_text,
+            # In PDF mode the viewer shows page images and maps search/rects via the
+            # RAW source_text offsets, so keep it raw there. Only the text-mode
+            # FALLBACK actually displays this string, so reflow it then (consistent
+            # with the reflowed chunk text the locator matches against).
+            "text": _display_text(source_text) if render_mode == "text" else source_text,
             "pages": source["pages"],
             "metadata": metadata or {},
         }
@@ -575,6 +591,7 @@ def build_json_evidence_source(
         raw_filename=f"{source_id}.txt",
         max_chunk_tokens=max_chunk_tokens,
         embedding_model=embedding_model,
+        reflow=False,   # JSON rows ("path\nvalue") rely on their newlines — don't reflow
     )
     payload["source"]["kind"] = "json"
     payload["source"]["render_mode"] = "json"

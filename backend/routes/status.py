@@ -124,11 +124,22 @@ async def task_status(request: Request, task_id: str):
                 "or artifact storage failed before the manifest was saved."
             )
 
+    settings_raw = data.get("settings_json")
+    parsed_settings = None
+    if settings_raw:
+        try:
+            if isinstance(settings_raw, bytes):
+                settings_raw = settings_raw.decode("utf-8", "replace")
+            parsed_settings = json.loads(settings_raw)
+        except (json.JSONDecodeError, TypeError):  # pragma: no cover - defensive
+            parsed_settings = None
+
     return JSONResponse(
         {
             "state": state,
             "status": status_text,
             "result": parsed_result,
+            "settings": parsed_settings,
             "total_dimensions": total_dimensions,
             "processed_dimensions": processed_dimensions,
             "evidence_available": evidence_available,

@@ -61,9 +61,12 @@
    the report fills the whole viewport; it is toggled from the topbar and synced
    to the native Fullscreen API (which additionally hides the browser chrome). */
 body.report-focus .report-shell {
-    width: 100vw;
+    /* 100% (not 100vw) fills the body box WITHOUT counting the vertical scrollbar,
+       which otherwise pushes the centered shell ~15px past the right edge and clips
+       the rightmost controls + the Paper-summary pane (Firefox/macOS especially). */
+    width: 100%;
     max-width: none;
-    padding: clamp(0.4rem, 0.7vw, 0.7rem);
+    padding: clamp(0.4rem, 0.7vw, 0.7rem) clamp(0.6rem, 1.4vw, 1.4rem);
 }
 body.report-focus .report-header .navbar { display: none; }
 body.report-focus .report-shell footer { display: none; }
@@ -74,6 +77,19 @@ body.report-focus .report-topbar { margin-top: 0.15rem; }
 body.report-focus .report-focus-btn__expand { display: none; }
 body.report-focus .report-focus-btn__compress { display: inline-flex; }
 body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
+
+/* Full-screen is the key Evidence-reading affordance but was easy to miss as a bare
+   icon in the button row — give it a visible label + a subtle accent outline. */
+.report-focus-btn { white-space: nowrap; }
+.report-focus-btn__label { font-weight: 600; }
+.report-focus-btn:not([aria-pressed="true"]) {
+    border-color: color-mix(in srgb, var(--rc-accent) 42%, var(--rc-border));
+    color: var(--rc-accent);
+}
+.report-focus-btn:not([aria-pressed="true"]):hover {
+    border-color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 12%, var(--rc-surface-2));
+}
 
 /* The Fullscreen API promotes <html> to the top layer; give it the page
    background so no default backdrop shows through behind the rounded shell. */
@@ -165,7 +181,19 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
     background: var(--rc-ok-bg);
 }
 
-.report-status-pill.is-done .report-status-pill__dot { background: var(--rc-ok); }
+.report-status-pill.is-done .report-status-pill__dot {
+    background: transparent;
+    width: auto;
+    height: auto;
+    animation: none;
+}
+.report-status-pill.is-done .report-status-pill__dot::before {
+    content: "✓";
+    font-size: 0.92rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--rc-ok);
+}
 
 .report-status-pill.is-error {
     color: var(--rc-flag);
@@ -602,10 +630,10 @@ body.is-col-resizing * {
 }
 
 .report-empty-state__spinner {
-    width: 1.7rem;
-    height: 1.7rem;
+    width: 2.6rem;
+    height: 2.6rem;
     border-radius: 50%;
-    border: 2px solid var(--rc-border-strong);
+    border: 3px solid var(--rc-border-strong);
     border-top-color: var(--rc-accent);
     animation: report-spin 0.8s linear infinite;
 }
@@ -692,6 +720,7 @@ body.is-col-resizing * {
     color: var(--rc-text);
     line-height: 1.55;
     font-size: 0.88rem;
+    overflow-wrap: anywhere;   /* long tokens wrap inside the box rather than overflowing (B7) */
 }
 .summary-box__text p:last-child { margin-bottom: 0; }
 
@@ -733,11 +762,19 @@ body.is-col-resizing * {
     display: inline-flex;
     align-items: center;
     gap: 0.2rem;
-    padding: 0.2rem;
+    padding: 0.2rem 0.2rem 0.2rem 0.5rem;
     border: 1px solid var(--rc-border);
     border-radius: 9px;
     background: var(--rc-surface-2);
     flex: 0 0 auto;
+}
+.evidence-limit-control__label {
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--rc-muted);
+    margin-right: 0.15rem;
 }
 
 .evidence-limit-btn {
@@ -948,6 +985,49 @@ body.is-col-resizing * {
 }
 .quote-callout__open:hover { border-color: var(--rc-accent); color: var(--rc-accent); }
 
+/* Read-only "View settings" popover (anchored under the top-bar gear button). */
+.report-settings-popover {
+    position: fixed;
+    z-index: 1080;
+    width: 290px;
+    max-width: calc(100vw - 16px);
+    max-height: 70vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--rc-panel);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: 10px;
+    box-shadow: var(--rc-shadow-lg);
+    padding: 0.7rem 0.85rem 0.8rem;
+}
+.report-settings-popover__head {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--rc-muted);
+    margin-bottom: 0.55rem;
+}
+.report-settings-popover__list { margin: 0; }
+.report-settings-popover__row {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 0.4rem 0.7rem;
+    padding: 0.32rem 0;
+    align-items: baseline;
+}
+.report-settings-popover__row + .report-settings-popover__row { border-top: 1px solid var(--rc-border); }
+.report-settings-popover__row dt {
+    font-size: 0.78rem;
+    color: var(--rc-muted);
+}
+.report-settings-popover__row dd {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--rc-text);
+    overflow-wrap: anywhere;
+}
+
 /* Documents view (step 2) --------------------------------------------------- */
 .report-view--documents {
     display: flex;
@@ -1067,10 +1147,18 @@ body.is-col-resizing * {
     min-width: 2.6rem; text-align: center; font-variant-numeric: tabular-nums;
 }
 .docs-tb__page-sep { color: var(--rc-faint); margin: 0 0.15rem; }
-.docs-tb__search { flex: 1 1 auto; min-width: 0; }
+.docs-tb__search {
+    flex: 1 1 auto; min-width: 0;
+    border: 1px solid var(--rc-border); border-radius: 6px;
+    background: var(--rc-surface-2); transition: border-color 0.12s, box-shadow 0.12s;
+}
+.docs-tb__search:focus-within {
+    border-color: var(--rc-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent);
+}
 .docs-search__input {
     flex: 1 1 5rem; min-width: 0; background: transparent; border: none;
-    color: var(--rc-text); padding: 0.1rem 0.2rem; font-size: 0.78rem; height: 1.4rem; outline: none;
+    color: var(--rc-text); padding: 0.3rem 0.5rem; font-size: 0.78rem; height: 1.7rem; outline: none; cursor: text;
 }
 .docs-search__input::placeholder { color: var(--rc-faint); }
 .docs-search__count { font-family: var(--rc-font-mono); font-size: 0.68rem; color: var(--rc-faint); min-width: 2rem; text-align: center; }
@@ -1083,8 +1171,10 @@ body.is-col-resizing * {
 .docs-tb__seg.is-active { background: var(--rc-accent); color: #fff; }
 .docs-tb__seg:not(.is-active):hover { background: var(--rc-surface-3); color: var(--rc-text); }
 
-/* Zoom scales page width / text size via --doc-zoom set on the scroll container. */
-.docs-panel__scroll .pdf-stage { width: calc(100% * var(--doc-zoom, 1)); max-width: none; }
+/* Zoom scales page width / text size via --doc-zoom on the scroll container. The width
+   is anchored to a fixed base (captured once at render), NOT the live pane width, so
+   resizing panes does not rescale the document — only the zoom control does. */
+.docs-panel__scroll .pdf-stage { width: calc(var(--doc-base-width, 100%) * var(--doc-zoom, 1)); max-width: none; }
 .docs-panel__scroll .source-text { font-size: calc(0.9rem * var(--doc-zoom, 1)); }
 
 /* In-document search highlights (CSS Custom Highlight API; text mode). */
@@ -1106,6 +1196,10 @@ body.is-col-resizing * {
     box-shadow: var(--rc-shadow-md);
 }
 .report-download-menu button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
     border: none;
     background: none;
     color: var(--rc-text);
@@ -1116,6 +1210,16 @@ body.is-col-resizing * {
     cursor: pointer;
 }
 .report-download-menu button:hover { background: var(--rc-surface-3); }
+.report-download-menu__hint {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 14%, transparent);
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+}
 
 /* Document fallback state (page render + text extraction both failed). */
 .source-placeholder--fallback {
@@ -1234,6 +1338,7 @@ body.is-col-resizing * {
 
 .source-text {
     white-space: pre-wrap;
+    overflow-wrap: anywhere;   /* long tokens (URLs, IDs) wrap instead of overflowing the box (B7) */
     color: #1a1a1a;
     background: #ffffff;
     border: 1px solid #d0d0d8;
@@ -1259,6 +1364,16 @@ body.is-col-resizing * {
 
 .source-text mark.is-active {
     box-shadow: 0 0 0 1px var(--rc-accent);
+}
+
+/* Zero-width locatable anchor for a quote whose span sits entirely inside another
+   quote's highlight (overlapping chunks). Invisible, but carries id=docmark-<id>
+   so the quote reference is still clickable and scrolls to the right region. */
+.source-text .doc-anchor {
+    display: inline;
+    font-size: 0;
+    line-height: 0;
+    scroll-margin: 35vh 0;
 }
 
 /* Toast --------------------------------------------------------------------- */

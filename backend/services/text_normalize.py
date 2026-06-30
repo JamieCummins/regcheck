@@ -12,6 +12,7 @@ length-changing maps (e.g. ellipsis → "...") keep the quote locator consistent
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 # Typographic punctuation + Latin ligatures → ASCII. Genuine letters (accents, Greek,
@@ -82,6 +83,27 @@ def normalize_text(text: str) -> str:
             continue
         out.append(ch)
     return "".join(out)
+
+
+_ISOLATED_NEWLINE = re.compile(r"(?<!\n)\n(?!\n)")
+
+
+def reflow_text(text: str) -> str:
+    """Collapse hard line-wraps from PDF extraction into spaces, keeping paragraphs.
+
+    PDF text extraction inserts a newline at every *visual* line end, so a flowing
+    paragraph arrives full of mid-sentence breaks. This turns each *isolated* newline
+    (a line wrap) into a single space while leaving runs of two-or-more newlines
+    (paragraph breaks) intact — so the displayed document reads as prose with its
+    structure preserved, instead of a ladder of short lines.
+
+    Length-preserving (one isolated ``\\n`` → one space), so it is safe to apply to
+    DISPLAY text the quote locator matches against — provided it is applied
+    *consistently* to both the rendered document text and the chunk/quote text.
+    """
+    if not text:
+        return ""
+    return _ISOLATED_NEWLINE.sub(" ", text)
 
 
 def decode_and_normalize(data: bytes | str) -> str:

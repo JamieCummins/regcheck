@@ -4,6 +4,10 @@
 /* Design tokens — single source of truth                                     */
 /* -------------------------------------------------------------------------- */
 :root {
+    /* RegCheck is dark-first; declare it so native UI (form controls, scrollbars)
+       renders dark and browsers/extensions know the page already handles dark mode
+       (paired with the darkreader-lock meta to stop double-darkening). */
+    color-scheme: dark;
     /* Typography */
     --rc-font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --rc-font-display: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -64,6 +68,7 @@
 /* (see color-modes.js). Only color tokens change here.                       */
 /* -------------------------------------------------------------------------- */
 [data-bs-theme="light"] {
+    color-scheme: light;
     --rc-bg: #F4F6FB;
     --rc-surface: #FFFFFF;
     --rc-surface-2: #EEF1F8;

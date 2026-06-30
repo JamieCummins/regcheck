@@ -4,6 +4,10 @@
 {% set og_description = og_description | default('RegCheck is an AI tool to compare preregistrations with papers instantly.') %}
 {% set og_image = og_image | default(base_url ~ url_for('static', path='assets/logo_social.png')) %}
 {% set og_url = og_url | default(request.url if request is defined else base_url) %}
+<meta name="color-scheme" content="dark light">
+<!-- RegCheck ships its own dark theme; tell Dark Reader (and similar) to stand
+     down so it doesn't re-darken an already-dark page into an unreadable mess. -->
+<meta name="darkreader-lock">
 <script src="{{ url_for('static', path='js/color-modes.js') }}?v={{ version }}"></script>
 <link rel="stylesheet" href="{{ url_for('static', path='css/bootstrap.min.css') }}?v={{ version }}">
 <link rel="stylesheet" href="{{ url_for('static', path='css/custom-styles.css') }}?v={{ version }}">
