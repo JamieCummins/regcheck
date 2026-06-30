@@ -28,13 +28,13 @@ SURVEY_QUESTIONS = [
         "name": "academic_position",
         "label": "What is your academic position?",
         "type": "select",
-        "options": ["Undergrad", "Masters", "PhD", "Postdoc", "Professor", "Nonacademic"],
+        "options": ["Undergrad", "Master's", "PhD", "Postdoc", "Professor", "Non-academic"],
     },
     {
         "name": "research_field",
         "label": "What is your scientific field?",
         "type": "select",
-        "options": ["Psychology", "Economics", "Medicine", "Animal research", "Other"],
+        "options": ["Psychology", "Medicine", "Economics", "Animal Research", "Other"],
     },
 ]
 
