@@ -687,7 +687,9 @@
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
                     Back to overview
                 </button>
-                <span class="docs-bar__dim">${escapeHtml(item.dimension || "Dimension")}</span>
+                <select class="docs-bar__dim" id="docs-dim-select" aria-label="Switch dimension">${
+                    state.items.map((it, i) => `<option value="${i}"${i === state.activeIndex ? " selected" : ""}>${escapeHtml(it.dimension || ("Dimension " + (i + 1)))}</option>`).join("")
+                }</select>
                 <span class="judgement-chip judgement-chip--${info.tone}">${info.label}</span>
             </div>
             <div class="docs-body">
@@ -718,6 +720,16 @@
 
         const back = els.viewDocuments.querySelector("[data-back]");
         if (back) back.addEventListener("click", backToDecision);
+        // Dimension dropdown — switch dimensions without leaving the Evidence view.
+        const dimSelect = els.viewDocuments.querySelector("#docs-dim-select");
+        if (dimSelect) dimSelect.addEventListener("change", () => {
+            const idx = parseInt(dimSelect.value, 10);
+            if (Number.isFinite(idx) && idx !== state.activeIndex) {
+                state.activeIndex = idx;
+                state.activeQuoteId = null;
+                render();
+            }
+        });
         bindLimitControl(els.viewDocuments, renderDocumentsView);
 
         const body = els.viewDocuments.querySelector(".docs-body");
@@ -858,7 +870,7 @@
         const text = (renderData && renderData.text) || "";
         const hasText = !!text.trim();
         const canPdf = source.kind === "pdf" && source.render_mode === "pdf" && !!source.page_url_template;
-        const mode = canPdf ? (ui.mode || "page") : "text";
+        const mode = canPdf ? (ui.mode || "text") : "text";   // text view is the default
         const pageCount = source.page_count || (source.pages || []).length || 1;
 
         const rebuildTools = () => {
@@ -938,8 +950,8 @@
             </div>`;
         const modes = canPdf ? `<span class="docs-tb__spacer"></span>
             <div class="docs-tb__seg-group" role="group" aria-label="View as">
-                <button type="button" class="docs-tb__seg ${mode === "page" ? "is-active" : ""}" data-doc-mode="page">Page</button>
                 <button type="button" class="docs-tb__seg ${mode === "text" ? "is-active" : ""}" data-doc-mode="text">Text</button>
+                <button type="button" class="docs-tb__seg ${mode === "page" ? "is-active" : ""}" data-doc-mode="page">Doc</button>
             </div>` : "";
         return page + zoomg + search + modes;
     }
