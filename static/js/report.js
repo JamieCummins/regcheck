@@ -147,10 +147,44 @@
         return state.items[index];
     }
 
-    function quotesForRole(item, role) {
+    // Evidence IDs the judge cited in its rationale/summaries for this dimension.
+    // These can include chunks it did NOT extract as a quote — so their reference
+    // would be a dead click unless we surface them from the manifest (below).
+    function referencedEvidenceIds(item) {
+        const text = [
+            item.deviation_information,
+            item.registration_content_summary,
+            item.paper_content_summary,
+        ].join("\n");
+        const ids = new Set();
+        const re = /\b((?:PREREG|PAPER)_\d+)\b/g;
+        let m;
+        while ((m = re.exec(text)) !== null) ids.add(m[1]);
+        return ids;
+    }
+
+    // Full, unlimited evidence set for a role: the extracted quotes PLUS any chunk
+    // the rationale/summaries reference but the judge didn't quote (synthesised from
+    // the manifest, flagged `referenced`). Without this, a ref like [PREREG_0006] that
+    // appears only in the rationale of one dimension can't be located there, even
+    // though it's a real chunk — the cause of the "works under X, not under Y" bug.
+    function allQuotesForRole(item, role) {
         const raw = role === "reg" ? item.registration_content_quotes : item.paper_content_quotes;
-        return sortedQuotes(parseQuotes(raw || ""), state.evidenceLimit)
-            .map((q) => Object.assign({}, q, { doc: role }));
+        const quotes = parseQuotes(raw || "").map((q) => Object.assign({}, q, { doc: role }));
+        const have = new Set(quotes.map((q) => q.id));
+        const prefix = role === "reg" ? "PREREG" : "PAPER";
+        const chunks = (state.manifest && state.manifest.chunks) || {};
+        referencedEvidenceIds(item).forEach((id) => {
+            if (!id.startsWith(prefix) || have.has(id) || !chunks[id]) return;
+            const num = parseInt((id.match(/(\d+)/) || [])[1], 10) || 0;
+            const text = chunks[id].text || "";
+            quotes.push({ id, num, score: 0, text, raw: text, doc: role, referenced: true });
+        });
+        return quotes;
+    }
+
+    function quotesForRole(item, role) {
+        return sortedQuotes(allQuotesForRole(item, role), state.evidenceLimit);
     }
 
     function manifestSources() {
@@ -440,7 +474,7 @@
         const item = currentItem();
         if (!item) return;
         const role = /^PREREG/i.test(id) ? "reg" : "ppr";
-        const all = parseQuotes(role === "reg" ? item.registration_content_quotes : item.paper_content_quotes);
+        const all = allQuotesForRole(item, role);
         if (!all.some((q) => q.id === id)) return;   // unknown reference — ignore
         // Make sure the referenced quote is within the limited set shown in Evidence.
         if (!sortedQuotes(all, state.evidenceLimit).some((q) => q.id === id)) {
@@ -484,8 +518,7 @@
         const item = currentItem();
         if (!item) return null;
         const role = /^PREREG/i.test(id) ? "reg" : "ppr";
-        const raw = role === "reg" ? item.registration_content_quotes : item.paper_content_quotes;
-        const q = parseQuotes(raw || "").find((x) => x.id === id);
+        const q = allQuotesForRole(item, role).find((x) => x.id === id);
         if (!q) return null;
         const chunk = chunkForQuote(q);
         return { role, text: (chunk && chunk.text) || q.text || q.raw || "" };
