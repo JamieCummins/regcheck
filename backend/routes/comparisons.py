@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -137,6 +138,62 @@ async def _save_upload(
     destination = upload_dir / f"{prefix}_{filename}"
     stored = await _store_upload(destination, upload, max_bytes=max_bytes)
     return stored, _file_ext(filename)
+
+
+def _non_empty_uploads(files: list[UploadFile] | UploadFile | None) -> list[UploadFile]:
+    """Form fields arrive as a single value, a list, or an empty-filename placeholder;
+    normalise to the list of uploads that actually carry a file."""
+    if files is None:
+        return []
+    items = files if isinstance(files, list) else [files]
+    return [f for f in items if f is not None and (getattr(f, "filename", "") or "").strip()]
+
+
+async def _coalesce_uploads(
+    files: list[UploadFile],
+    *,
+    upload_dir: Path,
+    kind: str,
+    max_bytes: int | None = None,
+) -> UploadFile | None:
+    """Combine multiple uploaded documents into ONE for the comparison.
+
+    A single file is returned untouched (keeps its native parser + PDF rendering).
+    Two or more are each extracted to text and concatenated, with labelled separators,
+    into one plain-text upload — so "upload several files as the paper/registration"
+    becomes one registration vs one paper without touching the worker or comparison.
+    (Several PDFs can't share a single page view anyway, hence text.)"""
+    real = _non_empty_uploads(files)
+    if not real:
+        return None
+    if len(real) == 1:
+        return real[0]
+
+    parts: list[str] = []
+    tmp_paths: list[str] = []
+    try:
+        for index, upload in enumerate(real, start=1):
+            name = _safe_filename(upload.filename)
+            _validate_doc_ext(_file_ext(name), kind=kind)
+            path, ext = await _save_upload(
+                upload_dir, upload, prefix=f"combine_{uuid.uuid4()}", max_bytes=max_bytes
+            )
+            tmp_paths.append(path)
+            try:
+                text = await asyncio.to_thread(read_file, path, ext)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Could not read {kind} file '{name}'."
+                ) from exc
+            parts.append(f"===== Document {index}: {name} =====\n\n{(text or '').strip()}")
+        combined = ("\n\n\n".join(parts)).encode("utf-8")
+        return UploadFile(file=io.BytesIO(combined), filename=f"{kind}-combined.txt", size=len(combined))
+    finally:
+        for stale in tmp_paths:
+            try:
+                Path(stale).unlink(missing_ok=True)
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
 
 
 async def _store_upload_to_redis(redis_client, redis_key: str, file_path: str, ttl_seconds: int = 86400) -> None:
@@ -629,9 +686,9 @@ async def compare_post(
     clinical_registration: str = Form("no"),
     prereg_source: str = Form("upload"),
     registration_id: str | None = Form(None),
-    preregistration: UploadFile | None = File(None),
+    preregistration: list[UploadFile] = File([]),
     osf_url: str | None = Form(None),
-    paper: UploadFile | None = File(None),
+    paper: list[UploadFile] = File([]),
     dimensions_data: str = Form(...),
     visibility: str | None = Form(None),
 ):
@@ -641,6 +698,13 @@ async def compare_post(
     is_clinical = source == "clinical" or _bool_from_yes(clinical_registration)
     comparison_type: ComparisonType = (
         "clinical_trials" if is_clinical else "general_preregistration"
+    )
+    # Multiple uploaded files per side are concatenated into one paper / one
+    # registration before the (unchanged) single-document pipeline runs.
+    upload_dir = Path(request.app.state.settings.upload_dir)
+    paper_file = await _coalesce_uploads(paper, upload_dir=upload_dir, kind="paper", max_bytes=MAX_UPLOAD_BYTES)
+    prereg_file = await _coalesce_uploads(
+        preregistration, upload_dir=upload_dir, kind="registration", max_bytes=MAX_UPLOAD_BYTES
     )
     return await _compare_and_redirect(
         request,
@@ -653,9 +717,9 @@ async def compare_post(
         experiment_number=experiment_number,
         experiment_text=experiment_text,
         registration_id=registration_id,
-        preregistration=preregistration,
+        preregistration=prereg_file,
         osf_url=osf_url,
-        paper=paper,
+        paper=paper_file,
         dimensions_data=dimensions_data,
         visibility=visibility,
     )
