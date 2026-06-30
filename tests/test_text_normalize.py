@@ -40,6 +40,15 @@ def test_normalize_is_idempotent_and_empty_safe():
     assert decode_and_normalize(b"") == ""
 
 
+def test_normalize_collapses_blank_line_ladders_and_trailing_spaces():
+    # PDF extraction leaves runs of (often whitespace-only) empty lines around footers.
+    src = "Body text here.   \n   \n   \n\n\nPage 3 of 10\n\n\n\nMore body."
+    out = normalize_text(src)
+    assert "\n\n\n" not in out          # no 3+ newline run survives
+    assert " \n" not in out             # trailing spaces removed
+    assert out == "Body text here.\n\nPage 3 of 10\n\nMore body."
+
+
 def test_reflow_collapses_line_wraps_keeps_paragraphs_and_length():
     from backend.services.text_normalize import reflow_text
     src = "A wrapped\nsentence here.\n\nA new paragraph\nthat also wraps."
