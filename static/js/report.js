@@ -576,26 +576,25 @@
     /* ── decision view: right pane (quotes list) ─────────────────────────── */
 
     function limitControlHtml() {
+        const opts = [...EVIDENCE_LIMIT_OPTIONS, "all"];
         return `
-            <div class="evidence-limit-control" role="group" aria-label="Number of quotes shown">
-                <span class="evidence-limit-control__label" aria-hidden="true">Show</span>
-                ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
-                    <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}" title="Show ${escapeHtml(String(option))} quotes per document">
-                        ${escapeHtml(option === "all" ? "All" : String(option))}
-                    </button>
-                `).join("")}
-            </div>`;
+            <label class="evidence-limit-control">
+                <span class="evidence-limit-control__label">Quotes shown</span>
+                <select class="evidence-limit-select" aria-label="Number of quotes shown per document">
+                    ${opts.map((option) => `<option value="${option}"${option === state.evidenceLimit ? " selected" : ""}>${escapeHtml(option === "all" ? "All" : String(option))}</option>`).join("")}
+                </select>
+            </label>`;
     }
 
     function bindLimitControl(scope, rerender) {
-        scope.querySelectorAll("[data-evidence-limit]").forEach((button) => {
-            button.addEventListener("click", () => {
-                const raw = button.dataset.evidenceLimit;
-                const next = raw === "all" ? "all" : parseInt(raw, 10);
-                if (!EVIDENCE_LIMIT_OPTIONS.includes(next)) return;
-                persistEvidenceLimit(next);
-                rerender();
-            });
+        const select = scope.querySelector(".evidence-limit-select");
+        if (!select) return;
+        select.addEventListener("change", () => {
+            const raw = select.value;
+            const next = raw === "all" ? "all" : parseInt(raw, 10);
+            if (next !== "all" && !EVIDENCE_LIMIT_OPTIONS.includes(next)) return;
+            persistEvidenceLimit(next);
+            rerender();
         });
     }
 
@@ -683,10 +682,6 @@
 
         els.viewDocuments.innerHTML = `
             <div class="docs-bar">
-                <button type="button" class="docs-back" data-back>
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-                    Back to overview
-                </button>
                 <select class="docs-bar__dim" id="docs-dim-select" aria-label="Switch dimension">${
                     state.items.map((it, i) => `<option value="${i}"${i === state.activeIndex ? " selected" : ""}>${escapeHtml(it.dimension || ("Dimension " + (i + 1)))}</option>`).join("")
                 }</select>
@@ -718,8 +713,6 @@
             </div>
         `;
 
-        const back = els.viewDocuments.querySelector("[data-back]");
-        if (back) back.addEventListener("click", backToDecision);
         // Dimension dropdown — switch dimensions without leaving the Evidence view.
         const dimSelect = els.viewDocuments.querySelector("#docs-dim-select");
         if (dimSelect) dimSelect.addEventListener("change", () => {

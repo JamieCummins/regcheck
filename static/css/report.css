@@ -70,7 +70,12 @@ body.report-focus .report-shell {
 }
 body.report-focus .report-header .navbar { display: none; }
 body.report-focus .report-shell footer { display: none; }
-body.report-focus .report-topbar { margin-top: 0.15rem; }
+body.report-focus .report-topbar { margin-top: 0.15rem; padding-bottom: 0.15rem; }
+/* Minimal full-screen chrome: keep only the exit-fullscreen control in the top bar
+   (the dimension dropdown lives in the docs bar) so the panes get the whole screen. */
+body.report-focus .report-topbar__lead { display: none; }
+body.report-focus .report-actions > :not(.report-focus-btn) { display: none; }
+body.report-focus .docs-bar { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 
 /* Icon swap: expand glyph by default, compress glyph while focused. */
 .report-focus-btn__compress { display: none; }
@@ -767,11 +772,7 @@ body.is-col-resizing * {
 .evidence-limit-control {
     display: inline-flex;
     align-items: center;
-    gap: 0.2rem;
-    padding: 0.2rem 0.2rem 0.2rem 0.5rem;
-    border: 1px solid var(--rc-border);
-    border-radius: 9px;
-    background: var(--rc-surface-2);
+    gap: 0.4rem;
     flex: 0 0 auto;
 }
 .evidence-limit-control__label {
@@ -780,24 +781,26 @@ body.is-col-resizing * {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--rc-muted);
-    margin-right: 0.15rem;
+    white-space: nowrap;
 }
-
-.evidence-limit-btn {
-    min-height: 1.6rem;
-    min-width: 2rem;
-    padding: 0.2rem 0.42rem;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--rc-muted);
-    font-size: 0.74rem;
+.evidence-limit-select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    font-size: 0.78rem;
     font-weight: 600;
+    border-radius: 7px;
+    padding: 0.26rem 1.5rem 0.26rem 0.55rem;
     cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23aeb6c8' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
 }
-
-.evidence-limit-btn:hover { color: var(--rc-text); }
-.evidence-limit-btn.is-active { color: #ffffff; background: var(--rc-accent); }
+.evidence-limit-select:hover { border-color: var(--rc-accent); }
+.evidence-limit-select:focus { outline: none; border-color: var(--rc-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent); }
+.evidence-limit-select option { background: var(--rc-surface-2); color: var(--rc-text); }
 
 .quotes-grid {
     display: grid;
@@ -850,13 +853,16 @@ body.is-col-resizing * {
 /* Active quote card — the one the current document highlight maps to. Persistent
    accent so it's clear which card a clicked passage refers to (reverse tracing),
    plus a brief flash so it visibly "lights up" on arrival. */
+/* Active card echoes its doc colour: preregistration = blue, paper = amber. */
+.evidence-card { --card-accent: var(--rc-accent); }
+.evidence-card--ppr { --card-accent: #e0a400; }
 .evidence-card.is-active {
-    border-color: var(--rc-accent);
-    background: color-mix(in srgb, var(--rc-accent) 13%, var(--rc-surface-2));
+    border-color: var(--card-accent);
+    background: color-mix(in srgb, var(--card-accent) 14%, var(--rc-surface-2));
 }
 @keyframes evidence-card-flash {
-    0%   { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 70%, transparent); }
-    100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rc-accent) 0%, transparent); }
+    0%   { box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 70%, transparent); }
+    100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 0%, transparent); }
 }
 .evidence-card.is-flash { animation: evidence-card-flash 0.9s ease-out; }
 @media (prefers-reduced-motion: reduce) {
