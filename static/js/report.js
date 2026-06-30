@@ -57,6 +57,7 @@
         copyLinkLabel: document.getElementById("copy-report-link-label"),
         download: document.getElementById("report-download-btn"),
         focusBtn: document.getElementById("report-focus-btn"),
+        settingsBtn: document.getElementById("report-settings-btn"),
         toast: document.getElementById("report-toast"),
         log: document.getElementById("report-log"),
         logList: document.getElementById("report-log-list"),
@@ -194,19 +195,26 @@
 
     function setStatus(stateValue, detailText, counts) {
         if (!els.statusPill) return;
-        // Once complete, drop the status pill entirely — the report itself is the
-        // signal. Keep it for processing/failed states.
-        els.statusPill.classList.toggle("d-none", stateValue === "SUCCESS");
+        // Keep the pill visible through completion: a green "Report complete" check
+        // is a clearer end-of-run signal than the pill silently disappearing.
+        els.statusPill.classList.remove("d-none");
         const running = stateValue !== "SUCCESS" && stateValue !== "FAILURE";
+        if (running) state.everRunning = true;
         els.statusPill.classList.toggle("is-running", running);
         els.statusPill.classList.toggle("is-done", stateValue === "SUCCESS");
         els.statusPill.classList.toggle("is-error", stateValue === "FAILURE");
         const hasCounts = counts && Number.isFinite(counts.processed) && Number.isFinite(counts.total) && counts.total > 0;
         if (els.statusText) {
             els.statusText.textContent =
-                stateValue === "SUCCESS" ? "Complete" :
+                stateValue === "SUCCESS" ? "Report complete" :
                 stateValue === "FAILURE" ? "Processing failed" :
                 hasCounts ? `Processing · ${counts.processed}/${counts.total}` : "Processing";
+        }
+        // One-off "Report complete" toast, but only for a run we actually watched
+        // progress through (not the demo/offline bundle that loads straight to SUCCESS).
+        if (stateValue === "SUCCESS" && state.everRunning && !state.completionNotified) {
+            state.completionNotified = true;
+            showToast("Report complete");
         }
         if (detailText && detailText !== state.lastWorkflowStatus) {
             state.lastWorkflowStatus = detailText;
@@ -353,8 +361,8 @@
                 els.viewDecision.querySelector(".report-quotes"),
             ].filter(Boolean);
             if (panels.length === 3) {
-                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols",
-                    [150, 360, 300], [1, 2.7, 2]);
+                installResizers(els.viewDecision, panels, "regcheck.report.decisionCols.v2",
+                    [140, 360, 300], [0.8, 2.5, 2.4]);
                 state.decisionResizersDone = true;
             }
         }
@@ -536,9 +544,10 @@
 
     function limitControlHtml() {
         return `
-            <div class="evidence-limit-control" role="group" aria-label="Evidence chunks shown">
+            <div class="evidence-limit-control" role="group" aria-label="Number of quotes shown">
+                <span class="evidence-limit-control__label" aria-hidden="true">Show</span>
                 ${EVIDENCE_LIMIT_OPTIONS.map((option) => `
-                    <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}">
+                    <button type="button" class="evidence-limit-btn ${option === state.evidenceLimit ? "is-active" : ""}" data-evidence-limit="${option}" title="Show ${escapeHtml(String(option))} quotes per document">
                         ${escapeHtml(option === "all" ? "All" : String(option))}
                     </button>
                 `).join("")}
@@ -719,7 +728,18 @@
     }
 
     function applyDocZoom(scroll, zoom) {
-        if (scroll) scroll.style.setProperty("--doc-zoom", String(zoom || 1));
+        if (!scroll) return;
+        // Capture a fixed base width once (the pane's width at first render = fit-to-pane at
+        // 100%). The page is then sized as base x zoom, so resizing the pane no longer
+        // rescales the document — only the zoom control changes its size.
+        if (!scroll.dataset.baseWidth) {
+            const w = scroll.clientWidth;
+            if (w > 0) scroll.dataset.baseWidth = String(w);
+        }
+        if (scroll.dataset.baseWidth) {
+            scroll.style.setProperty("--doc-base-width", scroll.dataset.baseWidth + "px");
+        }
+        scroll.style.setProperty("--doc-zoom", String(zoom || 1));
     }
 
     // Diagnose *why* the whole evidence set is unavailable, from the status the
@@ -1093,19 +1113,30 @@
             const span = resolveTextSpan(text, quote);
             if (span) ranges.push({ start: span.start, end: span.end, approximate: span.approximate, quote });
         });
-        ranges.sort((a, b) => a.start - b.start);
-        const clean = [];
-        let lastEnd = -1;
-        ranges.forEach((r) => { if (r.start >= lastEnd) { clean.push(r); lastEnd = r.end; } });
+        // Earlier start first; on a tie, the longer span first so the shorter one
+        // becomes the clamped tail/anchor rather than swallowing the longer highlight.
+        ranges.sort((a, b) => (a.start - b.start) || (b.end - a.end));
 
         let out = "";
         let cursor = 0;
-        clean.forEach((r) => {
-            out += escapeHtml(text.slice(cursor, r.start));
+        ranges.forEach((r) => {
             const active = r.quote.id === state.activeQuoteId ? " is-active" : "";
             const approx = r.approximate ? ` title="Approximate location"` : "";
+            // Clamp so marks never overlap already-emitted text (nested <mark>s are
+            // invalid HTML). Crucially, EVERY quote still gets an element carrying its
+            // id=docmark-<id>, so its reference is always clickable/locatable. With
+            // overlap-based chunking + neighbour expansion, adjacent cited chunks often
+            // overlap; previously the later one was dropped outright and its quote ref
+            // silently failed to locate (the PAPER_0016 report).
+            const markStart = Math.max(r.start, cursor);
+            if (markStart >= r.end) {
+                // Fully inside an already-marked span: emit a zero-width locatable anchor.
+                out += `<span class="doc-anchor" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}"></span>`;
+                return;
+            }
+            if (cursor < markStart) out += escapeHtml(text.slice(cursor, markStart));
             out += `<mark class="doc-mark${active}" data-quote="${escapeHtml(r.quote.id)}" id="${highlightId(r.quote)}"${approx}>`
-                + escapeHtml(text.slice(r.start, r.end))
+                + escapeHtml(text.slice(markStart, r.end))
                 + `</mark>`;
             cursor = r.end;
         });
@@ -1267,145 +1298,7 @@
         window.location.href = `/report/${encodeURIComponent(state.taskId)}/export.html`;
     }
 
-    /* ── PDF download (print-to-PDF of a tidy report layout) ─────────────────── */
-    function downloadPdf() {
-        if (!state.items.length) return;
-        const title = (document.getElementById("results-page-tagline")?.textContent || "RegCheck report").trim();
-        const items = state.items;
-        const sources = (state.manifest && state.manifest.sources) || {};
-        const chunks = (state.manifest && state.manifest.chunks) || {};
-
-        const counts = items.reduce((acc, it) => {
-            const t = judgementInfo(it.deviation_judgement).tone;
-            acc[t] = (acc[t] || 0) + 1; return acc;
-        }, {});
-        const tally = [
-            counts.flag ? `${counts.flag} deviation${counts.flag === 1 ? "" : "s"}` : null,
-            counts.warn ? `${counts.warn} missing` : null,
-            counts.ok ? `${counts.ok} consistent` : null,
-        ].filter(Boolean).join(" · ");
-
-        // Strip the inline PREREG_/PAPER_ citations from the prose — evidence is listed separately.
-        const cleanRationale = (txt) => (txt || "")
-            .replace(/\s*\((?:(?:PREREG|PAPER)_\d+(?:\s*,\s*)?)+\)/g, "")
-            .replace(/\b(?:PREREG|PAPER)_\d+\b/g, "")
-            .replace(/\(\s*\)/g, "")
-            .replace(/\s+([.,;:])/g, "$1")
-            .replace(/\s{2,}/g, " ")
-            .trim();
-        const snippet = (s, n = 180) => {
-            s = (s || "").replace(/\s+/g, " ").trim();
-            return s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s;
-        };
-        // A page number is only meaningful for a genuine PDF the reader holds — not
-        // for a registration we converted from .docx/CT.gov text.
-        const sourcePage = (id) => {
-            const c = chunks[id];
-            const src = c && sources[c.source_id];
-            if (!src || src.kind !== "pdf" || (src.metadata && src.metadata.rendered_from_text)) return null;
-            const loc = (c.locations || []).find((l) => l.kind === "pdf" && Number.isFinite(l.page));
-            return loc ? loc.page : null;
-        };
-        const evidenceFor = (it) => {
-            const ids = [];
-            (it.deviation_information || "").replace(/\b(?:PREREG|PAPER)_\d+\b/g, (m) => {
-                if (!ids.includes(m)) ids.push(m); return m;
-            });
-            if (!ids.length) return "";
-            const qmap = {};
-            parseQuotes(it.registration_content_quotes || "").forEach((q) => { qmap[q.id] = q; });
-            parseQuotes(it.paper_content_quotes || "").forEach((q) => { qmap[q.id] = q; });
-            const rows = ids.map((id) => {
-                const q = qmap[id];
-                const text = q && (q.text || q.raw || "");
-                if (!text) return "";
-                const side = /^PREREG/.test(id) ? "Registration" : "Paper";
-                const page = sourcePage(id);
-                const loc = page ? ` <span class="ev-loc">(p.${page})</span>` : "";
-                return `<li><span class="ev-side">${side}</span> “${escapeHtml(snippet(text))}”${loc}</li>`;
-            }).filter(Boolean);
-            return rows.length ? `<div class="ev"><p class="ev-cap">Evidence</p><ul>${rows.join("")}</ul></div>` : "";
-        };
-
-        const overviewRows = items.map((it, i) => {
-            const info = judgementInfo(it.deviation_judgement);
-            return `<tr><td>${i + 1}. ${escapeHtml(it.dimension || "Dimension")}</td><td><span class="verdict verdict--${info.tone}">${escapeHtml(info.label)}</span></td></tr>`;
-        }).join("");
-        const overview = `<table class="overview"><thead><tr><th>Dimension</th><th>Verdict</th></tr></thead><tbody>${overviewRows}</tbody></table>`;
-
-        const sections = items.map((it, i) => {
-            const info = judgementInfo(it.deviation_judgement);
-            return `<section class="dim">
-                <div class="dim-head"><h2>${i + 1}. ${escapeHtml(it.dimension || "Dimension")}</h2>
-                    <span class="verdict verdict--${info.tone}">${escapeHtml(info.label)}</span></div>
-                <p class="rationale">${escapeHtml(cleanRationale(it.deviation_information) || "No deviation information provided.")}</p>
-                ${evidenceFor(it)}
-            </section>`;
-        }).join("");
-
-        const css = `
-            * { box-sizing: border-box; }
-            body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 28px; line-height: 1.5; }
-            h1 { font-size: 19px; margin: 0 0 3px; }
-            .meta { color: #6b7280; font-size: 11.5px; margin: 0 0 2px; }
-            .tally { color: #374151; font-size: 12px; font-weight: 600; margin: 0 0 14px; }
-            table.overview { width: 100%; border-collapse: collapse; margin: 0; font-size: 12px; }
-            table.overview th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; border-bottom: 1px solid #d1d5db; padding: 0 0 4px; }
-            table.overview td { padding: 4px 0; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
-            table.overview td:last-child { width: 1%; white-space: nowrap; text-align: right; }
-            .sec-title { font-size: 13px; margin: 18px 0 10px; padding-top: 10px; border-top: 2px solid #e5e7eb; }
-            .verdict { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
-            .verdict--flag { color: #9f1239; background: #ffe4e6; }
-            .verdict--warn { color: #92400e; background: #fef3c7; }
-            .verdict--ok { color: #065f46; background: #d1fae5; }
-            .dim { padding: 0 0 11px; margin: 0 0 12px; border-bottom: 1px solid #eef0f3; break-inside: avoid; }
-            .dim-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-            .dim-head h2 { font-size: 13.5px; margin: 0; }
-            .rationale { font-size: 12.5px; margin: 0 0 8px; }
-            .ev { margin: 0; }
-            .ev-cap { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin: 0 0 3px; }
-            .ev ul { margin: 0; padding: 0; list-style: none; }
-            .ev li { font-size: 11px; color: #374151; padding: 2px 0 2px 9px; border-left: 2px solid #d1d5db; margin: 0 0 4px; }
-            .ev-side { font-weight: 700; color: #111827; margin-right: 3px; }
-            .ev-loc { color: #6b7280; }
-            footer { margin-top: 16px; color: #9ca3af; font-size: 10px; text-align: center; }
-            @page { margin: 14mm; }
-        `;
-        const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${css}</style></head>
-            <body>
-            <h1>${escapeHtml(title)}</h1>
-            <p class="meta">RegCheck comparison report · ${items.length} dimensions · generated ${new Date().toLocaleDateString()}</p>
-            ${tally ? `<p class="tally">${escapeHtml(tally)}</p>` : ""}
-            ${overview}
-            <h2 class="sec-title">Findings</h2>
-            ${sections}
-            <footer>Generated by RegCheck — a concise guide to read alongside the registration and paper.</footer>
-            </body></html>`;
-
-        // Print via an offscreen iframe. It MUST have real dimensions — a 0×0
-        // iframe lays out to nothing and prints a blank page.
-        const iframe = document.createElement("iframe");
-        iframe.setAttribute("aria-hidden", "true");
-        iframe.style.cssText = "position:fixed; left:-10000px; top:0; width:816px; height:1056px; border:0;";
-        document.body.appendChild(iframe);
-        const win = iframe.contentWindow;
-        const doc = win.document;
-        doc.open();
-        doc.write(html);
-        doc.close();
-        let removed = false;
-        const cleanup = () => { if (!removed) { removed = true; iframe.remove(); } };
-        try { win.addEventListener("afterprint", () => window.setTimeout(cleanup, 200)); } catch (_e) { /* ignore */ }
-        // Let styles/layout settle, then print. print() blocks until the dialog
-        // closes in most browsers, so schedule a fallback cleanup too.
-        window.setTimeout(() => {
-            try { win.focus(); win.print(); } catch (_e) { /* ignore */ }
-            window.setTimeout(cleanup, 60000);
-        }, 350);
-        showToast("Preparing PDF — choose “Save as PDF” in the print dialog");
-    }
-
-    /* ── download menu (CSV / PDF) ───────────────────────────────────────────── */
+    /* ── download menu (HTML / CSV) ───────────────────────────────────────────── */
     function setupDownloadMenu() {
         const trigger = els.download;
         if (!trigger) return;
@@ -1423,15 +1316,16 @@
             menu = document.createElement("div");
             menu.className = "report-download-menu";
             const canHtml = canExportHtml();
+            // PDF export was deprecated (print-to-PDF dropped bullets, quote links
+            // and forced landscape). The self-contained HTML is the recommended
+            // download — it preserves the interactive viewer, quote-tracing and layout.
             menu.innerHTML = `
-                <button type="button" data-dl="pdf">RegCheck report (PDF)</button>
-                ${canHtml ? '<button type="button" data-dl="html">Interactive report (HTML)</button>' : ""}
+                ${canHtml ? '<button type="button" data-dl="html">Interactive report (HTML)<span class="report-download-menu__hint">Recommended</span></button>' : ""}
                 <button type="button" data-dl="csv">Data table (CSV)</button>`;
             document.body.appendChild(menu);
             const r = trigger.getBoundingClientRect();
             menu.style.top = `${Math.round(r.bottom + 6)}px`;
             menu.style.right = `${Math.round(window.innerWidth - r.right)}px`;
-            menu.querySelector('[data-dl="pdf"]').addEventListener("click", () => { close(); downloadPdf(); });
             if (canHtml) menu.querySelector('[data-dl="html"]').addEventListener("click", () => { close(); downloadHtml(); });
             menu.querySelector('[data-dl="csv"]').addEventListener("click", () => { close(); downloadCsv(); });
             trigger.setAttribute("aria-expanded", "true");
@@ -1445,18 +1339,30 @@
     }
 
     async function copyReportLink() {
+        const url = window.location.href;
         let copied = false;
-        try {
-            await navigator.clipboard.writeText(window.location.href);
-            copied = true;
-        } catch (_error) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                await navigator.clipboard.writeText(url);
+                copied = true;
+            } catch (_error) {
+                copied = false;
+            }
+        }
+        if (!copied) {
+            // Fallback for browsers/contexts where the async Clipboard API is blocked
+            // (notably Safari): use an editable, focused, range-selected field + execCommand.
             try {
                 const temp = document.createElement("textarea");
-                temp.value = window.location.href;
+                temp.value = url;
+                temp.contentEditable = "true";
+                temp.readOnly = false;
                 temp.style.position = "fixed";
+                temp.style.top = "0";
                 temp.style.opacity = "0";
                 document.body.appendChild(temp);
-                temp.select();
+                temp.focus();
+                temp.setSelectionRange(0, url.length);
                 copied = document.execCommand("copy");
                 document.body.removeChild(temp);
             } catch (_fallbackError) {
@@ -1495,6 +1401,7 @@
             const data = await response.json();
             state.evidenceStatus = data.evidence_status || null;
             state.evidenceError = data.evidence_error || null;
+            applyReportSettings(data.settings);
             const counts = { processed: data.processed_dimensions, total: data.total_dimensions };
             setStatus(data.state, data.status || data.state || "", counts);
             appendLog(data.status || "", counts);
@@ -1530,6 +1437,7 @@
                 state.renderDataCache.set(id, data.render_data[id]);
             });
         }
+        applyReportSettings(data.settings);   // offline HTML export / demo may carry settings
         setStatus("SUCCESS", statusLabel);
         // Keep the status badge visible (setStatus hides the pill on SUCCESS for
         // live reports); a static bundle has no live state to track.
@@ -1578,6 +1486,8 @@
         els.focusBtn.setAttribute("aria-pressed", active ? "true" : "false");
         els.focusBtn.title = active ? "Exit full screen" : "Full screen (more room for documents)";
         els.focusBtn.setAttribute("aria-label", active ? "Exit full screen" : "Full screen");
+        const label = els.focusBtn.querySelector(".report-focus-btn__label");
+        if (label) label.textContent = active ? "Exit full screen" : "Full screen";
     }
 
     function enterFocusMode() {
@@ -1622,6 +1532,67 @@
         }
     }
 
+    /* ── report settings popover (read-only "View settings") ─────────────── */
+
+    const SETTINGS_MODEL_LABELS = { openai: "ChatGPT (GPT-5)", claude: "Claude Opus 4.8", gpustack: "Local model (GPUStack)" };
+    const SETTINGS_PARSER_LABELS = { pymupdf: "PyMuPDF", grobid: "GROBID", dpt2: "DPT-2", external: "External (bibr)" };
+    const SETTINGS_TYPE_LABELS = { preregistration: "Preregistration", clinical_trials: "Clinical trial (ClinicalTrials.gov)", registered_report: "Registered report" };
+    const titleCase = (v) => String(v || "").replace(/^\w/, (c) => c.toUpperCase());
+
+    function settingsRows(s) {
+        const rows = [["Comparison", SETTINGS_TYPE_LABELS[s.comparison_type] || titleCase(s.comparison_type) || "Preregistration"]];
+        rows.push(["Model", SETTINGS_MODEL_LABELS[s.client] || s.client || "—"]);
+        if (s.client === "openai" && s.reasoning_effort) rows.push(["Reasoning effort", titleCase(s.reasoning_effort)]);
+        rows.push(["Document parser", SETTINGS_PARSER_LABELS[s.parser_choice] || s.parser_choice || "—"]);
+        if (s.multiple_experiments) rows.push(["Multi-study", s.experiment_number ? `Study ${s.experiment_number}` : "Yes"]);
+        rows.push(["Append prior outputs", s.append_previous_output ? "Yes" : "No"]);
+        const dims = Array.isArray(s.dimensions) ? s.dimensions : [];
+        rows.push([`Dimensions (${dims.length})`, dims.length ? dims.join(", ") : "—"]);
+        return rows;
+    }
+
+    function closeSettingsPopover() {
+        const existing = document.getElementById("report-settings-popover");
+        if (existing) existing.remove();
+        if (els.settingsBtn) els.settingsBtn.setAttribute("aria-expanded", "false");
+    }
+
+    function openSettingsPopover() {
+        closeSettingsPopover();
+        const s = state.reportSettings;
+        if (!s || !els.settingsBtn) return;
+        const pop = document.createElement("div");
+        pop.id = "report-settings-popover";
+        pop.className = "report-settings-popover";
+        pop.setAttribute("role", "dialog");
+        pop.setAttribute("aria-label", "Report settings");
+        const rows = settingsRows(s)
+            .map(([k, v]) => `<div class="report-settings-popover__row"><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
+            .join("");
+        pop.innerHTML = `<div class="report-settings-popover__head">Report settings</div><dl class="report-settings-popover__list">${rows}</dl>`;
+        document.body.appendChild(pop);
+        // Anchor under the button, right-aligned, clamped to the viewport.
+        const r = els.settingsBtn.getBoundingClientRect();
+        pop.style.top = `${r.bottom + 8}px`;
+        const width = pop.offsetWidth || 280;
+        pop.style.left = `${Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8))}px`;
+        els.settingsBtn.setAttribute("aria-expanded", "true");
+    }
+
+    function toggleSettingsPopover() {
+        if (document.getElementById("report-settings-popover")) closeSettingsPopover();
+        else openSettingsPopover();
+    }
+
+    // Reveal the (otherwise hidden) settings button once the status poll delivers
+    // the settings used for this report. Offline/demo bundles carry no settings,
+    // so the button stays hidden there.
+    function applyReportSettings(settings) {
+        if (!els.settingsBtn || !settings || typeof settings !== "object") return;
+        state.reportSettings = settings;
+        els.settingsBtn.classList.remove("d-none");
+    }
+
     /* ── wire up ─────────────────────────────────────────────────────────── */
 
     // The owner page may intercept the Share button (e.g. to open the restricted
@@ -1647,6 +1618,13 @@
         });
     }
     if (els.focusBtn) els.focusBtn.addEventListener("click", toggleFocusMode);
+    if (els.settingsBtn) els.settingsBtn.addEventListener("click", (event) => { event.stopPropagation(); toggleSettingsPopover(); });
+    document.addEventListener("click", (event) => {
+        if (!event.target.closest("#report-settings-popover") && !event.target.closest("#report-settings-btn")) closeSettingsPopover();
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeSettingsPopover(); });
+    window.addEventListener("resize", closeSettingsPopover);
+    window.addEventListener("scroll", closeSettingsPopover, true);
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     window.addEventListener("keydown", onKey);

@@ -563,6 +563,88 @@
         setupDropzone(preregFileInput);
         setupDropzone(paperFileInput);
 
+        let preflightAcknowledged = false;
+
+        function setSubmitBusy(busy, label) {
+            if (!submitButton) return;
+            if (busy) {
+                if (!submitButton.dataset.idleLabel) submitButton.dataset.idleLabel = submitButton.textContent;
+                submitButton.disabled = true;
+                submitButton.textContent = label || "Checking…";
+                submitButton.classList.add("is-busy");
+            } else {
+                submitButton.disabled = false;
+                if (submitButton.dataset.idleLabel) submitButton.textContent = submitButton.dataset.idleLabel;
+                submitButton.classList.remove("is-busy");
+            }
+        }
+
+        function proceedWithSubmit() {
+            preflightAcknowledged = true;
+            if (form) form.submit();   // native submit; bypasses this submit handler
+        }
+
+        function closeThinModal() {
+            const existing = document.getElementById("preflight-thin-modal");
+            if (existing) existing.remove();
+        }
+
+        function showThinRegistrationWarning(result, source) {
+            closeThinModal();
+            const chars = (result && typeof result.chars === "number") ? result.chars : 0;
+            const hint = source === "osf"
+                ? "If your OSF link points to a registration page whose actual content is an attached file (e.g. a PDF), go back and paste the direct link to that file instead of the general project link."
+                : "If this is a scanned PDF, its text may not be extractable — try a text-based PDF, DOCX, or TXT.";
+            const overlay = document.createElement("div");
+            overlay.id = "preflight-thin-modal";
+            overlay.className = "rc-modal-overlay";
+            overlay.setAttribute("role", "dialog");
+            overlay.setAttribute("aria-modal", "true");
+            overlay.setAttribute("aria-labelledby", "preflight-thin-title");
+            overlay.innerHTML =
+                '<div class="rc-modal">' +
+                '  <h2 class="rc-modal__title" id="preflight-thin-title">Very little text found in your registration</h2>' +
+                '  <p class="rc-modal__body">We could only extract about <strong>' + chars + ' characters</strong> from your registration. ' + hint + '</p>' +
+                '  <p class="rc-modal__body">You can run the comparison anyway, but with so little registration text the results may be unreliable.</p>' +
+                '  <div class="rc-modal__actions">' +
+                '    <button type="button" class="btn btn-secondary" data-preflight="back">Go back and fix</button>' +
+                '    <button type="button" class="btn btn-primary" data-preflight="anyway">Run anyway</button>' +
+                '  </div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            const back = () => closeThinModal();
+            overlay.querySelector('[data-preflight="back"]').addEventListener("click", back);
+            overlay.querySelector('[data-preflight="anyway"]').addEventListener("click", () => { closeThinModal(); proceedWithSubmit(); });
+            overlay.addEventListener("click", (e) => { if (e.target === overlay) back(); });
+            document.addEventListener("keydown", function esc(e) {
+                if (e.key === "Escape") { closeThinModal(); document.removeEventListener("keydown", esc); }
+            });
+            const anywayBtn = overlay.querySelector('[data-preflight="anyway"]');
+            if (anywayBtn) anywayBtn.focus();
+        }
+
+        async function runRegistrationPreflight(source) {
+            setSubmitBusy(true, "Checking registration…");
+            let result = null;
+            try {
+                const fd = new FormData();
+                fd.append("prereg_source", source);
+                if (source === "osf") {
+                    fd.append("osf_url", (osfUrlInput && osfUrlInput.value.trim()) || "");
+                } else {
+                    const file = preregFileInput && preregFileInput.files && preregFileInput.files[0];
+                    if (file) fd.append("preregistration", file);
+                }
+                const resp = await fetch("/preflight/registration", { method: "POST", body: fd });
+                if (resp.ok) result = await resp.json();
+            } catch (_err) {
+                result = null;   // probe failed → don't get in the user's way
+            }
+            setSubmitBusy(false);
+            if (result && result.ok && result.thin) showThinRegistrationWarning(result, source);
+            else proceedWithSubmit();
+        }
+
         if (form) {
             form.addEventListener("submit", function (event) {
                 // Re-assert the prereg-source field state right before submission:
@@ -581,6 +663,15 @@
                     return;
                 }
                 dimensionsDataInput.value = JSON.stringify(out);
+
+                // Pre-flight (#5): warn — never block — when little/no registration
+                // text can be parsed. CT.gov registries are structured, so skip them.
+                // Any probe failure falls through to a normal submit.
+                if (preflightAcknowledged) return;
+                const source = selectedSource();
+                if (source !== "osf" && source !== "upload") return;
+                event.preventDefault();
+                runRegistrationPreflight(source);
             });
         }
 

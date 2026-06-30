@@ -76,7 +76,8 @@
         .survey-steps {
             display: flex;
             flex-direction: column;
-            gap: 1.1rem;
+            align-items: center;
+            gap: 1.3rem;
         }
 
         .survey-step {
@@ -314,7 +315,7 @@
                     <div class="text-start">
                         <h1 class="survey-title">Why RegCheck?</h1>
                         <p class="survey-lede">
-                            Help us learn about RegCheck users, or just go straight to results.<br>Your responses are anonymous.
+                            Three quick questions to help us learn about RegCheck's users while your report finishes.<br>Your responses are anonymous.
                         </p>
                     </div>
                     <div class="pulse-pill">
@@ -340,35 +341,27 @@
                 <form method="post" action="{{ url_for('survey', task_id=task_id) }}" id="survey-form">
                     <div class="survey-steps">
                         {% for question in questions %}
-                            <div class="survey-step{% if loop.first %} active{% endif %}" data-index="{{ loop.index0 }}">
-                                <p class="question-progress">Question {{ loop.index }} of {{ questions|length }}</p>
-                                <div class="survey-field">
-                                    <label class="survey-label" for="{{ question.name }}">{{ question.label }}</label>
-                                    <div class="survey-control">
-                                        {% if question.type == "textarea" %}
-                                            <textarea class="survey-textarea" id="{{ question.name }}" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}"></textarea>
-                                        {% elif question.options %}
-                                            <select class="survey-select" id="{{ question.name }}" name="{{ question.name }}">
-                                                <option value="" selected hidden>Choose an option</option>
-                                                {% for opt in question.options %}
-                                                    <option value="{{ opt }}">{{ opt }}</option>
-                                                {% endfor %}
-                                            </select>
-                                        {% else %}
-                                            <input class="survey-input" id="{{ question.name }}" type="text" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}">
-                                        {% endif %}
-                                    </div>
+                            <div class="survey-field">
+                                <label class="survey-label" for="{{ question.name }}">{{ question.label }}</label>
+                                <div class="survey-control">
+                                    {% if question.type == "textarea" %}
+                                        <textarea class="survey-textarea" id="{{ question.name }}" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}" required></textarea>
+                                    {% elif question.options %}
+                                        <select class="survey-select" id="{{ question.name }}" name="{{ question.name }}" required>
+                                            <option value="" selected disabled hidden>Choose an option</option>
+                                            {% for opt in question.options %}
+                                                <option value="{{ opt }}">{{ opt }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    {% else %}
+                                        <input class="survey-input" id="{{ question.name }}" type="text" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}" required>
+                                    {% endif %}
                                 </div>
                             </div>
                         {% endfor %}
                     </div>
                     <div class="survey-actions">
-                        <a class="result-link survey-actions__link" href="{{ result_url }}" target="_blank" rel="noopener noreferrer">Go to results</a>
-                    </div>
-                    <div class="d-none" id="survey-hidden-inputs">
-                        {% for question in questions %}
-                            <input type="hidden" name="{{ question.name }}" value="">
-                        {% endfor %}
+                        <button type="submit" class="result-link" id="survey-submit">Submit &amp; view report</button>
                     </div>
                 </form>
             </div>
@@ -384,10 +377,7 @@
             const progressEl = document.getElementById("survey-progress");
             const pill = document.querySelector(".pulse-pill");
             const form = document.getElementById("survey-form");
-            const steps = Array.from(document.querySelectorAll(".survey-step"));
-            const hiddenInputs = new Map(
-                Array.from(document.querySelectorAll('#survey-hidden-inputs input[type="hidden"]')).map((input) => [input.name, input])
-            );
+            const submitBtn = document.getElementById("survey-submit");
 
             function setState(stateText) {
                 if (stateEl && stateText) {
@@ -413,48 +403,15 @@
                 }
             }
 
-            function goToStep(index) {
-                steps.forEach((step, i) => {
-                    step.classList.toggle("active", i === index);
+            // Explicit submission only. Native `required` blocks submit until every
+            // question is answered, so the form's `submit` event fires only when the
+            // answers are complete — no auto-commit on change, no surprise navigation.
+            if (form && submitBtn) {
+                form.addEventListener("submit", () => {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = "Submitting…";
                 });
-                const active = steps[index];
-                if (!active) return;
-                const control = active.querySelector("select, textarea, input");
-                if (control) {
-                    setTimeout(() => control.focus(), 100);
-                }
             }
-
-            function persistValue(name, value) {
-                const hidden = hiddenInputs.get(name);
-                if (hidden) {
-                    hidden.value = value || "";
-                }
-            }
-
-            function handleAnswer(control) {
-                if (!control || !form) return;
-                const value = control.value || "";
-                persistValue(control.name, value);
-                const currentIndex = steps.findIndex((step) => step.contains(control));
-                if (currentIndex === steps.length - 1) {
-                    form.submit();
-                } else if (currentIndex >= 0) {
-                    goToStep(currentIndex + 1);
-                }
-            }
-
-            steps.forEach((step) => {
-                const control = step.querySelector("select, textarea, input");
-                if (!control) return;
-                control.addEventListener("change", () => handleAnswer(control));
-                control.addEventListener("keydown", (event) => {
-                    if (event.key === "Enter") {
-                        event.preventDefault();
-                        handleAnswer(control);
-                    }
-                });
-            });
 
             async function poll() {
                 try {
@@ -470,8 +427,6 @@
                 }
             }
             poll();
-
-            goToStep(0);
         })();
     </script>
 </body>

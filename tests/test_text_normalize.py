@@ -40,6 +40,19 @@ def test_normalize_is_idempotent_and_empty_safe():
     assert decode_and_normalize(b"") == ""
 
 
+def test_reflow_collapses_line_wraps_keeps_paragraphs_and_length():
+    from backend.services.text_normalize import reflow_text
+    src = "A wrapped\nsentence here.\n\nA new paragraph\nthat also wraps."
+    out = reflow_text(src)
+    # isolated newlines -> spaces; the paragraph break (\n\n) survives
+    assert out == "A wrapped sentence here.\n\nA new paragraph that also wraps."
+    # length-preserving (each isolated \n -> one space) so it is locator-offset-safe
+    assert len(out) == len(src)
+    # 3+ newline runs are preserved too (not collapsed)
+    assert reflow_text("a\n\n\nb") == "a\n\n\nb"
+    assert reflow_text("") == ""
+
+
 def test_evidence_builder_normalizes_display_but_keeps_raw_cache_text():
     from backend.services.evidence import build_text_evidence_source
     raw = "The “smart” quote — it’s eﬃcient…"
@@ -52,4 +65,25 @@ def test_evidence_builder_normalizes_display_but_keeps_raw_cache_text():
     # render docText is normalised too, so the text-mode locator matches the normalised quote
     assert all(ord(c) < 128 for c in payload["render_data"]["text"])
     # the cache-key source text stays RAW so corpus/manifest IDs stay aligned (keys unchanged)
+    assert payload["text"] == raw
+
+
+def test_evidence_builder_reflows_display_text_and_stays_locator_consistent():
+    from backend.services.evidence import build_text_evidence_source
+    raw = (
+        "Users were matched on their number\nof followers when we scraped their\n"
+        "profiles in September 2022.\n\nThe final sample had 155 300 users\nin each group."
+    )
+    payload = build_text_evidence_source(source_id="P", label="Paper", text=raw, chunk_prefix="PAPER")
+    render = payload["render_data"]["text"]
+    # A9: mid-paragraph line wraps become spaces; A10: the paragraph break survives
+    assert "their number of followers when we scraped their profiles in September 2022." in render
+    assert "155 300 users in each group." in render
+    assert "\n\n" in render
+    # exactly one newline run remains — the paragraph break, no stray line wraps
+    assert render.count("\n") == 2
+    # locator consistency: every chunk's displayed text is findable in the rendered text
+    for chunk in payload["chunks"].values():
+        assert chunk["text"] in render, chunk["text"]
+    # raw cache-key text is untouched (still hard-wrapped)
     assert payload["text"] == raw

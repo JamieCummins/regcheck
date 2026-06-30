@@ -9,13 +9,14 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..core.rate_limit import comparison_rate_limit
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 from ..services import reports as reports_service
+from ..services.documents import read_file
 from ..services.llm import HOSTED_CLIENTS
-from ..services.osf import extract_osf_guid
+from ..services.osf import extract_osf_guid, fetch_osf_preregistration
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -434,6 +435,17 @@ async def _queue_comparison(
         "visibility": report_visibility,
         "owner_id": owner.id if owner is not None else "",
         "retention": retention,
+        # Settings used for this report, surfaced read-only in the viewer ("View settings").
+        "settings_json": json.dumps({
+            "comparison_type": comparison_type,
+            "client": client,
+            "parser_choice": parser_choice_normalized,
+            "reasoning_effort": effort_normalized,
+            "append_previous_output": bool(append_previous),
+            "multiple_experiments": _bool_from_yes(multiple_experiments),
+            "experiment_number": (experiment_number or "").strip() or None,
+            "dimensions": dimension_names,
+        }),
     }
     try:
         await _safe_hset(redis_client, task_id, initial_payload)
@@ -526,6 +538,82 @@ async def _queue_comparison(
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
     return task_id
+
+
+def _preflight_min_chars() -> int:
+    """Below this many extractable characters, a registration is treated as
+    "thin" and the wizard warns (but never blocks). Env-tunable so it can be
+    calibrated against real OSF stubs in production without a redeploy."""
+    raw = (os.getenv("PREFLIGHT_MIN_REGISTRATION_CHARS") or "").strip()
+    if not raw:
+        return 400
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 400
+
+
+@router.post("/preflight/registration")
+async def preflight_registration(
+    request: Request,
+    prereg_source: str = Form("upload"),
+    osf_url: str | None = Form(None),
+    preregistration: UploadFile | None = File(None),
+):
+    """Cheap pre-submit probe of how much text we can extract from the chosen
+    registration, so the wizard can WARN (not block) when it is near-empty —
+    e.g. an OSF *registry* link whose substantive content is an attached file.
+
+    Best-effort by design: on any resolution/parse problem we return
+    ``ok: false`` and the wizard proceeds to a normal submit (the worker stays
+    the source of truth). Uses the lightweight PyMuPDF/stdlib readers, never
+    GROBID, so it stays fast in the request path."""
+    settings = request.app.state.settings
+    upload_dir = Path(settings.upload_dir)
+    threshold = _preflight_min_chars()
+    source = (prereg_source or "").strip().lower()
+    osf_link = (osf_url or "").strip()
+
+    cleanup: list[str] = []
+    try:
+        if source == "osf" or osf_link:
+            if not osf_link:
+                return JSONResponse({"ok": False, "reason": "no_osf_url"})
+            try:
+                path, ext = await asyncio.to_thread(fetch_osf_preregistration, osf_link, upload_dir)
+            except Exception as exc:  # network / unresolved / unsupported file
+                logger.info("preflight OSF resolution failed", exc_info=exc)
+                return JSONResponse({"ok": False, "reason": "osf_unresolved"})
+            cleanup.append(path)
+            probe_source = "osf"
+        elif preregistration is not None and (getattr(preregistration, "filename", "") or "").strip():
+            if _file_ext(preregistration.filename) not in _SUPPORTED_DOC_EXTS:
+                return JSONResponse({"ok": False, "reason": "unsupported_type"})
+            path, ext = await _save_upload(
+                upload_dir, preregistration, prefix=f"preflight_{uuid.uuid4()}_prereg", max_bytes=MAX_UPLOAD_BYTES
+            )
+            cleanup.append(path)
+            probe_source = "upload"
+        else:
+            # Nothing probe-able here (e.g. ClinicalTrials.gov, or no input yet).
+            return JSONResponse({"ok": False, "reason": "no_input"})
+
+        try:
+            text = await asyncio.to_thread(read_file, path, ext)
+        except Exception as exc:
+            logger.info("preflight text extraction failed", exc_info=exc)
+            return JSONResponse({"ok": False, "reason": "parse_failed"})
+
+        chars = len((text or "").strip())
+        return JSONResponse(
+            {"ok": True, "chars": chars, "threshold": threshold, "thin": chars < threshold, "source": probe_source}
+        )
+    finally:
+        for stale in cleanup:
+            try:
+                Path(stale).unlink(missing_ok=True)
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
 
 
 @router.post("/compare", name="compare_post", dependencies=[Depends(comparison_rate_limit)])

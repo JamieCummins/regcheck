@@ -877,3 +877,45 @@
 .beta-badge {
     font-family: var(--rc-font-mono);
 }
+
+/* Pre-flight "thin registration" confirmation modal (#5: warn, never block). */
+.rc-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+}
+.rc-modal {
+    width: 100%;
+    max-width: 30rem;
+    background: var(--rc-panel);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: 14px;
+    box-shadow: var(--rc-shadow-lg);
+    padding: 1.4rem 1.5rem 1.25rem;
+}
+.rc-modal__title {
+    margin: 0 0 0.7rem;
+    font-size: 1.12rem;
+    line-height: 1.3;
+    color: var(--rc-text);
+}
+.rc-modal__body {
+    margin: 0 0 0.7rem;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--rc-muted);
+}
+.rc-modal__body strong { color: var(--rc-text); }
+.rc-modal__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.1rem;
+}
+.btn.is-busy { opacity: 0.75; cursor: progress; }

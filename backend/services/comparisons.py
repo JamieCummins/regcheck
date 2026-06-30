@@ -2308,7 +2308,8 @@ def run_comparison(
         "'dimension', 'paper_content_quotes', 'paper_content_summary', 'registration_content_quotes', 'registration_content_summary', "
         "'deviation_judgement', and 'deviation_information'. Each field MUST be a string.\n"
         "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
-        "- For the summaries and deviation information, also cite the evidence IDs you relied upon.\n"
+        "- For 'paper_content_summary' and 'registration_content_summary', write a SHORT prose summary of that document's content on this dimension: aim for about 50 words (roughly one to three sentences) and do not exceed it. Use plain prose, not bullet points or headings, and cite the evidence IDs you relied upon.\n"
+        "- For 'deviation_information', also cite the evidence IDs you relied upon.\n"
         "- 'deviation_judgement' should be 'yes' if any deviation exists on this dimension; 'no' if the registration and paper are fully consistent on this dimension; or 'missing' if you lack enough evidence to judge.\n"
         "If evidence is insufficient to judge, set deviation_judgement to 'missing' and explain briefly.\n"
     )
