@@ -174,14 +174,28 @@
 
         .survey-actions {
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             margin-top: 1.4rem;
             width: min(640px, 100%);
             margin-left: auto;
             margin-right: auto;
-            gap: 0.5rem;
+            gap: 0.55rem;
         }
+
+        .survey-skip {
+            background: transparent;
+            border: none;
+            color: #828A9C;
+            font-size: 0.88rem;
+            cursor: pointer;
+            padding: 0.2rem 0.4rem;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+        .survey-skip:hover,
+        .survey-skip:focus { color: #B9BEC9; outline: none; }
 
         .survey-actions__link {
             text-align: center;
@@ -345,16 +359,16 @@
                                 <label class="survey-label" for="{{ question.name }}">{{ question.label }}</label>
                                 <div class="survey-control">
                                     {% if question.type == "textarea" %}
-                                        <textarea class="survey-textarea" id="{{ question.name }}" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}" required></textarea>
+                                        <textarea class="survey-textarea" id="{{ question.name }}" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}"></textarea>
                                     {% elif question.options %}
-                                        <select class="survey-select" id="{{ question.name }}" name="{{ question.name }}" required>
-                                            <option value="" selected disabled hidden>Choose an option</option>
+                                        <select class="survey-select" id="{{ question.name }}" name="{{ question.name }}">
+                                            <option value="" selected hidden>Choose an option</option>
                                             {% for opt in question.options %}
                                                 <option value="{{ opt }}">{{ opt }}</option>
                                             {% endfor %}
                                         </select>
                                     {% else %}
-                                        <input class="survey-input" id="{{ question.name }}" type="text" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}" required>
+                                        <input class="survey-input" id="{{ question.name }}" type="text" name="{{ question.name }}" placeholder="{{ question.placeholder|default('') }}">
                                     {% endif %}
                                 </div>
                             </div>
@@ -362,6 +376,7 @@
                     </div>
                     <div class="survey-actions">
                         <button type="submit" class="result-link" id="survey-submit">Submit &amp; view report</button>
+                        <button type="submit" class="survey-skip" id="survey-skip" name="skip" value="1" formnovalidate>Skip &amp; go straight to the report</button>
                     </div>
                 </form>
             </div>
@@ -403,13 +418,17 @@
                 }
             }
 
-            // Explicit submission only. Native `required` blocks submit until every
-            // question is answered, so the form's `submit` event fires only when the
-            // answers are complete — no auto-commit on change, no surprise navigation.
-            if (form && submitBtn) {
-                form.addEventListener("submit", () => {
-                    submitBtn.disabled = true;
-                    submitBtn.textContent = "Submitting…";
+            // Two explicit submit buttons: "Submit & view report" (records the optional
+            // answers) and "Skip" (name=skip → recorded as skipped). Don't disable the
+            // clicked button before submit, or its name/value can be dropped from the
+            // POST; just guard against a double submit and reflect the action in text.
+            let submitted = false;
+            if (form) {
+                form.addEventListener("submit", (event) => {
+                    if (submitted) { event.preventDefault(); return; }
+                    submitted = true;
+                    const btn = event.submitter;
+                    if (btn === submitBtn) submitBtn.textContent = "Submitting…";
                 });
             }
 
