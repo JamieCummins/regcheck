@@ -272,10 +272,10 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
             except Exception:  # pragma: no cover - best-effort failure status
                 logger.warning("Failed to update task status after error", exc_info=exc, extra={"task_id": task_id})
     finally:
-        # Always clean up uploaded artifacts stored in S3 for this task.
-        if s3_cfg is not None:
-            await _cleanup_s3_keys(s3_cfg, s3_keys)
-        # Remove temporary local files to reduce disk pressure.
+        # Durable uploads (S3/Redis) are intentionally RETAINED so a report can be
+        # regenerated from its original files; they expire with the report window
+        # (Redis TTL) and are removed when the report is deleted. Only the ephemeral
+        # local temp copies are cleaned here to keep worker disk pressure down.
         for path_key in ("paper_path", "prereg_path", "registration_csv_path"):
             value = job.get(path_key)
             if value:

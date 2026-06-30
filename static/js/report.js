@@ -768,13 +768,43 @@
             ? `<a class="source-raw-link" href="${escapeHtml(raw)}" target="_blank" rel="noopener">Open the original file &rsaquo;</a>`
             : "";
         // On a live report where the whole evidence set is missing/errored, offer a
-        // one-click path to run it again (the original uploads are not retained after
-        // the job, so this re-runs from the upload step rather than silently failing).
+        // one-click "Regenerate" that re-runs from the ORIGINAL uploaded files (kept
+        // for the report window), with "Run a new comparison" as the fallback.
         const rerun = (state.taskId && state.manifestUnavailable)
-            ? `<a class="source-rerun-btn" href="/compare">Run a new comparison &rsaquo;</a>`
+            ? `<button type="button" class="source-rerun-btn" data-regenerate>Regenerate report</button>`
+              + `<a class="source-raw-link" href="/compare">Run a new comparison &rsaquo;</a>`
             : "";
         scroll.innerHTML = `<div class="source-placeholder source-placeholder--fallback"><p>${escapeHtml(message)}</p>${rerun}${link}</div>`;
         scroll.dataset.mode = "unavailable";
+    }
+
+    // Re-run the comparison from its original uploaded files (kept for the report
+    // window). On success the task resets to PENDING and we resume polling; if the
+    // inputs have expired (409) or the user can't manage it (403), explain and leave
+    // the "Run a new comparison" fallback.
+    async function regenerateReport(btn) {
+        if (!state.taskId || state.regenerating) return;
+        state.regenerating = true;
+        if (btn) { btn.disabled = true; btn.textContent = "Re-running…"; }
+        try {
+            const resp = await fetch(`/reports/${encodeURIComponent(state.taskId)}/regenerate`, { method: "POST" });
+            if (resp.ok) {
+                showToast("Re-running the comparison…");
+                state.manifestUnavailable = false;
+                state.manifest = null;
+                state.completionNotified = false;
+                if (state.pollHandle) window.clearTimeout(state.pollHandle);
+                pollTaskStatus();
+                return;
+            }
+            const body = await resp.json().catch(() => ({}));
+            showToast(body.detail || "Couldn't regenerate this report.");
+        } catch (_error) {
+            showToast("Couldn't regenerate this report.");
+        } finally {
+            state.regenerating = false;
+            if (btn) { btn.disabled = false; btn.textContent = "Regenerate report"; }
+        }
     }
 
     async function renderDocPanel(item, role, quotes) {
@@ -1633,6 +1663,11 @@
     }
     if (els.focusBtn) els.focusBtn.addEventListener("click", toggleFocusMode);
     if (els.settingsBtn) els.settingsBtn.addEventListener("click", (event) => { event.stopPropagation(); toggleSettingsPopover(); });
+    // "Regenerate report" lives in dynamically-rendered evidence placeholders, so bind via delegation.
+    document.addEventListener("click", (event) => {
+        const regen = event.target.closest("[data-regenerate]");
+        if (regen) regenerateReport(regen);
+    });
     document.addEventListener("click", (event) => {
         if (!event.target.closest("#report-settings-popover") && !event.target.closest("#report-settings-btn")) closeSettingsPopover();
     });

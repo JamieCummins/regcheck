@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -7,6 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.storage import get_s3_config, s3_delete_key
 from ..db import models
 from ..db.session import get_db
 from ..services import reports as reports_service
@@ -32,6 +35,34 @@ def _can_manage(request: Request, task_id: str, report: models.Report | None) ->
     if user is not None and report is not None and report.owner_id == user.id:
         return True
     return task_id in _session_owned(request)
+
+
+async def _cleanup_retained_uploads(redis_client, task_id: str) -> None:
+    """Remove the uploads kept for regeneration when a report is deleted. Redis blobs
+    use a deterministic key; S3 objects come from the stored job's s3_keys. Best-effort
+    — anything missed (e.g. an anon report that simply expired) is cleaned by the Redis
+    TTL or an S3 lifecycle rule on the upload prefix."""
+    s3_keys: dict = {}
+    try:
+        raw = await redis_client.hget(task_id, "regen_job")
+        if raw:
+            payload = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+            s3_keys = (json.loads(payload).get("s3_keys") or {})
+    except Exception:  # pragma: no cover - defensive
+        s3_keys = {}
+    for suffix in ("paper", "prereg", "csv"):
+        try:
+            await redis_client.delete(f"upload:{task_id}:{suffix}")
+        except Exception:  # pragma: no cover - best-effort
+            pass
+    cfg = get_s3_config()
+    if cfg is not None:
+        for key in s3_keys.values():
+            if key:
+                try:
+                    await asyncio.to_thread(s3_delete_key, cfg, key=key)
+                except Exception:  # pragma: no cover - best-effort
+                    pass
 
 
 @router.get("/reports", name="my_reports")
@@ -160,6 +191,7 @@ async def report_delete(
     report = await reports_service.get_report_row(db, task_id)
     if not _can_manage(request, task_id, report):
         raise HTTPException(status_code=403, detail="Not allowed to delete this report")
+    await _cleanup_retained_uploads(request.app.state.redis, task_id)
     await reports_service.delete_report_everywhere(request.app.state.redis, db, task_id, report)
     if report is not None:
         await db.commit()
@@ -167,4 +199,55 @@ async def report_delete(
     owned = request.session.get("owned_reports")
     if isinstance(owned, list) and task_id in owned:
         request.session["owned_reports"] = [t for t in owned if t != task_id]
+    return JSONResponse({"ok": True})
+
+
+@router.post("/reports/{task_id}/regenerate", name="report_regenerate")
+async def report_regenerate(
+    request: Request,
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-run a report from its ORIGINAL uploaded files (no re-upload needed) — e.g.
+    after an evidence-generation failure. Re-queues the stored job verbatim; the
+    uploads it references are retained for the report's window."""
+    report = await reports_service.get_report_row(db, task_id)
+    if not _can_manage(request, task_id, report):
+        raise HTTPException(status_code=403, detail="Not allowed to regenerate this report")
+
+    redis_client = request.app.state.redis
+    raw = await redis_client.hget(task_id, "regen_job")
+    if not raw:
+        raise HTTPException(
+            status_code=409,
+            detail="This report can no longer be regenerated. Please run a new comparison.",
+        )
+    payload = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+
+    # Best-effort: when uploads live in Redis (no S3), make sure they're still present
+    # before re-queuing, so the user gets a clear message rather than a failed re-run.
+    if get_s3_config() is None:
+        try:
+            job = json.loads(payload)
+            paper_key = (job.get("upload_keys") or {}).get("paper")
+            if paper_key and not await redis_client.exists(paper_key):
+                raise HTTPException(
+                    status_code=409,
+                    detail="The uploaded files for this report have expired. Please run a new comparison.",
+                )
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            pass
+
+    await redis_client.hset(
+        task_id,
+        mapping={
+            "state": "PENDING",
+            "status": "Re-running the comparison",
+            "result_json": json.dumps({"items": []}),
+            "processed_dimensions": 0,
+            "evidence_status": "pending",
+            "evidence_error": "",
+        },
+    )
+    await redis_client.rpush("comparison:queue", payload)
     return JSONResponse({"ok": True})

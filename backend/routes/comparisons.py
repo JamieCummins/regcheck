@@ -328,7 +328,11 @@ async def _queue_comparison(
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
     redis_client = request.app.state.redis
-    upload_ttl = max(86400, getattr(settings, "task_ttl_seconds", 86400))
+    # Keep the stored uploads alive for the report's lifetime (capped at the anon
+    # window) so a report can be REGENERATED from its original files without a
+    # re-upload. They still expire, so storage stays bounded.
+    _regen_window = int(getattr(settings, "anonymous_task_ttl_seconds", 7 * 24 * 60 * 60))
+    upload_ttl = max(86400, _regen_window)
 
     # Basic backpressure: refuse new jobs if queue + in-flight exceeds configured limit.
     try:
@@ -580,6 +584,13 @@ async def _queue_comparison(
                 "registration_csv_path": stored_csv_path,
             }
         )
+
+    # Persist the job so the report can be re-queued verbatim by "Regenerate"
+    # (the stored uploads it references are kept for the same window).
+    try:
+        await _safe_hset(redis_client, task_id, {"regen_job": json.dumps(job_payload)})
+    except Exception as exc:  # pragma: no cover - non-fatal: regenerate just won't be offered
+        logger.warning("Failed to persist regen job payload", exc_info=exc, extra={"task_id": task_id})
 
     try:
         await redis_client.rpush("comparison:queue", json.dumps(job_payload))
