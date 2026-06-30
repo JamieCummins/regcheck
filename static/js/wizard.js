@@ -395,9 +395,12 @@
             const display = fileDisplay(input);
             const dropzone = input.closest(".dropzone");
             if (!display) return;
-            if (input.files && input.files.length > 0) {
-                display.textContent = input.files[0].name;
-                display.title = input.files[0].name;
+            const files = input.files;
+            if (files && files.length > 0) {
+                const names = Array.from(files).map((f) => f.name);
+                // Multiple files are combined server-side into one document; show that.
+                display.textContent = files.length === 1 ? names[0] : `${files.length} files (combined): ${names.join(", ")}`;
+                display.title = names.join("\n");
                 if (dropzone) dropzone.classList.add("has-file");
             } else {
                 display.textContent = display.dataset.empty || "No file selected";
@@ -412,16 +415,19 @@
         }
 
         // Reject unsupported file types at upload time (rather than failing the run).
+        // Every selected file is checked, since several can be combined into one.
         function validateFile(input) {
             if (!input.files || !input.files.length) return true;
             const allowed = (input.getAttribute("accept") || "")
                 .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-            const ext = fileExt(input.files[0].name);
             const dropzone = input.closest(".dropzone");
-            if (allowed.length && allowed.indexOf(ext) === -1) {
+            const bad = allowed.length
+                ? Array.from(input.files).find((f) => allowed.indexOf(fileExt(f.name)) === -1)
+                : null;
+            if (bad) {
                 const display = fileDisplay(input);
                 if (display) {
-                    display.textContent = "Unsupported file (" + (ext || "no extension") + "). Use PDF, DOCX, TXT, or HTML.";
+                    display.textContent = "Unsupported file (" + (fileExt(bad.name) || "no extension") + "). Use PDF, DOCX, TXT, or HTML.";
                     display.removeAttribute("title");
                 }
                 if (dropzone) { dropzone.classList.add("has-error"); dropzone.classList.remove("has-file"); }
@@ -670,6 +676,9 @@
                 if (preflightAcknowledged) return;
                 const source = selectedSource();
                 if (source !== "osf" && source !== "upload") return;
+                // Skip the thin-parse probe when several registration files are
+                // combined — it only probes one file, so the signal would be misleading.
+                if (source === "upload" && preregFileInput && preregFileInput.files.length > 1) return;
                 event.preventDefault();
                 runRegistrationPreflight(source);
             });
