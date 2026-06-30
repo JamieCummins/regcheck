@@ -84,7 +84,7 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
 .report-focus-btn__label { font-weight: 600; }
 .report-focus-btn:not([aria-pressed="true"]) {
     border-color: color-mix(in srgb, var(--rc-accent) 42%, var(--rc-border));
-    color: var(--rc-accent);
+    color: var(--rc-text);   /* accent-blue text was too low-contrast on the dark button */
 }
 .report-focus-btn:not([aria-pressed="true"]):hover {
     border-color: var(--rc-accent);
@@ -301,6 +301,7 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
 
 .docs-quotes-hint {
     margin: 0 0 0.5rem;
+    padding: 0 0.7rem;
     font-size: 0.78rem;
     color: var(--rc-faint);
 }
@@ -1010,7 +1011,7 @@ body.is-col-resizing * {
 .report-settings-popover {
     position: fixed;
     z-index: 1080;
-    width: 290px;
+    width: 380px;
     max-width: calc(100vw - 16px);
     max-height: 70vh;
     overflow-y: auto;
@@ -1089,15 +1090,28 @@ body.is-col-resizing * {
     background: var(--rc-surface-3);
 }
 
+/* Dimension switcher (a styled <select>) — jump between dimensions in the Evidence view. */
 .docs-bar__dim {
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--rc-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     min-width: 0;
+    max-width: min(42vw, 26rem);
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    border-radius: 8px;
+    padding: 0.34rem 1.9rem 0.34rem 0.7rem;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23aeb6c8' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.65rem center;
+    transition: border-color 0.14s ease, background-color 0.14s ease;
 }
+.docs-bar__dim:hover { border-color: var(--rc-accent); }
+.docs-bar__dim:focus { outline: none; border-color: var(--rc-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent); }
+.docs-bar__dim option { background: var(--rc-surface-2); color: var(--rc-text); }
 
 .docs-bar .judgement-chip { margin-left: auto; }
 
@@ -1334,7 +1348,11 @@ body.is-col-resizing * {
     border-color: rgba(var(--doc-reg-rgb), 0.85);
 }
 
+/* Active highlight echoes the doc colour: paper = amber, preregistration = blue. */
 .pdf-highlight.is-active {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.95), 0 0 16px rgba(251, 191, 36, 0.55);
+}
+.pdf-highlight--reg.is-active {
     box-shadow: 0 0 0 1px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
 }
 
@@ -1397,8 +1415,14 @@ body.is-col-resizing * {
     background: #A9C5EC;
 }
 
+/* Clicked quote intensifies its doc colour: paper → stronger yellow, prereg → blue. */
 .source-text mark.is-active {
-    box-shadow: 0 0 0 1px var(--rc-accent);
+    background: #ffd24a;
+    box-shadow: 0 0 0 2px rgba(214, 145, 0, 0.95);
+}
+.source-text.is-reg mark.is-active {
+    background: #8FBAF0;
+    box-shadow: 0 0 0 2px var(--rc-accent);
 }
 
 /* Zero-width locatable anchor for a quote whose span sits entirely inside another

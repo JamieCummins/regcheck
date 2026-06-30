@@ -199,7 +199,7 @@
     {% if not current_user(request) %}
     <section class="home-account">
       <p class="home-account__text">
-        <strong>No account needed</strong> — anonymous reports run instantly and are kept for 7&nbsp;days. Create a free account to <strong>keep your reports permanently</strong>, name and organise them, and control who can view them.
+        <strong>No account needed</strong> to run a RegCheck report. Reports are deleted after 7&nbsp;days. Create an account to <strong>keep them indefinitely</strong>. Reports run with accounts can also be made private.
       </p>
       <a class="btn btn-secondary home-account__cta" href="{{ url_for('login') }}?next={{ url_for('compare') }}">Create a free account</a>
     </section>
