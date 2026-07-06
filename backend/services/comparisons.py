@@ -901,7 +901,13 @@ async def general_preregistration_comparison(
                     "total_dimensions": total_dimensions,
                     "processed_dimensions": 0,
                     "dimensions": json.dumps(dimension_names),
-                    "status": f"Isolating study {experiment_label} text with the model",
+                    # Quote the user-supplied label: it often already reads "study 1",
+                    # which used to render as "Isolating study study 1 text".
+                    "status": (
+                        f'Isolating "study {experiment_label}" text with the model'
+                        if experiment_label.isdigit()
+                        else f'Isolating "{experiment_label}" text with the model'
+                    ),
                     # Persistent flags so the multi-study outcome is visible on the
                     # report even after later status updates overwrite "status".
                     "multi_study_requested": "1",

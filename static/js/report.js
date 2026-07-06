@@ -254,11 +254,16 @@
             state.lastWorkflowStatus = detailText;
             els.statusPill.title = detailText;
         }
-        // Downloads (CSV / PDF) are only meaningful once the report is complete.
+        // Downloads (CSV / HTML) are only meaningful once the report is complete.
+        // Gate via aria-disabled rather than the disabled attribute: a natively
+        // disabled button swallows hover, so the explanatory tooltip never showed.
         if (els.download) {
             const done = stateValue === "SUCCESS";
-            els.download.disabled = !done;
-            els.download.title = done ? "Download" : "Available once the report finishes";
+            els.download.disabled = false;
+            els.download.setAttribute("aria-disabled", done ? "false" : "true");
+            els.download.title = done
+                ? "Download"
+                : "Report still in progress — download becomes available when it finishes";
         }
     }
 
@@ -860,7 +865,9 @@
         }
 
         const renderData = await getRenderData(source.id);
-        const text = (renderData && renderData.text) || "";
+        // Prefer the reflowed display text (PDF sources keep `text` raw for page/rect
+        // mapping); older bundles without display_text fall back to the raw text.
+        const text = (renderData && (renderData.display_text || renderData.text)) || "";
         const hasText = !!text.trim();
         const canPdf = source.kind === "pdf" && source.render_mode === "pdf" && !!source.page_url_template;
         const mode = canPdf ? (ui.mode || "text") : "text";   // text view is the default
@@ -1417,7 +1424,10 @@
                 window.addEventListener("keydown", onKeyDown, true);
             }, 0);
         };
-        trigger.addEventListener("click", () => (menu ? close() : open()));
+        trigger.addEventListener("click", () => {
+            if (trigger.getAttribute("aria-disabled") === "true") return;
+            menu ? close() : open();
+        });
     }
 
     async function copyReportLink() {
