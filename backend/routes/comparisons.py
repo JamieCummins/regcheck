@@ -282,7 +282,7 @@ def _normalize_client(client: str) -> str:
 
 def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> str | None:
     effort_normalized = (reasoning_effort or "").strip().lower()
-    # ChatGPT (gpt-5) is the only reasoning-effort model exposed to users.
+    # ChatGPT (gpt-5.5) is the only reasoning-effort model exposed to users.
     if client == "openai":
         if effort_normalized not in {"low", "medium", "high"}:
             effort_normalized = "medium"
