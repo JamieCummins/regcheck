@@ -1813,7 +1813,15 @@ _COMPARISON_TOOL: dict[str, Any] = {
             "registration_content_summary": {"type": "string"},
             "deviation_judgement": {
                 "type": "string",
-                "description": "'yes' if any deviation exists on this dimension, 'no' if fully consistent, or 'missing' if evidence is insufficient to judge.",
+                "description": (
+                    "'yes' if any deviation exists (judged against the registered specification as literally "
+                    "stated: an exact registered value must match exactly; a satisfied registered bound/range/"
+                    "condition is not a deviation). 'no' only if every materially relevant feature is "
+                    "affirmatively reported in BOTH documents and matches. 'missing' if any materially relevant "
+                    "feature cannot be verified across both documents (absent from both, or reported in only one "
+                    "without breaching a registered plan). Precedence: yes > missing > no; mutual silence is "
+                    "'missing', never 'no'."
+                ),
             },
             "deviation_information": {"type": "string"},
         },
@@ -2085,14 +2093,16 @@ def _aggregate_dimension_votes(items: list[ComparisonItem], voters: int) -> Comp
     """Consensus-vote aggregation over the PARSED judgements (``items``); ``voters`` is the
     total attempted, so ``voters - len(items)`` is the number of unparseable replies that
     were excluded as non-votes. The verdict is the plurality across the parsed judgements
-    (recall-biased tiebreak yes > no > missing). The report carries the full output of ONE
+    (tiebreak yes > missing > no: deviation dominates, and insufficient evidence beats
+    consistent — 'no' must be a positive verification, so it never wins a tie). The
+    report carries the full output of ONE
     canonical winning judgement — the most grounded (most distinct evidence IDs cited;
     ties → longest rationale, then earliest) — so quotes, summaries, and rationale stay
     internally consistent. A one-line consensus note (incl. any exclusions) is appended."""
     votes = [_normalize_verdict(it.deviation_judgement) for it in items]
     counts = Counter(votes)
-    order = {"yes": 0, "no": 1, "missing": 2}
-    winner = min(("yes", "no", "missing"), key=lambda k: (-counts.get(k, 0), order[k]))
+    order = {"yes": 0, "missing": 1, "no": 2}
+    winner = min(("yes", "missing", "no"), key=lambda k: (-counts.get(k, 0), order[k]))
     winners = [it for it, v in zip(items, votes) if v == winner]
 
     def _grounding(it: ComparisonItem) -> int:
@@ -2293,9 +2303,10 @@ def run_comparison(
     master_prompt = (
         f"{intro_line}\n\n"
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
-        " Second, make a judgement as to whether the content of the registration and paper relative to the specified dimension are consistent or not."
+        " Second, make a three-way judgement on the specified dimension: the registration and paper deviate, are verifiably consistent, or provide insufficient evidence to judge."
         " You are looking closely for any deviation or divergence between the paper and the registration, of any kind or size.\n\n"
-        "A deviation is anything the paper adds to, changes, or omits relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule. (Merely reporting additional descriptive detail or full results that a preregistration would not enumerate is not, by itself, a deviation.)\n\n"
+        "A deviation is anything the paper adds to, changes, or fails to deliver relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule, including a registered plan (e.g. a planned analysis or outcome) that the paper never reports. (Merely reporting additional descriptive detail or full results that a preregistration would not enumerate is not, by itself, a deviation.)\n\n"
+        "Judge every registered specification by its own literal form, and flag a deviation if and only if the paper fails to satisfy the specification AS STATED — never substitute a stricter or looser reading. If the registration states an exact value, any different value is a deviation: 'we will recruit 300 participants' with 310 recruited is a deviation, however immaterial. If the registration states a bound, range, condition, or approximation, a reported value that satisfies it as stated is NOT a deviation: 'we will recruit at least 300 participants' with 310 recruited is fully consistent, whereas 290 would be a deviation.\n\n"
         "Your task is to determine whether or not the preregistration and the paper deviate from one another on this dimension. It may be the case that (i) a deviation is very minor, or (ii) a deviation is disclosed. Your task is NOT to judge severity, nor to determine whether deviations are accurately disclosed; your task is simply to flag deviations, regardless of how big or small they are. The severity question is one of human judgement, and the disclosure aspect is a separate question. Therefore, even if a deviation is minor or explicitly disclosed — for example a supplementary or more conservative analysis, an added measure or covariate, or an analysis labelled \"exploratory\" or \"added in response to reviewer feedback\" — it must still be recorded as a deviation. If a deviation is disclosed, note this in the deviation rationale ('deviation_information'), but it must NOT affect the deviation judgement itself ('deviation_judgement').\n\n"
         f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "
         f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
@@ -2310,8 +2321,12 @@ def run_comparison(
         "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
         "- For 'paper_content_summary' and 'registration_content_summary', write a SHORT prose summary of that document's content on this dimension: aim for about 50 words (roughly one to three sentences) and do not exceed it. Use plain prose, not bullet points or headings, and cite the evidence IDs you relied upon.\n"
         "- For 'deviation_information', also cite the evidence IDs you relied upon.\n"
-        "- 'deviation_judgement' should be 'yes' if any deviation exists on this dimension; 'no' if the registration and paper are fully consistent on this dimension; or 'missing' if you lack enough evidence to judge.\n"
-        "If evidence is insufficient to judge, set deviation_judgement to 'missing' and explain briefly.\n"
+        "- 'deviation_judgement' must be exactly 'yes', 'no', or 'missing'. Apply these rules in strict order of precedence:\n"
+        "  1. 'yes' — a deviation (as defined above) exists on this dimension. This verdict dominates: it applies even if other aspects of the dimension are unverifiable.\n"
+        "  2. 'missing' — no deviation is evident, but at least one materially relevant feature of this dimension cannot be verified across BOTH documents, either because neither document addresses it, or because only one document reports it and the other's silence breaks no registered plan (e.g. an ethics approval number recorded in the registration but never echoed in the paper: the paper's silence is not a deviation, but consistency cannot be verified either). Mutual silence is NEVER consistency: if neither document provides usable material on this dimension, the verdict is 'missing', not 'no'.\n"
+        "  3. 'no' — every materially relevant feature of this dimension is affirmatively present in BOTH documents and matches. 'no' is a positive verification, not a default; never return 'no' merely because you found no difference.\n"
+        "Materiality guard for rule 2 only (it never weakens rule 1): documents are not expected to report every minor detail. An unreported feature triggers 'missing' only if it is materially relevant to this dimension as defined; a real difference is 'yes' no matter how minor.\n"
+        "When the verdict is 'missing', name in 'deviation_information' the feature(s) that could not be verified and which document is silent.\n"
     )
     if history_context:
         master_prompt = history_context + "\n\n" + master_prompt

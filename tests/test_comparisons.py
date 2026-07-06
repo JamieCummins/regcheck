@@ -239,6 +239,57 @@ def test_run_comparison_degrades_on_unparseable_response(monkeypatch):
     assert item.deviation_information  # explains the parse failure
 
 
+def test_master_prompt_carries_verdict_decision_rules(monkeypatch):
+    """The judgement prompt must encode the verdict doctrine: specification-as-stated
+    (satisfied bounds are not deviations; exact values are exact), the three-verdict
+    precedence, mutual-silence-is-never-consistency, and the materiality guard."""
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    def _corpus(prefix):
+        return EmbeddingCorpus(
+            segments=["a segment of text"],
+            embeddings=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            chunk_ids=[f"{prefix}_0001"],
+            norms=np.array([1.0], dtype=np.float32),
+            metadata=[{}],
+        )
+
+    prereg, paper = "p", "x"
+    corpus_cache = {
+        f"prereg:{hashlib.sha256(prereg.encode()).hexdigest()}": _corpus("PREREG"),
+        f"paper:{hashlib.sha256(paper.encode()).hexdigest()}": _corpus("PAPER"),
+    }
+    captured = {}
+
+    def _capture(messages, **_kw):
+        captured["prompt"] = messages[-1]["content"]
+        return '{"dimension": "Sample size", "deviation_judgement": "no"}'
+
+    monkeypatch.setattr(
+        comparisons, "get_embedding", lambda text, model=None: np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    )
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _capture)
+
+    comparisons.run_comparison(prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache)
+    prompt = captured["prompt"]
+
+    # Specification-as-stated: paired example in both directions.
+    assert "fails to satisfy the specification AS STATED" in prompt
+    assert "'we will recruit at least 300 participants' with 310 recruited is fully consistent" in prompt
+    assert "'we will recruit 300 participants' with 310 recruited is a deviation" in prompt
+    # Three-verdict precedence with affirmative verification for 'no'.
+    assert "Apply these rules in strict order of precedence" in prompt
+    assert "Mutual silence is NEVER consistency" in prompt
+    assert "'no' is a positive verification, not a default" in prompt
+    # Corroboration gap routes to 'missing', and materiality only guards rule 2.
+    assert "the other's silence breaks no registered plan" in prompt
+    assert "Materiality guard for rule 2 only" in prompt
+
+
 def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
     import numpy as np
 
@@ -927,14 +978,18 @@ def test_judge_dimension_once_returns_none_on_unparseable(monkeypatch):
     assert out2 is not None and _normalize_verdict(out2.deviation_judgement) == "no"
 
 
-def test_aggregate_votes_tiebreak_is_recall_biased():
-    # 4 yes / 4 no -> deviation (yes > no); 0 yes / 4 no / 4 missing -> no (no > missing).
+def test_aggregate_votes_tiebreak_order_yes_missing_no():
+    # Precedence on ties: deviation dominates (yes > missing > no), and insufficient
+    # evidence beats consistent — 'no' is a positive verification, so it never wins a tie.
     assert _normalize_verdict(_aggregate_dimension_votes(
         [_vote_item("yes") for _ in range(4)] + [_vote_item("no") for _ in range(4)], 8
     ).deviation_judgement) == "yes"
     assert _normalize_verdict(_aggregate_dimension_votes(
+        [_vote_item("yes") for _ in range(4)] + [_vote_item("missing") for _ in range(4)], 8
+    ).deviation_judgement) == "yes"
+    assert _normalize_verdict(_aggregate_dimension_votes(
         [_vote_item("no") for _ in range(4)] + [_vote_item("missing") for _ in range(4)], 8
-    ).deviation_judgement) == "no"
+    ).deviation_judgement) == "missing"
 
 
 def test_aggregate_votes_canonical_is_most_grounded_winner():
