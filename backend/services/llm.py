@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - dependency optional at runtime
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OPENAI_MODEL = "gpt-5"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-reasoner"
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 # Open-weight Qwen, served via Groq's OpenAI-compatible endpoint (uses GROQ_API_KEY).
