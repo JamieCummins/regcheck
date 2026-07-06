@@ -129,6 +129,13 @@ def _build_rendered_text_pdf_evidence_source(
     payload["source"]["raw_filename"] = f"{source_id}-text-render.pdf"
     payload["raw_bytes"] = pdf_bytes
     payload["raw_content_type"] = "application/pdf"
+    # The synthetic-PDF roundtrip mangles the reading text: every page gets the
+    # label injected as a header and real paragraph breaks become rendered line
+    # wraps (\n\n only survives between pages). The Doc view needs that roundtrip
+    # text for rect mapping, but the TEXT pane should show the original document
+    # text with its real paragraphs; quote marks fall back to the locator's fuzzy
+    # tiers where the roundtrip offsets don't validate against it.
+    payload["render_data"]["display_text"] = _display_text(text)
     return payload
 
 
@@ -136,6 +143,9 @@ def _plain_text_render_data(text: str, *, kind: str = "text", metadata: dict[str
     return {
         "kind": kind,
         "text": text or "",
+        # For pure-text sources the display text IS the text; the field exists so
+        # the viewer can uniformly prefer display_text over (possibly raw) text.
+        "display_text": text or "",
         "metadata": metadata or {},
     }
 
@@ -508,11 +518,13 @@ def build_pdf_evidence_source(
         render_data = {
             "kind": "pdf",
             "render_mode": render_mode,
-            # In PDF mode the viewer shows page images and maps search/rects via the
-            # RAW source_text offsets, so keep it raw there. Only the text-mode
-            # FALLBACK actually displays this string, so reflow it then (consistent
-            # with the reflowed chunk text the locator matches against).
+            # In PDF mode the viewer maps search/rects via the RAW source_text
+            # offsets, so `text` stays raw there; the text-mode PANE reads
+            # `display_text` (reflowed — PDF hard line-wraps collapsed, paragraph
+            # breaks kept), which matches the reflowed chunk text the locator
+            # matches against. Text-mode fallback keeps both fields reflowed.
             "text": _display_text(source_text) if render_mode == "text" else source_text,
+            "display_text": _display_text(source_text),
             "pages": source["pages"],
             "metadata": metadata or {},
         }

@@ -712,9 +712,14 @@ body.text-bg-dark {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* Near-opaque accent so selection stays readable over ANY background —
+   including the yellow/blue evidence <mark> highlights, where the old
+   translucent wash left near-white text on a light mark. (Same accent in
+   both themes; slight alpha because some browsers ignore fully opaque
+   selection colours.) */
 ::selection {
-    background: var(--rc-accent-soft);
-    color: var(--rc-text);
+    background: rgba(58, 91, 192, 0.95);
+    color: #ffffff;
 }
 
 h1,

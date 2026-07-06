@@ -70,7 +70,10 @@ body.report-focus .report-shell {
 }
 body.report-focus .report-header .navbar { display: none; }
 body.report-focus .report-shell footer { display: none; }
-body.report-focus .report-topbar { margin-top: 0.15rem; padding-bottom: 0.15rem; }
+/* With the lead hidden the actions are the only flex child, so space-between
+   would drop them to the LEFT edge; pin them right so the exit button stays
+   where the enter button was. */
+body.report-focus .report-topbar { margin-top: 0.15rem; padding-bottom: 0.15rem; justify-content: flex-end; }
 /* Minimal full-screen chrome: keep only the exit-fullscreen control in the top bar
    (the dimension dropdown lives in the docs bar) so the panes get the whole screen. */
 body.report-focus .report-topbar__lead { display: none; }
@@ -302,6 +305,14 @@ body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
     opacity: 0.45;
     cursor: not-allowed;
     pointer-events: none;
+}
+
+/* Soft-disabled: looks inactive but keeps hover events so the title tooltip
+   (e.g. "Report still in progress…" on Download) can show; the click is
+   guarded in JS. */
+.report-action-btn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .docs-quotes-hint {

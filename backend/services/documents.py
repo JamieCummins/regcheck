@@ -27,7 +27,10 @@ UPLOADS_DIR = Path("uploads")
 def extract_text_from_docx(file_path: str) -> str:
     """Extract plain text from a DOCX document."""
     document = docx.Document(file_path)
-    return "\n".join(paragraph.text for paragraph in document.paragraphs)
+    # Blank line between paragraphs: reflow_text collapses single newlines (PDF-style
+    # hard wraps) into spaces, so paragraph boundaries must be \n\n to survive into
+    # the displayed text — and boundary-aware chunking prefers them too.
+    return "\n\n".join(paragraph.text for paragraph in document.paragraphs)
 
 
 def extract_text_from_pdf(file_path: str) -> str:
