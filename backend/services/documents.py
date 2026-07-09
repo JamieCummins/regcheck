@@ -168,11 +168,13 @@ def remove_references(document_text: str) -> str:
 
 
 def clean_document_text(document_text: str) -> str:
-    """Trim boilerplate sections from parsed documents."""
+    """Trim boilerplate sections from parsed documents.
+
+    Deliberately does NOT cut content before an "Introduction" heading: this is
+    applied to registrations (papers keep their parser's full text), and the
+    front matter of a registration carries evidence-relevant metadata such as
+    registration IDs, timestamps, and ethics numbers."""
     document_text = _normalize_whitespace(document_text)
-    match = INTRODUCTION_PATTERN.search(document_text)
-    if match:
-        document_text = document_text[match.start() :]
     return remove_references(document_text)
 
 

@@ -158,14 +158,23 @@ def test_build_file_evidence_source_renders_docx_text_as_pdf(tmp_path):
     )
 
     chunk = payload["chunks"]["PREREG_0001"]
-    locations = [location for location in chunk["locations"] if location["kind"] == "pdf"]
 
+    # Chunks are cut from the CANONICAL text (offsets into it), not from the
+    # synthetic-PDF roundtrip; the synthetic PDF survives as the Doc view only.
     assert payload["source"]["kind"] == "pdf"
     assert payload["source"]["render_mode"] == "pdf"
+    assert payload["source"]["pages"]
     assert payload["raw_content_type"] == "application/pdf"
     assert payload["raw_bytes"].startswith(b"%PDF")
-    assert locations
-    assert locations[0]["rects"]
+    text_locations = [loc for loc in chunk["locations"] if loc["kind"] == "text"]
+    assert text_locations and text_locations[0]["end"] > text_locations[0]["start"]
+    assert "sample size is 120" in chunk["text"]
+    rd = payload["render_data"]
+    # Doc view keeps the roundtrip text (page-offset mapping); the text pane
+    # reads the canonical display text, free of injected page headers.
+    assert rd["render_mode"] == "pdf" and rd["pages"]
+    assert "sample size is 120" in rd["display_text"]
+    assert not rd["display_text"].startswith("Registration Text Render")
 
 
 def test_text_pdf_render_paginates_without_dropping_content():

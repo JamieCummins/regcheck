@@ -27,6 +27,21 @@ def _chunk_id(prefix: str, index: int) -> str:
     return f"{prefix.upper()}_{index:04d}"
 
 
+def _references_start_offset(text: str) -> int | None:
+    """Char offset where the terminal references/bibliography section begins, or
+    None. Chunks past this offset get flagged ``in_references`` so retrieval and
+    the targeted verification search can skip citation lists (a cited title is
+    not evidence that an element was reported). Matches in the first 30% of the
+    document are ignored (prose mentions, tables of contents)."""
+    from .documents import REFERENCE_PATTERN
+
+    haystack = text or ""
+    match = REFERENCE_PATTERN.search(haystack)
+    if match and match.start() > len(haystack) * 0.3:
+        return match.start()
+    return None
+
+
 def _content_type_for_path(path: str) -> str:
     guessed, _encoding = mimetypes.guess_type(path)
     return guessed or "application/octet-stream"
@@ -110,32 +125,59 @@ def _build_rendered_text_pdf_evidence_source(
     pdf_bytes = _build_text_pdf_render(text, title=label)
     if pdf_bytes is None:
         return None
+    # Chunk the CANONICAL text — not the synthetic-PDF roundtrip — so the judge's
+    # retrieval corpus, the manifest chunks, and the text pane all share ONE
+    # segmentation with offsets into the same string (the roundtrip injects a page
+    # header per page and rewraps every line, which used to leak into the corpus
+    # on evidence-enabled runs but not on bare CLI runs). The synthetic PDF is
+    # kept only as the Doc view: its page geometry + page text ride along in
+    # render_data, and the viewer locates quotes there via its render-text search
+    # fallback instead of pre-computed rects.
+    payload = build_text_evidence_source(
+        source_id=source_id,
+        label=f"{label} Text Render",
+        text=text,
+        chunk_prefix=chunk_prefix,
+        kind="pdf",
+        metadata={"rendered_from_text": True, **(metadata or {})},
+        max_chunk_tokens=max_chunk_tokens,
+        embedding_model=embedding_model,
+    )
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as handle:
         handle.write(pdf_bytes)
         handle.flush()
-        payload = build_pdf_evidence_source(
-            source_id=source_id,
-            label=f"{label} Text Render",
-            pdf_path=handle.name,
-            chunk_prefix=chunk_prefix,
-            fallback_text=text,
-            metadata={
-                "rendered_from_text": True,
-                **(metadata or {}),
-            },
-            max_chunk_tokens=max_chunk_tokens,
-            embedding_model=embedding_model,
-        )
+        doc = fitz.open(handle.name)
+        try:
+            roundtrip_text, pages = _pdf_page_text_and_offsets(doc)
+            page_count = len(doc)
+        finally:
+            doc.close()
+    page_entries = [
+        {
+            "page_number": page["page_number"],
+            "width": page["width"],
+            "height": page["height"],
+            "start": page["start"],
+            "end": page["end"],
+        }
+        for page in pages
+    ]
+    payload["source"]["render_mode"] = "pdf"
+    payload["source"]["page_count"] = page_count
+    payload["source"]["pages"] = page_entries
     payload["source"]["raw_filename"] = f"{source_id}-text-render.pdf"
     payload["raw_bytes"] = pdf_bytes
     payload["raw_content_type"] = "application/pdf"
-    # The synthetic-PDF roundtrip mangles the reading text: every page gets the
-    # label injected as a header and real paragraph breaks become rendered line
-    # wraps (\n\n only survives between pages). The Doc view needs that roundtrip
-    # text for rect mapping, but the TEXT pane should show the original document
-    # text with its real paragraphs; quote marks fall back to the locator's fuzzy
-    # tiers where the roundtrip offsets don't validate against it.
-    payload["render_data"]["display_text"] = _display_text(text)
+    payload["render_data"] = {
+        "kind": "pdf",
+        "render_mode": "pdf",
+        # Doc-view page mapping needs the roundtrip text (offsets align with the
+        # page start/end entries); the TEXT pane reads display_text (canonical).
+        "text": roundtrip_text,
+        "display_text": _display_text(text),
+        "pages": page_entries,
+        "metadata": metadata or {},
+    }
     return payload
 
 
@@ -174,6 +216,7 @@ def build_text_evidence_source(
         encoding_name=embedding_model,
     )
     segments = [disp(chunk.text) for chunk in chunks]
+    refs_offset = _references_start_offset(text or "")
     chunk_metadata: list[dict[str, Any]] = []
     manifest_chunks: dict[str, dict[str, Any]] = {}
     for index, chunk in enumerate(chunks, start=1):
@@ -192,6 +235,8 @@ def build_text_evidence_source(
             "locations": [location],
             "relevance_scores_by_dimension": {},
         }
+        if refs_offset is not None and chunk.start >= refs_offset:
+            item["in_references"] = True
         manifest_chunks[cid] = item
         chunk_metadata.append(item)
 
@@ -476,6 +521,7 @@ def build_pdf_evidence_source(
             encoding_name=embedding_model,
         )
         segments = [_display_text(chunk.text) for chunk in chunks]
+        refs_offset = _references_start_offset(source_text)
         chunk_metadata: list[dict[str, Any]] = []
         manifest_chunks: dict[str, dict[str, Any]] = {}
         for index, chunk in enumerate(chunks, start=1):
@@ -495,6 +541,8 @@ def build_pdf_evidence_source(
                 "locations": locations,
                 "relevance_scores_by_dimension": {},
             }
+            if refs_offset is not None and chunk.start >= refs_offset:
+                item["in_references"] = True
             manifest_chunks[cid] = item
             chunk_metadata.append(item)
 
