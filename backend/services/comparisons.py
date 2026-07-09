@@ -651,7 +651,7 @@ def _isolation_model_tag(client_choice: str, reasoning_effort: str | None) -> st
     key changes when the model or reasoning effort changes (no stale extractions)."""
     if client_choice in _OPENAI_CLIENTS:
         effort = _normalize_reasoning_effort_value(
-            reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
+            reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "medium")
         )
         return f"{_openai_family_model(client_choice, experiment=True)}:{effort}"
     if client_choice == "deepseek":
@@ -790,7 +790,7 @@ async def extract_experiment_specific_paper_text(
             openai_client = get_openai_client()
             model = _openai_family_model(client_choice, experiment=True)
             normalized_effort = _normalize_reasoning_effort_value(
-                reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "high")
+                reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "medium")
             )
             return _openai_chat_text(
                 openai_client,
@@ -2430,7 +2430,25 @@ def run_comparison(
             "Critically compare the following clinical trial registration with content from its corresponding published paper based on the below-specified specified study dimension."
         )
 
-    master_prompt = (
+    # Quotes-as-IDs (DEFAULT ON): the judge's emitted quote text is DISCARDED after
+    # parsing (_judge_dimension_once always overwrites both quote fields with the
+    # retrieved chunks), so having the model copy quotes verbatim paid output-token
+    # prices for text we throw away (~38k tokens per 9-dimension report). The model
+    # emits only the grounding evidence IDs; set QUOTES_AS_IDS=0 to roll back to
+    # verbatim emission. Constant per-run, so the cached prefix is unaffected.
+    if (os.environ.get("QUOTES_AS_IDS") or "1").strip().lower() in {"1", "true", "yes", "on"}:
+            "- For 'paper_content_quotes' and 'registration_content_quotes', output ONLY the evidence IDs of the excerpts that ground your judgement (e.g., [PAPER_0001] [PAPER_0007]), space-separated, most relevant first. Do NOT copy quote text.\n"
+        )
+    else:
+        quotes_bullet = (
+            "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
+        )
+
+    # The prompt is assembled STATIC-FIRST for provider prompt caching: everything
+    # in static_doctrine is byte-identical across all dimensions of a run (and
+    # across voters/re-judges), so it forms a cacheable shared prefix. Variable
+    # content — history, the dimension, the excerpts — comes after it.
+    static_doctrine = (
         f"{intro_line}\n\n"
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
         " Second, make a three-way judgement on the specified dimension: the registration and paper deviate, are verifiably consistent, or provide insufficient evidence to judge."
@@ -2441,17 +2459,10 @@ def run_comparison(
         "It is important to compare the substance of the registration and paper, rather than just the surface wording. A renaming, abbreviation, synonym, or rewording of the SAME referent is not a deviation: judge whether the underlying identity, values, quantities, and entities match, not whether the labels match. For example, 'the AMP' vs 'the Affect Misattribution Procedure' is the same measure, and a procedure reported under a shortened name is consistent. This never excuses a substantive difference dressed as rewording: if the referent itself differs - for example, is a different variant, version, instrument, or value - that is a deviation ('Method A, variant B' registered but 'Method A, variant C' reported is a deviation, not a rewording).\n\n"
         "If a dimension involves comparing categorical properties (e.g. a study registered as confirmatory, randomised, blinded, within-subjects), do so based on the design features the documents describe, not by whether the paper repeats the literal label. If the paper's reported features clearly instantiate the registered category — for example, a prespecified primary outcome, an a-priori power calculation, and hypothesis-testing statistics instantiate a registered 'confirmatory' study, even if the paper does not use this term explicitly — that element is verified consistent. Return 'missing' for such an element only when the features needed to infer the category are absent, and 'yes' when they contradict it.\n\n"
         "Your task is to determine whether or not the preregistration and the paper deviate from one another on this dimension. It may be the case that (i) a deviation is very minor, or (ii) a deviation is disclosed. Your task is NOT to judge severity, nor to determine whether deviations are accurately disclosed; your task is simply to flag deviations, regardless of how big or small they are. The severity question is one of human judgement, and the disclosure aspect is a separate question. Therefore, even if a deviation is minor or explicitly disclosed — for example a supplementary or more conservative analysis, an added measure or covariate, or an analysis labelled \"exploratory\" or \"added in response to reviewer feedback\" — it must still be recorded as a deviation. If a deviation is disclosed, note this in the deviation rationale ('deviation_information'), but it must NOT affect the deviation judgement itself ('deviation_judgement').\n\n"
-        f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "
-        f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
-        "Use ONLY the provided evidence excerpts. Each excerpt is labeled with an ID in square brackets.\n\n"
-        "Registration excerpts:\n"
-        f"{' '.join(prereg_prompt)}\n\n"
-        "Paper excerpts:\n"
-        f"{' '.join(paper_prompt)}\n"
         "Your output must be a single JSON object (no arrays unless specified, no surrounding text, no code fences) with the following fields: "
         "'dimension', 'paper_content_quotes', 'paper_content_summary', 'registration_content_quotes', 'registration_content_summary', "
         "'deviation_judgement', 'deviation_information', 'unlocated_in_paper', and 'unlocated_in_registration'. Each field MUST be a string.\n"
-        "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
+        f"{quotes_bullet}"
         "- For 'paper_content_summary' and 'registration_content_summary', write a SHORT prose summary of that document's content on this dimension: aim for about 50 words (roughly one to three sentences) and do not exceed it. Use plain prose, not bullet points or headings, and cite the evidence IDs you relied upon.\n"
         "- For 'deviation_information', also cite the evidence IDs you relied upon.\n"
         "- 'unlocated_in_paper' and 'unlocated_in_registration': elements you looked for but could not find in that document's excerpts, as a short semicolon-separated list, naming each element together with any synonyms or abbreviations it might appear under (in parentheses). Use an empty string when there are none.\n"
@@ -2463,8 +2474,24 @@ def run_comparison(
         "Omission and addition claims: you see only retrieved excerpts, never the full documents. If a registered element does not appear in the provided paper excerpts (or paper content appears to be unregistered), phrase this in 'deviation_information' as 'not found in the provided excerpts' — never assert it is absent from the document — and list the element in 'unlocated_in_paper' (or 'unlocated_in_registration'), naming it together with any synonyms or abbreviations it might appear under. Then still return your best verdict on the evidence you have: a registered element that is conspicuously absent where the paper covers this ground is a deviation; if you genuinely cannot judge, return 'missing'. RegCheck will run a targeted search of the full document for every element you list and re-invoke you with anything it finds, so do not soften a verdict because you suspect a retrieval gap — flag the element instead.\n"
         "When the verdict is 'missing', name in 'deviation_information' the feature(s) that could not be verified and which document is silent.\n"
     )
+    variable_part = (
+        f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "
+        f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
+        "Use ONLY the provided evidence excerpts. Each excerpt is labeled with an ID in square brackets.\n\n"
+        "Registration excerpts:\n"
+        f"{' '.join(prereg_prompt)}\n\n"
+        "Paper excerpts:\n"
+        f"{' '.join(paper_prompt)}\n"
+        "\n"
+        "Now produce the JSON object described above for this dimension. Reminder — apply the verdict rules in strict precedence: any deviation is 'yes'; an unverifiable materially relevant REGISTERED element (or mutual silence) is 'missing'; 'no' requires every registered element affirmatively verified in substance; list anything you could not find in 'unlocated_in_paper'/'unlocated_in_registration' instead of softening the verdict.\n"
+    )
+    # History goes AFTER the static doctrine (not before it): prepending varied
+    # per-dimension content at position 0 destroyed the cacheable shared prefix
+    # whenever append_previous_output was enabled.
     if history_context:
-        master_prompt = history_context + "\n\n" + master_prompt
+        master_prompt = static_doctrine + history_context + "\n\n" + variable_part
+    else:
+        master_prompt = static_doctrine + variable_part
 
     messages = [
         {

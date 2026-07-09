@@ -1357,3 +1357,34 @@ def test_reference_chunk_ids_by_flag_and_heading():
     # Early matches are ignored (prose/TOC guard).
     early = _corpus(["\nReferences\n", "body", "body", "body", "body", "body", "body", "body", "body", "body"])
     assert _reference_chunk_ids(early) == set()
+
+
+def test_history_context_preserves_static_prompt_prefix(monkeypatch):
+    """append_previous_output must not break prompt caching: the static doctrine
+    prefix stays byte-identical whether or not prior-dimension history is passed,
+    with history inserted AFTER it (before the dimension/excerpts)."""
+    import numpy as np
+
+    captured = []
+
+    def _dispatch(messages, **_kw):
+        captured.append(messages[-1]["content"])
+        return _verif_reply()
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    prior = ComparisonItem(dimension="Hypotheses", deviation_judgement="no")
+    comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1,
+        previous_dimension_responses=[prior],
+    )
+    without_history, with_history = captured[0], captured[1]
+    marker = "The dimension along which you should compare"
+    prefix = without_history[: without_history.index(marker)]
+    # Identical static prefix in both prompts...
+    assert with_history.startswith(prefix)
+    # ...with the history inserted between the prefix and the dimension line.
+    hist_idx = with_history.index("Hypotheses")
+    assert len(prefix) <= hist_idx < with_history.index(marker)
