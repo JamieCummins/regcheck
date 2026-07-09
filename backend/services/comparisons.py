@@ -136,6 +136,10 @@ class ComparisonItem(BaseModel):
     registration_content_summary: str = ""
     deviation_judgement: str = ""
     deviation_information: str = ""
+    # Elements the judge looked for but could not find in that document's excerpts;
+    # drives the targeted full-document verification pass (empty = nothing flagged).
+    unlocated_in_paper: str = ""
+    unlocated_in_registration: str = ""
 
     @field_validator(
         "paper_content_quotes",
@@ -181,6 +185,8 @@ class ComparisonItem(BaseModel):
         "registration_content_summary",
         "deviation_judgement",
         "deviation_information",
+        "unlocated_in_paper",
+        "unlocated_in_registration",
         mode="before",
     )
     @classmethod
@@ -312,6 +318,99 @@ def _expand_with_neighbors(
         else:
             out.append(f"[{cid}] {text}")
     return out
+
+
+_REFERENCE_HEADING_RE = re.compile(r"^\s*(references|bibliography|works cited)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _reference_chunk_ids(corpus: "EmbeddingCorpus") -> set[str]:
+    """IDs of chunks in the terminal references/bibliography section. Reference lists
+    are retrieval noise: citation titles match dimension keywords, and a targeted
+    absence-check could 'find' a registered element inside a citation. Detected via
+    build-time metadata flags (evidence payloads tag by char span) or, failing that,
+    a standalone heading line inside a segment (raw-text corpora keep newlines);
+    heading matches in the first 30% of the document are ignored (prose, TOCs)."""
+    flagged = {
+        cid
+        for cid, meta in zip(corpus.chunk_ids, corpus.metadata or [])
+        if isinstance(meta, dict) and meta.get("in_references")
+    }
+    if flagged:
+        return flagged
+    segments = corpus.segments or []
+    for i, seg in enumerate(segments):
+        if _REFERENCE_HEADING_RE.search(seg or "") and i >= max(1, int(len(segments) * 0.3)):
+            return set(corpus.chunk_ids[i:])
+    return set()
+
+
+_UNLOCATED_SPLIT_RE = re.compile(r"[;\n]+")
+_SYNONYM_GROUP_RE = re.compile(r"\(([^)]*)\)")
+
+
+def _split_unlocated(value: str | None, cap: int = 3) -> list[str]:
+    """Parse a judge's 'unlocated_in_*' field into at most ``cap`` element strings."""
+    items = [s.strip(" .") for s in _UNLOCATED_SPLIT_RE.split(value or "") if s.strip(" .")]
+    return [s for s in items if s.lower() not in {"none", "n/a", "na", "-", "empty"}][:cap]
+
+
+def _element_search_terms(element: str) -> list[str]:
+    """The element's name plus any parenthesised synonyms, for the literal scan."""
+    name = _SYNONYM_GROUP_RE.sub("", element).strip(" ;,.")
+    terms = [name] if name else []
+    for group in _SYNONYM_GROUP_RE.findall(element):
+        terms.extend(t.strip() for t in group.split(",") if t.strip())
+    return [t for t in terms if len(t) >= 3]
+
+
+def _verification_sim_threshold() -> float:
+    try:
+        return float(os.environ.get("VERIFICATION_SIM_THRESHOLD", "0.25"))
+    except ValueError:
+        return 0.25
+
+
+def _targeted_element_search(
+    element: str,
+    corpus: "EmbeddingCorpus",
+    *,
+    exclude_ids: set[str],
+    embedding_model: str,
+    max_hits: int = 4,
+) -> list[tuple[str, str, float]]:
+    """Search the FULL corpus for one judge-flagged element: cosine hits above a
+    similarity floor plus a literal scan for the element's name/synonyms. Returns
+    up to ``max_hits`` rows not already shown to the judge; reference-section
+    chunks are excluded so citation titles can't corroborate presence."""
+    excluded = exclude_ids | _reference_chunk_ids(corpus)
+    rows: dict[str, tuple[str, str, float]] = {}
+    try:
+        qvec = get_embedding(element, model=embedding_model)
+        for cid, text, sim in retrieve_relevant_chunks(
+            qvec, corpus, top_k=max_hits * 3, threshold=_verification_sim_threshold()
+        ):
+            if cid not in excluded:
+                rows.setdefault(cid, (cid, text, sim))
+    except Exception as exc:  # pragma: no cover - search degrades to the literal scan
+        logger.warning("Targeted semantic search failed for %r", element, exc_info=exc)
+    terms = [t.lower() for t in _element_search_terms(element)]
+    if terms:
+        for cid, seg in zip(corpus.chunk_ids, corpus.segments):
+            if cid in excluded or cid in rows:
+                continue
+            hay = (seg or "").lower()
+            if any(t in hay for t in terms):
+                rows[cid] = (cid, seg, 0.0)
+    ranked = sorted(rows.values(), key=lambda r: -r[2])
+    return ranked[:max_hits]
+
+
+def _ids_in_prompt_blocks(blocks: list[str]) -> set[str]:
+    """Chunk IDs already shown to the judge, parsed from '[CID...]' labels."""
+    found: set[str] = set()
+    for block in blocks:
+        found.update(re.findall(r"\[((?:PREREG|PAPER)_\d+)", block or ""))
+    return found
 
 
 def _corpus_cache_key(role: str, text: str) -> str:
@@ -1723,6 +1822,8 @@ def _normalize_comparison_payload(payload: Any) -> dict[str, Any]:
         "registration_content_summary",
         "deviation_judgement",
         "deviation_information",
+        "unlocated_in_paper",
+        "unlocated_in_registration",
     ]
 
     normalized: dict[str, Any] = {}
@@ -1822,14 +1923,26 @@ _COMPARISON_TOOL: dict[str, Any] = {
                 "description": (
                     "'yes' if any deviation exists (judged against the registered specification as literally "
                     "stated: an exact registered value must match exactly; a satisfied registered bound/range/"
-                    "condition is not a deviation). 'no' only if every materially relevant feature is "
-                    "affirmatively reported in BOTH documents and matches. 'missing' if any materially relevant "
-                    "feature cannot be verified across both documents (absent from both, or reported in only one "
-                    "without breaching a registered plan). Precedence: yes > missing > no; mutual silence is "
-                    "'missing', never 'no'."
+                    "condition is not a deviation; the same referent under a different label/abbreviation is not "
+                    "a deviation; unregistered additions of new design/analysis units ARE deviations unless a "
+                    "registered clause licenses them within its stated scope). 'no' only if every element the "
+                    "REGISTRATION specifies is affirmatively reported in the paper and matches in substance — "
+                    "unverifiable unregistered or peripheral details do not downgrade 'no'. 'missing' if a "
+                    "materially relevant registered element cannot be verified, or neither document addresses "
+                    "the dimension. For elements you cannot find in the excerpts, list them in "
+                    "unlocated_in_paper/unlocated_in_registration and still give your best verdict. "
+                    "Precedence: yes > missing > no; mutual silence is 'missing', never 'no'."
                 ),
             },
             "deviation_information": {"type": "string"},
+            "unlocated_in_paper": {
+                "type": "string",
+                "description": "Elements looked for but not found in the paper excerpts (semicolon-separated, with synonyms in parentheses); empty string if none.",
+            },
+            "unlocated_in_registration": {
+                "type": "string",
+                "description": "Elements looked for but not found in the registration excerpts (semicolon-separated, with synonyms in parentheses); empty string if none.",
+            },
         },
         "required": [
             "dimension",
@@ -1839,6 +1952,8 @@ _COMPARISON_TOOL: dict[str, Any] = {
             "registration_content_summary",
             "deviation_judgement",
             "deviation_information",
+            "unlocated_in_paper",
+            "unlocated_in_registration",
         ],
     },
 }
@@ -2228,6 +2343,15 @@ def run_comparison(
         query_embedding, paper_corpus, top_k=len(paper_corpus.segments)
     )
 
+    # Reference/bibliography chunks are excluded from retrieval and keyword
+    # promotion: citation titles match dimension keywords without being evidence.
+    prereg_refs = _reference_chunk_ids(prereg_corpus)
+    paper_refs = _reference_chunk_ids(paper_corpus)
+    if prereg_refs:
+        prereg_scored = [row for row in prereg_scored if row[0] not in prereg_refs]
+    if paper_refs:
+        paper_scored = [row for row in paper_scored if row[0] not in paper_refs]
+
     # Base selection = top-k by similarity; then promote the best keyword-matching
     # chunks for this dimension (hybrid retrieval) so high-value facts aren't cut.
     prereg_top_rows = _promote_keyword_hits(
@@ -2311,8 +2435,11 @@ def run_comparison(
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
         " Second, make a three-way judgement on the specified dimension: the registration and paper deviate, are verifiably consistent, or provide insufficient evidence to judge."
         " You are looking closely for any deviation or divergence between the paper and the registration, of any kind or size.\n\n"
-        "A deviation is anything the paper adds to, changes, or fails to deliver relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule, including a registered plan (e.g. a planned analysis or outcome) that the paper never reports. (Merely reporting additional descriptive detail or full results that a preregistration would not enumerate is not, by itself, a deviation.)\n\n"
+        "A deviation is anything the paper adds to, changes, or fails to deliver relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule, including a registered plan (e.g. a planned analysis or outcome) that the paper never reports.\n\n"
+        "Unregistered additions: an addition is a deviation when the paper introduces a new unit of the kind this dimension enumerates — a new hypothesis, measure, manipulation, condition, outcome, analysis, covariate, or exclusion/stopping rule — or when unregistered content is given inferential weight the registration did not assign; per CONSORT outcome logic, an outcome or analysis that differs in variable, measure, metric, aggregation, or time point is a DIFFERENT outcome or analysis (analysing subscales where the registration registered only the composite is a deviation, even though merely reporting subscales is not). An addition is NOT a deviation when it only adds information about an already-registered unit or its reporting: procedural elaboration, reporting detail (descriptives, effect sizes, assumption or reliability checks attached to registered analyses), mandated declarations (ethics, funding, availability), interpretation, or finer-grained restatement of a registered value — but only at granularities the registration left unspecified; whatever granularity the registration DID specify is verified element-by-element at that granularity (registered 'at least 100/100/100 per condition' with 95/105/110 reported is a deviation). If the registration itself licenses a category of additions (e.g. a clause permitting additional exploratory analyses), additions within that clause's stated scope and framing are consistent — note the licensing clause in 'deviation_information'; additions exceeding the clause's scope (a new hypothesis is never licensed by an exploratory-analyses clause: hypotheses must be stated plainly) or presented with a status the clause did not license (e.g. confirmatory framing under an exploratory-only clause) remain deviations.\n\n"
         "Judge every registered specification by its own literal form, and flag a deviation if and only if the paper fails to satisfy the specification AS STATED — never substitute a stricter or looser reading. If the registration states an exact value, any different value is a deviation: 'we will recruit 300 participants' with 310 recruited is a deviation, however immaterial. If the registration states a bound, range, condition, or approximation, a reported value that satisfies it as stated is NOT a deviation: 'we will recruit at least 300 participants' with 310 recruited is fully consistent, whereas 290 would be a deviation.\n\n"
+        "It is important to compare the substance of the registration and paper, rather than just the surface wording. A renaming, abbreviation, synonym, or rewording of the SAME referent is not a deviation: judge whether the underlying identity, values, quantities, and entities match, not whether the labels match. For example, 'the AMP' vs 'the Affect Misattribution Procedure' is the same measure, and a procedure reported under a shortened name is consistent. This never excuses a substantive difference dressed as rewording: if the referent itself differs - for example, is a different variant, version, instrument, or value - that is a deviation ('Method A, variant B' registered but 'Method A, variant C' reported is a deviation, not a rewording).\n\n"
+        "If a dimension involves comparing categorical properties (e.g. a study registered as confirmatory, randomised, blinded, within-subjects), do so based on the design features the documents describe, not by whether the paper repeats the literal label. If the paper's reported features clearly instantiate the registered category — for example, a prespecified primary outcome, an a-priori power calculation, and hypothesis-testing statistics instantiate a registered 'confirmatory' study, even if the paper does not use this term explicitly — that element is verified consistent. Return 'missing' for such an element only when the features needed to infer the category are absent, and 'yes' when they contradict it.\n\n"
         "Your task is to determine whether or not the preregistration and the paper deviate from one another on this dimension. It may be the case that (i) a deviation is very minor, or (ii) a deviation is disclosed. Your task is NOT to judge severity, nor to determine whether deviations are accurately disclosed; your task is simply to flag deviations, regardless of how big or small they are. The severity question is one of human judgement, and the disclosure aspect is a separate question. Therefore, even if a deviation is minor or explicitly disclosed — for example a supplementary or more conservative analysis, an added measure or covariate, or an analysis labelled \"exploratory\" or \"added in response to reviewer feedback\" — it must still be recorded as a deviation. If a deviation is disclosed, note this in the deviation rationale ('deviation_information'), but it must NOT affect the deviation judgement itself ('deviation_judgement').\n\n"
         f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "
         f"{definition_for_query if definition_for_query else 'not provided by the user.'}\n\n"
@@ -2323,15 +2450,17 @@ def run_comparison(
         f"{' '.join(paper_prompt)}\n"
         "Your output must be a single JSON object (no arrays unless specified, no surrounding text, no code fences) with the following fields: "
         "'dimension', 'paper_content_quotes', 'paper_content_summary', 'registration_content_quotes', 'registration_content_summary', "
-        "'deviation_judgement', and 'deviation_information'. Each field MUST be a string.\n"
+        "'deviation_judgement', 'deviation_information', 'unlocated_in_paper', and 'unlocated_in_registration'. Each field MUST be a string.\n"
         "- For 'paper_content_quotes' and 'registration_content_quotes', include direct quotes from the provided excerpts, and keep the evidence IDs (e.g., [PAPER_0001]) in the text. Join multiple quotes with two newlines (\\n\\n). Do NOT return an array.\n"
         "- For 'paper_content_summary' and 'registration_content_summary', write a SHORT prose summary of that document's content on this dimension: aim for about 50 words (roughly one to three sentences) and do not exceed it. Use plain prose, not bullet points or headings, and cite the evidence IDs you relied upon.\n"
         "- For 'deviation_information', also cite the evidence IDs you relied upon.\n"
+        "- 'unlocated_in_paper' and 'unlocated_in_registration': elements you looked for but could not find in that document's excerpts, as a short semicolon-separated list, naming each element together with any synonyms or abbreviations it might appear under (in parentheses). Use an empty string when there are none.\n"
         "- 'deviation_judgement' must be exactly 'yes', 'no', or 'missing'. Apply these rules in strict order of precedence:\n"
         "  1. 'yes' — a deviation (as defined above) exists on this dimension. This verdict dominates: it applies even if other aspects of the dimension are unverifiable.\n"
-        "  2. 'missing' — no deviation is evident, but at least one materially relevant feature of this dimension cannot be verified across BOTH documents, either because neither document addresses it, or because only one document reports it and the other's silence breaks no registered plan (e.g. an ethics approval number recorded in the registration but never echoed in the paper: the paper's silence is not a deviation, but consistency cannot be verified either). Mutual silence is NEVER consistency: if neither document provides usable material on this dimension, the verdict is 'missing', not 'no'.\n"
-        "  3. 'no' — every materially relevant feature of this dimension is affirmatively present in BOTH documents and matches. 'no' is a positive verification, not a default; never return 'no' merely because you found no difference.\n"
-        "Materiality guard for rule 2 only (it never weakens rule 1): documents are not expected to report every minor detail. An unreported feature triggers 'missing' only if it is materially relevant to this dimension as defined; a real difference is 'yes' no matter how minor.\n"
+        "  2. 'missing' — no deviation is evident, but a materially relevant element that the REGISTRATION specifies for this dimension cannot be verified in the paper (e.g. an ethics approval number recorded in the registration but never echoed in the paper: the paper's silence breaks no registered plan, but consistency cannot be verified) — or the registration itself provides nothing usable on this dimension, so there is nothing to judge against. Mutual silence is NEVER consistency: if neither document provides usable material, the verdict is 'missing', not 'no'. Do NOT return 'missing' because a peripheral or UNREGISTERED detail cannot be verified: verification is owed to what the registration specifies, nothing more.\n"
+        "  3. 'no' — every element the registration specifies for this dimension is affirmatively present in the paper and consistent with it in substance. If that holds, return 'no' even when unregistered or peripheral details cannot be verified (but as an important exception: if the paper ADDS unregistered content on this dimension, that is a deviation under rule 1). 'no' is a positive verification of the registered elements, not a default; never return 'no' merely because you found no difference.\n"
+        "Materiality guard for rule 2 only (it never weakens rule 1): An unverifiable registered element triggers 'missing' only if it is materially relevant to this dimension as defined; a real difference is 'yes' no matter how minor.\n"
+        "Omission and addition claims: you see only retrieved excerpts, never the full documents. If a registered element does not appear in the provided paper excerpts (or paper content appears to be unregistered), phrase this in 'deviation_information' as 'not found in the provided excerpts' — never assert it is absent from the document — and list the element in 'unlocated_in_paper' (or 'unlocated_in_registration'), naming it together with any synonyms or abbreviations it might appear under. Then still return your best verdict on the evidence you have: a registered element that is conspicuously absent where the paper covers this ground is a deviation; if you genuinely cannot judge, return 'missing'. RegCheck will run a targeted search of the full document for every element you list and re-invoke you with anything it finds, so do not soften a verdict because you suspect a retrieval gap — flag the element instead.\n"
         "When the verdict is 'missing', name in 'deviation_information' the feature(s) that could not be verified and which document is silent.\n"
     )
     if history_context:
@@ -2350,24 +2479,70 @@ def run_comparison(
         {"role": "user", "content": master_prompt},
     ]
 
-    # Consensus-vote: judge the IDENTICAL prompt N times (retrieval + prompt were assembled
-    # once above, so only the stochastic judgement repeats), then aggregate by plurality.
-    # num_voters == 1 is the unchanged single-judge path. _judge_dimension_once returns
-    # None for an unparseable reply (a non-vote), so parse failures neither poison the
-    # tally nor decide a dimension; we only fall back to the degraded item if EVERY
-    # judgement failed to parse.
-    voters = max(1, int(num_voters or 1))
-    judged = [
-        _judge_dimension_once(
-            messages,
+    def _judge(msgs: list[dict[str, str]]) -> ComparisonItem | None:
+        return _judge_dimension_once(
+            msgs,
             client_choice=client_choice,
             dimension_query=dimension_query,
             paper_top=paper_top,
             prereg_top=prereg_top,
             reasoning_effort=reasoning_effort,
         )
-        for _ in range(voters)
-    ]
+
+    voters = max(1, int(num_voters or 1))
+
+    # Targeted verification pass: one initial judgement; if it flags elements it
+    # could not find in either document's excerpts, search the FULL corpus for
+    # each (semantic + literal, references excluded). New material → re-judge on
+    # the augmented prompt; nothing found → the initial verdict stands and the
+    # rationale records that a full-document search corroborated the absence.
+    # In the common case (nothing flagged) this costs zero extra LLM calls: the
+    # initial judgement doubles as the single-judge verdict / first voter.
+    pass1 = _judge(messages)
+    augmented = False
+    searched: list[str] = []
+    if pass1 is not None:
+        shown_ids = _ids_in_prompt_blocks(prereg_prompt + paper_prompt)
+        extra_blocks: list[str] = []
+        for field_name, corpus, doc_label in (
+            ("unlocated_in_paper", paper_corpus, "paper"),
+            ("unlocated_in_registration", prereg_corpus, "registration"),
+        ):
+            for element in _split_unlocated(getattr(pass1, field_name, "")):
+                hits = _targeted_element_search(
+                    element, corpus, exclude_ids=shown_ids, embedding_model=embedding_model
+                )
+                searched.append(f"'{element}' ({doc_label})")
+                if hits:
+                    shown_ids.update(cid for cid, _t, _s in hits)
+                    labelled = " ".join(
+                        f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in hits
+                    )
+                    extra_blocks.append(
+                        f"Additional targeted {doc_label} excerpts (found by a full-document search for: {element}):\n{labelled}"
+                    )
+        if extra_blocks:
+            augmented = True
+            messages = [
+                messages[0],
+                {"role": "user", "content": messages[1]["content"] + "\n\n" + "\n\n".join(extra_blocks)},
+            ]
+            logger.info(
+                "Verification pass augmented evidence",
+                extra={"dimension": dimension_query, "searched": searched, "blocks": len(extra_blocks)},
+            )
+
+    # Consensus-vote: judge the IDENTICAL prompt N times (retrieval + prompt were assembled
+    # once above, so only the stochastic judgement repeats), then aggregate by plurality.
+    # num_voters == 1 is the unchanged single-judge path. _judge_dimension_once returns
+    # None for an unparseable reply (a non-vote), so parse failures neither poison the
+    # tally nor decide a dimension; we only fall back to the degraded item if EVERY
+    # judgement failed to parse. When the verification pass augmented the evidence,
+    # pass 1 saw different excerpts and cannot count as a voter.
+    if augmented:
+        judged = [_judge(messages) for _ in range(voters)]
+    else:
+        judged = [pass1] + [_judge(messages) for _ in range(voters - 1)]
     genuine = [j for j in judged if j is not None]
     if not genuine:
         item = _degraded_item(dimension_query, paper_top, prereg_top)
@@ -2375,6 +2550,24 @@ def run_comparison(
         item = genuine[0]
     else:
         item = _aggregate_dimension_votes(genuine, voters)
+
+    # Surface the verification outcome in the rationale so "not found in the
+    # provided excerpts" hedges read as verified claims, not retrieval gaps.
+    if searched and genuine:
+        if augmented:
+            note = (
+                "(A targeted full-document search retrieved additional excerpts for: "
+                + "; ".join(searched)
+                + " — the judgement above includes them.)"
+            )
+        else:
+            note = (
+                "(RegCheck ran a targeted full-document search for: "
+                + "; ".join(searched)
+                + ". No further mentions were found beyond the excerpts already provided.)"
+            )
+        base = (item.deviation_information or "").rstrip()
+        item.deviation_information = f"{base}\n\n{note}" if base else note
     return ComparisonResult(items=[item])
 
 

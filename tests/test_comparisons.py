@@ -281,13 +281,27 @@ def test_master_prompt_carries_verdict_decision_rules(monkeypatch):
     assert "fails to satisfy the specification AS STATED" in prompt
     assert "'we will recruit at least 300 participants' with 310 recruited is fully consistent" in prompt
     assert "'we will recruit 300 participants' with 310 recruited is a deviation" in prompt
-    # Three-verdict precedence with affirmative verification for 'no'.
+    # Three-verdict precedence, registered-element anchoring for 'no'/'missing'.
     assert "Apply these rules in strict order of precedence" in prompt
     assert "Mutual silence is NEVER consistency" in prompt
-    assert "'no' is a positive verification, not a default" in prompt
-    # Corroboration gap routes to 'missing', and materiality only guards rule 2.
-    assert "the other's silence breaks no registered plan" in prompt
+    assert "'no' is a positive verification of the registered elements, not a default" in prompt
+    assert "verification is owed to what the registration specifies, nothing more" in prompt
     assert "Materiality guard for rule 2 only" in prompt
+    # Additions boundary: new units / inferential weight vs elaboration; granularity;
+    # registered permissions license only their stated scope.
+    assert "a new unit of the kind this dimension enumerates" in prompt
+    assert "per CONSORT outcome logic" in prompt
+    assert "granularities the registration left unspecified" in prompt
+    assert "'at least 100/100/100 per condition' with 95/105/110 reported is a deviation" in prompt
+    assert "a new hypothesis is never licensed by an exploratory-analyses clause" in prompt
+    # Substance over surface + categorical inference by design features.
+    assert "the substance of the registration and paper, rather than just the surface wording" in prompt
+    assert "'Method A, variant B' registered but 'Method A, variant C' reported is a deviation" in prompt
+    assert "design features the documents describe" in prompt
+    # Omission flagging: hedge + structured fields + system-side verification.
+    assert "not found in the provided excerpts" in prompt
+    assert "'unlocated_in_paper'" in prompt
+    assert "RegCheck will run a targeted search of the full document" in prompt
 
 
 def test_prebuild_query_embeddings_batches_into_one_call(monkeypatch):
@@ -1161,3 +1175,185 @@ def test_small_to_big_prompt_expands_but_display_stays_tight(monkeypatch):
     # ...but the DISPLAYED quotes stay tight (just the retrieved hit, no neighbours).
     assert "PAPER_0002" in item.paper_content_quotes
     assert "PAPER_0001" not in item.paper_content_quotes and "PAPER_0003" not in item.paper_content_quotes
+
+
+# ── targeted verification pass (unlocated elements → full-document search) ──
+
+
+def _verif_corpora():
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    prereg = EmbeddingCorpus(
+        segments=["the registration plans a sample of 100"],
+        embeddings=np.array([[1.0, 0.0]], dtype=np.float32),
+        chunk_ids=["PREREG_0001"],
+        norms=np.array([1.0], dtype=np.float32),
+        metadata=[{}],
+    )
+    # The planted "beta protocol" chunk sits at index 5 so the small-to-big
+    # neighbour expansion (window 2) around the retrieved PAPER_0001 cannot
+    # reach it — the targeted search must be what surfaces it.
+    paper_segments = [
+        "the paper reports a sample of 100",
+        "filler methods text",
+        "filler results text",
+        "filler discussion text",
+        "filler general text",
+        "the beta protocol ran for six weeks as planned",
+    ]
+    # Fillers point slightly away from the query so PAPER_0001 wins top-1
+    # deterministically (cosine ties would let expansion swallow the plant).
+    paper_vecs = [[1.0, 0.0]] + [[0.9701, -0.2425]] * 4 + [[0.0, 1.0]]
+    paper = EmbeddingCorpus(
+        segments=paper_segments,
+        embeddings=np.array(paper_vecs, dtype=np.float32),
+        chunk_ids=[f"PAPER_{i+1:04d}" for i in range(6)],
+        norms=np.ones(6, dtype=np.float32),
+        metadata=[{} for _ in range(6)],
+    )
+    cache = {
+        f"prereg:{hashlib.sha256(b'p').hexdigest()}": prereg,
+        f"paper:{hashlib.sha256(b'x').hexdigest()}": paper,
+    }
+    return cache
+
+
+def _verif_reply(verdict="no", unlocated_paper="", info="rationale"):
+    import json
+
+    return json.dumps(
+        {
+            "dimension": "Sample size",
+            "paper_content_quotes": "",
+            "paper_content_summary": "",
+            "registration_content_quotes": "",
+            "registration_content_summary": "",
+            "deviation_judgement": verdict,
+            "deviation_information": info,
+            "unlocated_in_paper": unlocated_paper,
+            "unlocated_in_registration": "",
+        }
+    )
+
+
+def _fake_embed_factory():
+    import numpy as np
+
+    def _embed(text, model=None):
+        # Dimension query aligns with the first chunks; the flagged element
+        # aligns with the planted PAPER_0002 chunk; anything else matches nothing.
+        if "beta protocol" in text:
+            return np.array([0.0, 1.0], dtype=np.float32)
+        if "Sample size" in text:
+            return np.array([1.0, 0.0], dtype=np.float32)
+        return np.array([0.0, 0.0], dtype=np.float32)
+
+    return _embed
+
+
+def test_verification_pass_augments_and_rejudges_when_element_found(monkeypatch):
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        if len(calls) == 1:
+            return _verif_reply(verdict="yes", unlocated_paper="beta protocol (BP)")
+        return _verif_reply(verdict="no", info="found it after all")
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    result = comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    item = result.items[0]
+    assert len(calls) == 2  # pass 1 + one re-judgement on augmented evidence
+    assert "Additional targeted paper excerpts" in calls[1]
+    assert "PAPER_0006" in calls[1]
+    assert "beta protocol" in calls[1]
+    assert _normalize_verdict(item.deviation_judgement) == "no"  # re-judge verdict wins
+    assert "the judgement above includes them" in item.deviation_information
+
+
+def test_verification_pass_keeps_verdict_and_notes_confirmed_absence(monkeypatch):
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        return _verif_reply(verdict="yes", unlocated_paper="gamma stopping rule", info="omitted")
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    result = comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    item = result.items[0]
+    assert len(calls) == 1  # nothing found -> pass-1 verdict stands, no extra LLM call
+    assert _normalize_verdict(item.deviation_judgement) == "yes"
+    assert "No further mentions were found" in item.deviation_information
+    assert "gamma stopping rule" in item.deviation_information
+
+
+def test_verification_pass_is_free_when_nothing_flagged(monkeypatch):
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        return _verif_reply()
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    # Single judge: exactly one call. Consensus (2 voters): pass 1 doubles as voter 1.
+    result = comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    assert len(calls) == 1
+    assert "RegCheck ran a targeted full-document search" not in result.items[0].deviation_information
+
+    calls.clear()
+    comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1, num_voters=2
+    )
+    assert len(calls) == 2
+
+
+def test_split_unlocated_and_search_terms():
+    from backend.services.comparisons import _element_search_terms, _split_unlocated
+
+    assert _split_unlocated("alpha (A1, A-one); beta protocol\ngamma; none") == [
+        "alpha (A1, A-one)",
+        "beta protocol",
+        "gamma",
+    ]
+    assert _split_unlocated("; ".join(f"e{i}" for i in range(9)))  == ["e0", "e1", "e2"]
+    assert _split_unlocated("") == []
+    assert _element_search_terms("alpha measure (A1X, A-one)") == ["alpha measure", "A1X", "A-one"]
+
+
+def test_reference_chunk_ids_by_flag_and_heading():
+    import numpy as np
+
+    from backend.services.comparisons import _reference_chunk_ids
+    from backend.services.embeddings import EmbeddingCorpus
+
+    def _corpus(segments, metadata=None):
+        n = len(segments)
+        return EmbeddingCorpus(
+            segments=segments,
+            embeddings=np.ones((n, 2), dtype=np.float32),
+            chunk_ids=[f"PAPER_{i+1:04d}" for i in range(n)],
+            norms=np.ones(n, dtype=np.float32),
+            metadata=metadata or [{} for _ in range(n)],
+        )
+
+    # Build-time flags win.
+    flagged = _corpus(["a", "b", "c"], metadata=[{}, {}, {"in_references": True}])
+    assert _reference_chunk_ids(flagged) == {"PAPER_0003"}
+
+    # Heading fallback: a standalone References line flags that chunk + the rest.
+    heading = _corpus(["intro text", "methods text", "results text", "\nReferences\nSmith 2020", "more refs"])
+    assert _reference_chunk_ids(heading) == {"PAPER_0004", "PAPER_0005"}
+
+    # Early matches are ignored (prose/TOC guard).
+    early = _corpus(["\nReferences\n", "body", "body", "body", "body", "body", "body", "body", "body", "body"])
+    assert _reference_chunk_ids(early) == set()

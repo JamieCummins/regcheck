@@ -228,6 +228,8 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         "registration_content_summary",
         "deviation_judgement",
         "deviation_information",
+        "unlocated_in_paper",
+        "unlocated_in_registration",
     ]
     rows: list[dict[str, str]] = []
     for item in items:
