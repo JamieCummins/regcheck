@@ -2437,6 +2437,7 @@ def run_comparison(
     # emits only the grounding evidence IDs; set QUOTES_AS_IDS=0 to roll back to
     # verbatim emission. Constant per-run, so the cached prefix is unaffected.
     if (os.environ.get("QUOTES_AS_IDS") or "1").strip().lower() in {"1", "true", "yes", "on"}:
+        quotes_bullet = (
             "- For 'paper_content_quotes' and 'registration_content_quotes', output ONLY the evidence IDs of the excerpts that ground your judgement (e.g., [PAPER_0001] [PAPER_0007]), space-separated, most relevant first. Do NOT copy quote text.\n"
         )
     else:
