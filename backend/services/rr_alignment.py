@@ -181,11 +181,63 @@ def _flatten(remaining: dict[str, list[int]]) -> set[int]:
 
 
 # ── LLM change classifier (Track A second stage) ────────────────────────────
-# GATED: the pipeline only invokes this once the prompt wording below has been
-# approved; until then every change ships with classification="pending".
-RR_CLASSIFIER_ENABLED = False
+RR_CLASSIFIER_ENABLED = True
 
-RR_CLASSIFIER_PROMPT = """PENDING WORDING APPROVAL — see RR_CLASSIFIER_ENABLED."""
+RR_CLASSIFIER_PROMPT = (
+    "You are reviewing a Registered Report. Stage 1 is a complete manuscript given "
+    "in-principle acceptance before data collection; Stage 2 extends it after data "
+    "collection. Carried-forward text is expected to match Stage 1 except for licensed "
+    "changes. You will receive an enumerated list of detected textual changes between "
+    "the two stages. Classify EACH change:\n"
+    "- 'licensed': format-expected changes — appended results of registered analyses and "
+    "their discussion; filled placeholders Stage 1 explicitly left open; future-to-past "
+    "tense conversion; copyediting, reference, or formatting updates that leave identity, "
+    "values, quantities, entities, and the strength and epistemic status of claims "
+    "unchanged.\n"
+    "- 'substantive': the change alters registered content or its epistemic status — "
+    "hypothesis wording, theoretical rationale, emphasis, hedging or qualifier changes, "
+    "altered values, procedures, or analyses, deleted commitments or caveats, or "
+    "unregistered additions to carried-forward sections.\n"
+    "- 'grey': genuinely ambiguous between the two; do not use it to avoid a judgement "
+    "call.\n"
+    "Also give a 'category' (tense | placeholder | copyedit | reference_format | "
+    "results_discussion | hypothesis_wording | rationale | emphasis_hedging | "
+    "value_or_procedure | deleted_commitment | unregistered_addition | other) and a "
+    "one-sentence 'note' saying what changed. Direction matters: a prediction demoted to "
+    "exploratory framing is substantive. Severity is not your call — classification "
+    "describes the kind of change, and a human editor judges importance.\n"
+    'Return ONLY a JSON array: [{"id": <number>, "classification": "...", '
+    '"category": "...", "note": "..."}].'
+)
+
+_VALID_CLASSIFICATIONS = {"licensed", "substantive", "grey"}
+_CHANGE_EXCERPT_CHARS = 600
+
+
+def _change_line(index: int, change: dict[str, Any]) -> str:
+    removed = (change.get("removed_text") or "")[:_CHANGE_EXCERPT_CHARS]
+    added = (change.get("added_text") or "")[:_CHANGE_EXCERPT_CHARS]
+    parts = [f"{index}. kind={change.get('kind')}"]
+    if removed:
+        parts.append(f'removed: "{removed}"')
+    if added:
+        parts.append(f'added: "{added}"')
+    return " | ".join(parts)
+
+
+def _classifier_completion(prompt: str, *, reasoning_effort: str | None = None) -> str:
+    """One classifier call. Kept as a seam for tests; uses the OpenAI comparison
+    model regardless of the run's judgement provider — classification is a small,
+    cheap, structured task and one provider path keeps it dependable."""
+    from .llm import _openai_family_model, get_openai_client
+
+    client = get_openai_client()
+    response = client.chat.completions.create(
+        model=_openai_family_model("openai"),
+        messages=[{"role": "user", "content": prompt}],
+        reasoning_effort=(reasoning_effort or "low"),
+    )
+    return response.choices[0].message.content or ""
 
 
 def classify_changes(
@@ -200,4 +252,32 @@ def classify_changes(
     deterministic change list is never lost to a classifier hiccup."""
     if not RR_CLASSIFIER_ENABLED or not changes:
         return changes
-    raise NotImplementedError("Classifier prompt pending approval")
+    import json as _json
+    import logging
+
+    logger = logging.getLogger(__name__)
+    for start in range(0, len(changes), batch_size):
+        batch = changes[start : start + batch_size]
+        lines = "\n".join(_change_line(i + 1, c) for i, c in enumerate(batch))
+        prompt = f"{RR_CLASSIFIER_PROMPT}\n\nChanges:\n{lines}"
+        try:
+            raw = _classifier_completion(prompt, reasoning_effort=reasoning_effort)
+            match = re.search(r"\[.*\]", raw, re.S)
+            labels = _json.loads(match.group(0)) if match else []
+        except Exception as exc:  # pragma: no cover - network/parse degradation
+            logger.warning("RR change classifier batch failed; leaving 'pending'", exc_info=exc)
+            continue
+        for entry in labels:
+            try:
+                idx = int(entry.get("id", 0)) - 1
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= idx < len(batch)):
+                continue
+            classification = str(entry.get("classification", "")).strip().lower()
+            if classification not in _VALID_CLASSIFICATIONS:
+                continue
+            batch[idx]["classification"] = classification
+            batch[idx]["category"] = str(entry.get("category", "")).strip()[:40]
+            batch[idx]["note"] = str(entry.get("note", "")).strip()[:300]
+    return changes

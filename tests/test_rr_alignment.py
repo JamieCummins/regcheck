@@ -114,3 +114,42 @@ def test_changes_carry_pending_classification_fields():
     change = out["changes"][0]
     assert change["classification"] == "pending"
     assert change["category"] == ""
+
+
+def test_classifier_merges_labels_and_survives_garbage(monkeypatch):
+    import backend.services.rr_alignment as rra
+
+    changes = [
+        {"kind": "modified", "removed_text": "will fit", "added_text": "fitted",
+         "classification": "pending", "category": "", "note": ""},
+        {"kind": "inserted", "removed_text": "", "added_text": "Results. b = 0.083.",
+         "classification": "pending", "category": "", "note": ""},
+        {"kind": "modified", "removed_text": "we predict", "added_text": "we explored",
+         "classification": "pending", "category": "", "note": ""},
+    ]
+
+    reply = """Here you go:
+    [{"id": 1, "classification": "licensed", "category": "tense", "note": "Future to past."},
+     {"id": 2, "classification": "licensed", "category": "results_discussion", "note": "Appended results."},
+     {"id": 3, "classification": "substantive", "category": "emphasis_hedging", "note": "Prediction demoted."},
+     {"id": 99, "classification": "licensed", "category": "x", "note": "out of range"},
+     {"id": 2, "classification": "banana", "category": "x", "note": "invalid label ignored"}]"""
+    monkeypatch.setattr(rra, "_classifier_completion", lambda prompt, **_kw: reply)
+    out = rra.classify_changes(changes)
+    assert [c["classification"] for c in out] == ["licensed", "licensed", "substantive"]
+    assert out[0]["category"] == "tense"
+    assert out[2]["note"] == "Prediction demoted."
+
+
+def test_classifier_failure_leaves_changes_pending(monkeypatch):
+    import backend.services.rr_alignment as rra
+
+    changes = [{"kind": "modified", "removed_text": "a", "added_text": "b",
+                "classification": "pending", "category": "", "note": ""}]
+
+    def _boom(prompt, **_kw):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(rra, "_classifier_completion", _boom)
+    out = rra.classify_changes(changes)
+    assert out[0]["classification"] == "pending"
