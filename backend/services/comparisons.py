@@ -86,6 +86,7 @@ from .dimensions import (
     PRECLINICAL_DEFAULT_DIMENSIONS,
     _normalize_selected_dimensions,
     _resolve_dimensions,
+    append_rr_addons,
 )
 
 logger = logging.getLogger(__name__)
@@ -893,6 +894,7 @@ async def general_preregistration_comparison(
     num_voters: int = 1,
     isolation_cache_dir: str | None = None,
     isolation_passes: int = 1,
+    comparison_context: ComparisonContext = "preregistration",
 ) -> ComparisonResult:
     processed_count = 0
     if prereg_ext == ".pdf":
@@ -979,6 +981,10 @@ async def general_preregistration_comparison(
 
     result_obj = ComparisonResult(items=[])
     dimensions_to_compare = _resolve_dimensions(selected_dimensions)
+    if comparison_context == "registered_report":
+        # RR runs get the add-on dimensions (e.g. outcome-neutral quality checks)
+        # on top of whichever discipline set the user selected.
+        dimensions_to_compare = append_rr_addons(dimensions_to_compare)
     dimension_names = [item["dimension"] for item in dimensions_to_compare]
     total_dimensions = len(dimensions_to_compare)
 
@@ -1212,7 +1218,7 @@ async def general_preregistration_comparison(
                     query_embedding_cache=query_embedding_cache,
                     reasoning_effort=reasoning_effort,
                     evidence_manifest=evidence_manifest,
-                    comparison_context="preregistration",
+                    comparison_context=comparison_context,
                 )
             )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
@@ -1257,7 +1263,7 @@ async def general_preregistration_comparison(
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
-                comparison_context="preregistration",
+                comparison_context=comparison_context,
                 evidence_manifest=evidence_manifest,
             )
             result_obj.items.extend(comparison.items)
@@ -1896,7 +1902,7 @@ def _search_first_text_fragment(payload: Any) -> str:
     return ""
 
 
-ComparisonContext = Literal["preregistration", "clinical_trial"]
+ComparisonContext = Literal["preregistration", "clinical_trial", "registered_report"]
 
 
 # Anthropic tool schema mirroring ComparisonItem — forcing this tool gives Claude
@@ -2421,7 +2427,21 @@ def run_comparison(
         )
         logger.debug("Full history context for '%s':\n%s", dimension_query, history_context)
 
-    if comparison_context == "preregistration":
+    # RR context gets its own framing + format definition + licensed-structure
+    # clause; all three are constant per-run, so the cached prefix is unaffected.
+    rr_definition = ""
+    rr_licensed = ""
+    if comparison_context == "registered_report":
+        intro_line = (
+            "Critically compare the Stage 1 manuscript of a Registered Report with its Stage 2 manuscript based on the below-specified study dimension."
+        )
+        rr_definition = (
+            "These documents are the two stages of a REGISTERED REPORT: Stage 1 is a complete manuscript (introduction, hypotheses, methods, analysis plan, sometimes pilot data) that was peer-reviewed and given in-principle acceptance BEFORE data collection; Stage 2 is the same manuscript completed after data collection, with results and discussion added. The Stage 1 manuscript plays the role of the registration below, and the Stage 2 manuscript plays the role of the paper. Because Stage 2 extends an already-accepted text, carried-forward sections are expected to match Stage 1 except for licensed changes.\n\n"
+        )
+        rr_licensed = (
+            "Format-licensed Stage 2 changes (NOT deviations): appending the results of the registered analyses and a discussion of them; filling placeholders the Stage 1 text explicitly left open (e.g. in the abstract or introduction); converting future tense to past tense; and updating references or formatting. All other changes are judged by the ordinary rules above — in particular, changes to hypotheses, rationale, emphasis, or the strength and epistemic status of claims in carried-forward sections, and any unregistered analyses not clearly labelled as exploratory, are deviations.\n\n"
+        )
+    elif comparison_context == "preregistration":
         intro_line = (
             "Critically compare the following study preregistration with content from its corresponding published paper based on the below-specified specified study dimension."
         )
@@ -2451,13 +2471,15 @@ def run_comparison(
     # content — history, the dimension, the excerpts — comes after it.
     static_doctrine = (
         f"{intro_line}\n\n"
+        f"{rr_definition}"
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
         " Second, make a three-way judgement on the specified dimension: the registration and paper deviate, are verifiably consistent, or provide insufficient evidence to judge."
         " You are looking closely for any deviation or divergence between the paper and the registration, of any kind or size.\n\n"
         "A deviation is anything the paper adds to, changes, or fails to deliver relative to what the preregistration specified for THIS dimension — for example an added, changed, or dropped analysis, correction, measure, covariate, condition, outcome, or exclusion rule, including a registered plan (e.g. a planned analysis or outcome) that the paper never reports.\n\n"
         "Unregistered additions: an addition is a deviation when the paper introduces a new unit of the kind this dimension enumerates — a new hypothesis, measure, manipulation, condition, outcome, analysis, covariate, or exclusion/stopping rule — or when unregistered content is given inferential weight the registration did not assign; per CONSORT outcome logic, an outcome or analysis that differs in variable, measure, metric, aggregation, or time point is a DIFFERENT outcome or analysis (analysing subscales where the registration registered only the composite is a deviation, even though merely reporting subscales is not). An addition is NOT a deviation when it only adds information about an already-registered unit or its reporting: procedural elaboration, reporting detail (descriptives, effect sizes, assumption or reliability checks attached to registered analyses), mandated declarations (ethics, funding, availability), interpretation, or finer-grained restatement of a registered value — but only at granularities the registration left unspecified; whatever granularity the registration DID specify is verified element-by-element at that granularity (registered 'at least 100/100/100 per condition' with 95/105/110 reported is a deviation). If the registration itself licenses a category of additions (e.g. a clause permitting additional exploratory analyses), additions within that clause's stated scope and framing are consistent — note the licensing clause in 'deviation_information'; additions exceeding the clause's scope (a new hypothesis is never licensed by an exploratory-analyses clause: hypotheses must be stated plainly) or presented with a status the clause did not license (e.g. confirmatory framing under an exploratory-only clause) remain deviations.\n\n"
+        f"{rr_licensed}"
         "Judge every registered specification by its own literal form, and flag a deviation if and only if the paper fails to satisfy the specification AS STATED — never substitute a stricter or looser reading. If the registration states an exact value, any different value is a deviation: 'we will recruit 300 participants' with 310 recruited is a deviation, however immaterial. If the registration states a bound, range, condition, or approximation, a reported value that satisfies it as stated is NOT a deviation: 'we will recruit at least 300 participants' with 310 recruited is fully consistent, whereas 290 would be a deviation.\n\n"
-        "It is important to compare the substance of the registration and paper, rather than just the surface wording. A renaming, abbreviation, synonym, or rewording of the SAME referent is not a deviation: judge whether the underlying identity, values, quantities, and entities match, not whether the labels match. For example, 'the AMP' vs 'the Affect Misattribution Procedure' is the same measure, and a procedure reported under a shortened name is consistent. This never excuses a substantive difference dressed as rewording: if the referent itself differs - for example, is a different variant, version, instrument, or value - that is a deviation ('Method A, variant B' registered but 'Method A, variant C' reported is a deviation, not a rewording).\n\n"
+        "It is important to compare the substance of the registration and paper, rather than just the surface wording. A renaming, abbreviation, synonym, or rewording of the SAME referent is not a deviation: judge whether the underlying identity, values, quantities, entities, and the strength and epistemic status of claims match — a registered prediction demoted to an exploratory or tentative observation (or vice versa) is a substantive change, not a rewording. For example, 'the AMP' vs 'the Affect Misattribution Procedure' is the same measure, and a procedure reported under a shortened name is consistent. This never excuses a substantive difference dressed as rewording: if the referent itself differs - for example, is a different variant, version, instrument, or value - that is a deviation ('Method A, variant B' registered but 'Method A, variant C' reported is a deviation, not a rewording).\n\n"
         "If a dimension involves comparing categorical properties (e.g. a study registered as confirmatory, randomised, blinded, within-subjects), do so based on the design features the documents describe, not by whether the paper repeats the literal label. If the paper's reported features clearly instantiate the registered category — for example, a prespecified primary outcome, an a-priori power calculation, and hypothesis-testing statistics instantiate a registered 'confirmatory' study, even if the paper does not use this term explicitly — that element is verified consistent. Return 'missing' for such an element only when the features needed to infer the category are absent, and 'yes' when they contradict it.\n\n"
         "Your task is to determine whether or not the preregistration and the paper deviate from one another on this dimension. It may be the case that (i) a deviation is very minor, or (ii) a deviation is disclosed. Your task is NOT to judge severity, nor to determine whether deviations are accurately disclosed; your task is simply to flag deviations, regardless of how big or small they are. The severity question is one of human judgement, and the disclosure aspect is a separate question. Therefore, even if a deviation is minor or explicitly disclosed — for example a supplementary or more conservative analysis, an added measure or covariate, or an analysis labelled \"exploratory\" or \"added in response to reviewer feedback\" — it must still be recorded as a deviation. If a deviation is disclosed, note this in the deviation rationale ('deviation_information'), but it must NOT affect the deviation judgement itself ('deviation_judgement').\n\n"
         "Your output must be a single JSON object (no arrays unless specified, no surrounding text, no code fences) with the following fields: "

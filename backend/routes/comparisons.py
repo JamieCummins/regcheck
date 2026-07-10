@@ -68,6 +68,7 @@ _SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
 ComparisonType = Literal[
     "clinical_trials",
     "general_preregistration",
+    "registered_report",
     "animals_trials",
 ]
 
@@ -399,7 +400,7 @@ async def _queue_comparison(
             raise HTTPException(
                 status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
             )
-    elif comparison_type == "general_preregistration":
+    elif comparison_type in ("general_preregistration", "registered_report"):
         if osf_url and osf_url.strip():
             # Preregistration comes from an OSF link; validate it here and fetch
             # it in the worker (no file to store).
@@ -561,7 +562,7 @@ async def _queue_comparison(
                 "paper_ext": paper_ext,
             }
         )
-    elif comparison_type == "general_preregistration":
+    elif comparison_type in ("general_preregistration", "registered_report"):
         multiple_experiments_flag = _bool_from_yes(multiple_experiments)
         job_payload.update(
             {
@@ -695,6 +696,7 @@ async def compare_post(
     experiment_number: str | None = Form(None),
     experiment_text: str | None = Form(None),
     clinical_registration: str = Form("no"),
+    comparison_mode: str = Form("standard"),
     prereg_source: str = Form("upload"),
     registration_id: str | None = Form(None),
     preregistration: list[UploadFile] = File([]),
@@ -707,8 +709,11 @@ async def compare_post(
     # an OSF link. (clinical_registration kept for backward compatibility.)
     source = (prereg_source or "upload").strip().lower()
     is_clinical = source == "clinical" or _bool_from_yes(clinical_registration)
+    is_rr = (comparison_mode or "").strip().lower() == "registered_report"
     comparison_type: ComparisonType = (
-        "clinical_trials" if is_clinical else "general_preregistration"
+        "clinical_trials"
+        if is_clinical
+        else ("registered_report" if is_rr else "general_preregistration")
     )
     # Multiple uploaded files per side are concatenated into one paper / one
     # registration before the (unchanged) single-document pipeline runs.

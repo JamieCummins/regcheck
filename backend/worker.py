@@ -185,7 +185,7 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 selected_dimensions=job.get("selected_dimensions"),
                 append_previous_output=job.get("append_previous_output", False),
             )
-        elif comparison_type == "general_preregistration":
+        elif comparison_type in ("general_preregistration", "registered_report"):
             prereg_path = job.get("prereg_path", "") or ""
             prereg_ext = job.get("prereg_ext", "") or ""
             osf_url = job.get("osf_url")
@@ -227,6 +227,7 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 multiple_experiments=job.get("multiple_experiments"),
                 experiment_number=job.get("experiment_number"),
                 experiment_text=job.get("experiment_text"),
+                comparison_context=("registered_report" if comparison_type == "registered_report" else "preregistration"),
             )
         elif comparison_type == "animals_trials":
             await animals_trial_comparison(
