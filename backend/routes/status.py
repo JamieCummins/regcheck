@@ -134,12 +134,24 @@ async def task_status(request: Request, task_id: str):
         except (json.JSONDecodeError, TypeError):  # pragma: no cover - defensive
             parsed_settings = None
 
+    # Registered Report runs: Track A carried-forward-text integrity payload.
+    rr_raw = data.get("rr_integrity")
+    parsed_rr = None
+    if rr_raw:
+        try:
+            if isinstance(rr_raw, bytes):
+                rr_raw = rr_raw.decode("utf-8", "replace")
+            parsed_rr = json.loads(rr_raw)
+        except (json.JSONDecodeError, TypeError):  # pragma: no cover - defensive
+            parsed_rr = None
+
     return JSONResponse(
         {
             "state": state,
             "status": status_text,
             "result": parsed_result,
             "settings": parsed_settings,
+            "rr_integrity": parsed_rr,
             "total_dimensions": total_dimensions,
             "processed_dimensions": processed_dimensions,
             "evidence_available": evidence_available,

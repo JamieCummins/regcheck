@@ -125,6 +125,7 @@ def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> 
         manifest=evidence.get("manifest"),
         render_data=evidence.get("render_data"),
         meta=meta,
+        rr_integrity=evidence.get("rr_integrity"),
     )
     logger.info("Wrote browsable HTML report to %s", report_path)
 

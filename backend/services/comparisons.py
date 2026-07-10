@@ -1169,6 +1169,34 @@ async def general_preregistration_comparison(
             evidence_manifest, _ = _assemble_inline_bundle(
                 task_id, "general_preregistration", source_payloads
             )
+
+    # Track A (Registered Reports): deterministic carried-forward-text integrity.
+    # Runs on the CANONICAL final texts (post-parse, post-isolation) and never
+    # blocks Track B — an alignment failure degrades to a dimension-only report.
+    if comparison_context == "registered_report":
+        try:
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id, mapping={"status": "Comparing carried-forward Stage 1 text"}
+                )
+            from .rr_alignment import RR_CLASSIFIER_ENABLED, align_stages, classify_changes
+
+            rr_integrity = align_stages(preregistration_input, extracted_paper_sections)
+            if RR_CLASSIFIER_ENABLED and rr_integrity.get("changes"):
+                rr_integrity["changes"] = await asyncio.to_thread(
+                    classify_changes,
+                    rr_integrity["changes"],
+                    client_choice=client_choice,
+                    reasoning_effort=reasoning_effort,
+                )
+            if task_id and redis_client:
+                await redis_client.hset(
+                    task_id, mapping={"rr_integrity": json.dumps(rr_integrity)}
+                )
+            if evidence_out is not None:
+                evidence_out["rr_integrity"] = rr_integrity
+        except Exception as exc:  # pragma: no cover - degrade to Track B only
+            logger.warning("RR carried-forward alignment failed; Track B continues", exc_info=exc)
         if evidence_out is not None:
             inline_manifest, inline_render_data = _assemble_inline_bundle(
                 task_id, "general_preregistration", source_payloads

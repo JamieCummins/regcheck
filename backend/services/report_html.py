@@ -51,12 +51,14 @@ def build_standalone_report_html(
     manifest: dict[str, Any] | None,
     render_data: dict[str, Any] | None,
     meta: str | None = None,
+    rr_integrity: dict[str, Any] | None = None,
 ) -> str:
     """Return a complete HTML document string for a self-contained report."""
     bundle = {
         "items": items or [],
         "manifest": manifest or None,
         "render_data": render_data or {},
+        "rr_integrity": rr_integrity or None,
     }
     custom_css = _EXTERNAL_IMPORT_RE.sub("", _read("css/custom-styles.css"))
     report_css = _EXTERNAL_IMPORT_RE.sub("", _read("css/report.css"))
@@ -152,10 +154,12 @@ def write_report_html(
     manifest: dict[str, Any] | None,
     render_data: dict[str, Any] | None,
     meta: str | None = None,
+    rr_integrity: dict[str, Any] | None = None,
 ) -> str:
     """Render and write the report to ``path``; returns the path written."""
     document = build_standalone_report_html(
-        title=title, items=items, manifest=manifest, render_data=render_data, meta=meta
+        title=title, items=items, manifest=manifest, render_data=render_data, meta=meta,
+        rr_integrity=rr_integrity,
     )
     Path(path).write_text(document, encoding="utf-8")
     return path
