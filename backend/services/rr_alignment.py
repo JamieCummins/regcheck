@@ -75,8 +75,25 @@ def _word_diff(a: str, b: str) -> tuple[list[dict[str, str]], str, str]:
     return ops, " … ".join(removed), " … ".join(added)
 
 
-def _block_similarity(a: str, b: str) -> float:
-    return SequenceMatcher(a=_norm(a), b=_norm(b), autojunk=False).ratio()
+def _block_similarity_norm(a_norm: str, b_norm: str, a_tokens: set[str], b_tokens: set[str]) -> float:
+    """Similarity with a cheap token-set gate first. difflib's quick_ratio is a
+    character-multiset bound — nearly useless for prose, where a wholesale
+    rewrite still shares most of the alphabet — so dissimilar pairs are rejected
+    on word-set overlap in O(tokens) before paying for the quadratic ratio().
+    A ratio() of 0.5 requires a long common subsequence, which requires shared
+    words; 0.6x leaves generous headroom for word-order effects."""
+    if not a_tokens or not b_tokens:
+        return 0.0
+    overlap = len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens))
+    if overlap < FUZZY_PAIR_THRESHOLD * 0.6:
+        return 0.0
+    return SequenceMatcher(a=a_norm, b=b_norm, autojunk=False).ratio()
+
+
+# Inside a replace run, a Stage 1 block is only compared against Stage 2 blocks
+# near its position-mapped counterpart. Real manuscripts are near-monotonic, so
+# this bounds the pairing cost to O(run1 x window) instead of O(run1 x run2).
+PAIRING_WINDOW = 15
 
 
 def align_stages(stage1_text: str, stage2_text: str, *, fuzzy_threshold: float = FUZZY_PAIR_THRESHOLD) -> dict[str, Any]:
@@ -89,6 +106,7 @@ def align_stages(stage1_text: str, stage2_text: str, *, fuzzy_threshold: float =
     b1, b2 = _blocks(stage1_text), _blocks(stage2_text)
     n1, n2 = len(b1), len(b2)
     norms1, norms2 = [_norm(b) for b in b1], [_norm(b) for b in b2]
+    toks1, toks2 = [set(n.split()) for n in norms1], [set(n.split()) for n in norms2]
 
     identical = 0
     moved = 0
@@ -103,16 +121,22 @@ def align_stages(stage1_text: str, stage2_text: str, *, fuzzy_threshold: float =
         run1 = list(range(i1, i2))
         run2 = list(range(j1, j2))
         if op in ("replace",):
-            # Pair edited blocks inside the replace run by best lexical similarity.
-            candidates = sorted(
-                ((_block_similarity(b1[i], b2[j]), i, j) for i in run1 for j in run2),
-                key=lambda t: -t[0],
-            )
+            # Pair edited blocks inside the replace run by best lexical similarity,
+            # windowed around each block's position-mapped counterpart.
+            scale = len(run2) / len(run1) if run1 else 1.0
+            pairs = []
+            for offset1, i in enumerate(run1):
+                expected = j1 + int(offset1 * scale)
+                lo = max(j1, expected - PAIRING_WINDOW)
+                hi = min(j2, expected + PAIRING_WINDOW + 1)
+                for j in range(lo, hi):
+                    sim = _block_similarity_norm(norms1[i], norms2[j], toks1[i], toks2[j])
+                    if sim >= fuzzy_threshold:
+                        pairs.append((sim, i, j))
+            candidates = sorted(pairs, key=lambda t: -t[0])
             used1: set[int] = set()
             used2: set[int] = set()
             for sim, i, j in candidates:
-                if sim < fuzzy_threshold:
-                    break
                 if i in used1 or j in used2:
                     continue
                 used1.add(i)

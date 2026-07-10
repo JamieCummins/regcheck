@@ -770,6 +770,11 @@
     "randomization check",
     "data quality"
    ]
+  },
+  {
+   "dimension": "Carried-forward text fidelity",
+   "definition": "Whether the Stage 1 text that carries forward into Stage 2 (introduction, hypotheses, methods, analysis plan) is preserved as written, apart from licensed changes. The excerpts below are the most-changed carried-forward passages, identified by a mechanical text comparison of the two manuscripts, each shown as the Stage 1 wording followed by its Stage 2 counterpart.",
+   "keywords": []
   }
  ]
 }
