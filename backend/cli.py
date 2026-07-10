@@ -151,6 +151,11 @@ async def _run_general(args) -> dict:
         num_voters=_resolve_num_voters(args),
         isolation_cache_dir=_resolve_isolation_cache_dir(args),
         isolation_passes=args.isolation_passes,
+        comparison_context=(
+            "registered_report"
+            if getattr(args, "comparison_type", "preregistration") == "registered-report"
+            else "preregistration"
+        ),
     )
     logger.info("Completed general comparison.")
     payload = result.model_dump()
@@ -392,6 +397,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Directory for caching multi-study isolation extractions so repeated local runs "
             "of the same paper reuse identical isolated text — makes the pipeline reproducible "
             "run-to-run (default: ~/.cache/regcheck/isolation). Only used with --multiple-experiments."
+        ),
+    )
+    general.add_argument(
+        "--comparison-type",
+        choices=["preregistration", "registered-report"],
+        default="preregistration",
+        help=(
+            "Framing for the comparison: a standard preregistration vs paper (default), "
+            "or a Registered Report Stage 1 vs Stage 2 manuscript (adds the RR prompt "
+            "framing, licensed-structure rules, and RR add-on dimensions)."
         ),
     )
     general.add_argument(

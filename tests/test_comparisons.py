@@ -296,6 +296,8 @@ def test_master_prompt_carries_verdict_decision_rules(monkeypatch):
     assert "a new hypothesis is never licensed by an exploratory-analyses clause" in prompt
     # Substance over surface + categorical inference by design features.
     assert "the substance of the registration and paper, rather than just the surface wording" in prompt
+    assert "the strength and epistemic status of claims" in prompt
+    assert "demoted to an exploratory or tentative observation" in prompt
     assert "'Method A, variant B' registered but 'Method A, variant C' reported is a deviation" in prompt
     assert "design features the documents describe" in prompt
     # Omission flagging: hedge + structured fields + system-side verification.
@@ -523,7 +525,7 @@ def test_discipline_presets_are_single_sourced():
     registry, injected into the wizard, and offered to the CLI). All four load."""
     from backend.services import dimensions as dm
 
-    assert dm.discipline_keys() == ["psychology", "clinical", "economics", "preclinical"]
+    assert dm.discipline_keys() == ["psychology", "clinical", "economics", "preclinical", "political_science"]
     assert len(dm.get_discipline_dimensions("psychology")) == 9
     assert len(dm.get_discipline_dimensions("economics")) == 10
     assert dm.get_discipline_dimensions("nope") is None
@@ -1388,3 +1390,60 @@ def test_history_context_preserves_static_prompt_prefix(monkeypatch):
     # ...with the history inserted between the prefix and the dimension line.
     hist_idx = with_history.index("Hypotheses")
     assert len(prefix) <= hist_idx < with_history.index(marker)
+
+
+def test_registered_report_context_gets_rr_framing(monkeypatch):
+    """The RR context carries its own intro, format definition, and licensed-structure
+    clause; the preregistration context must NOT contain any of them."""
+    captured = []
+
+    def _dispatch(messages, **_kw):
+        captured.append(messages[-1]["content"])
+        return _verif_reply()
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1,
+        comparison_context="registered_report",
+    )
+    comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1,
+        comparison_context="preregistration",
+    )
+    rr, prereg = captured[0], captured[1]
+    for marker in (
+        "Stage 1 manuscript of a Registered Report",
+        "in-principle acceptance BEFORE data collection",
+        "Format-licensed Stage 2 changes (NOT deviations)",
+        "converting future tense to past tense",
+    ):
+        assert marker in rr
+        assert marker not in prereg
+
+
+def test_rr_addons_appended_and_deduped():
+    from backend.services.dimensions import append_rr_addons, rr_addon_dimensions
+
+    addons = rr_addon_dimensions()
+    assert any(d["dimension"] == "Outcome-neutral quality checks" for d in addons)
+
+    base = [{"dimension": "Hypotheses", "definition": "x"}]
+    merged = append_rr_addons(base)
+    assert merged[0]["dimension"] == "Hypotheses"
+    assert any(d["dimension"] == "Outcome-neutral quality checks" for d in merged)
+    # Already-present add-ons are not duplicated (name match is normalised).
+    again = append_rr_addons(merged)
+    assert len(again) == len(merged)
+
+
+def test_political_science_preset_exists_with_definitions():
+    from backend.services.dimensions import get_discipline_dimensions
+
+    dims = get_discipline_dimensions("political_science")
+    assert dims and len(dims) == 10
+    assert all((d.get("definition") or "").strip() for d in dims)
+    names = [d["dimension"] for d in dims]
+    assert "Estimand and model specification" in names
+    assert "Heterogeneity and subgroup analyses" in names

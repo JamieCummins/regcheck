@@ -333,6 +333,21 @@ def get_discipline_dimensions(key: str) -> list[dict[str, str]] | None:
     return [dict(d) for d in entry.get("dimensions", [])]
 
 
+def rr_addon_dimensions() -> list[dict[str, str]]:
+    """Registered-Report add-on dimensions (e.g. outcome-neutral quality checks),
+    appended to whichever discipline set the user selected when the comparison
+    is a Stage 1 vs Stage 2 Registered Report."""
+    return [dict(d) for d in _discipline_data().get("rr_addons", [])]
+
+
+def append_rr_addons(dimensions: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Append RR add-on dimensions to a resolved dimension list, skipping any the
+    user already included (matched by normalised name)."""
+    present = {_norm_dim_name(d.get("dimension") or d.get("name") or "") for d in dimensions}
+    extra = [d for d in rr_addon_dimensions() if _norm_dim_name(d["dimension"]) not in present]
+    return list(dimensions) + extra
+
+
 def _norm_dim_name(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").replace("–", "-").replace("—", "-").strip().lower())
 

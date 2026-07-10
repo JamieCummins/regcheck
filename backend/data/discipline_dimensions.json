@@ -1,612 +1,775 @@
 {
-  "order": [
-    "psychology",
-    "clinical",
-    "economics",
-    "preclinical"
-  ],
-  "sets": {
-    "psychology": {
-      "label": "Psychology",
-      "dimensions": [
-        {
-          "dimension": "Hypotheses",
-          "definition": "Specific, directional (verbal) predictions the study set to test out (usually stated in the Introduction [frequently at the end of the introduction] or right before the introduction of a new study), including effects which are confirmatory vs. exploratory. Relevant keywords: 'expect(ed)', 'predict(ed)', or 'hypothesise(d)'. for primary hypotheses: 'key', 'leading', 'main', 'major', 'primary', or 'principal'. for secondary hypotheses: 'additional', 'auxiliary', 'minor', or 'secondary'.",
-          "keywords": [
-            "hypothes",
-            "we predict",
-            "we expect",
-            "predicted that",
-            "directional",
-            "one-tailed",
-            "one-sided",
-            "h1",
-            "h2",
-            "confirmatory"
-          ]
-        },
-        {
-          "dimension": "Data source",
-          "definition": "Where the data will be / was obtained, and the processes therein. For example, a student sample, online (e.g., m-turk, prolific), the community, an existing archival dataset, etc.",
-          "keywords": [
-            "prolific",
-            "mturk",
-            "mechanical turk",
-            "recruited",
-            "recruitment",
-            "sample of",
-            "online panel",
-            "community sample",
-            "student sample",
-            "archival",
-            "data were collected",
-            "sona"
-          ]
-        },
-        {
-          "dimension": "Inclusion and exclusion criteria",
-          "definition": "Inclusion criteria specify how subjects (or units of analysis otherwise specified) are selected for eligibility in the study.\nExclusion criteria specify how data exclusions are determined (e.g., how will outliers be determined? Will awareness checks be implemented?).",
-          "keywords": [
-            "exclud",
-            "exclusion",
-            "inclusion",
-            "attention check",
-            "failed the",
-            "did not pass",
-            "removed from",
-            "eligib",
-            "comprehension check",
-            "outlier",
-            "screening"
-          ]
-        },
-        {
-          "dimension": "Sample size",
-          "definition": "The precise number of participants that the researchers intend to sample or a range, minimum, or maximum. This can also include a stopping rule if one is specified.",
-          "keywords": [
-            "sample size",
-            "n =",
-            "power analysis",
-            "g*power",
-            "a priori power",
-            "stopping rule",
-            "we collected",
-            "we recruited",
-            "final sample",
-            "target sample"
-          ]
-        },
-        {
-          "dimension": "Manipulated variables",
-          "definition": "Variables that are experimentally manipulated, that is, the experimenter controlled the level / treatment that participants received.",
-          "keywords": [
-            "manipulat",
-            "condition",
-            "randomly assigned",
-            "random assignment",
-            "between-subjects",
-            "within-subjects",
-            "independent variable",
-            "experimental condition",
-            "assigned to",
-            "we varied"
-          ]
-        },
-        {
-          "dimension": "Measured variables",
-          "definition": "Variables that are observed/ recorded in a study. This can include outcome measures, as well as any measured predictors or covariates.",
-          "keywords": [
-            "dependent variable",
-            "dependent measure",
-            "outcome measure",
-            "we measured",
-            "we assessed",
-            "rated",
-            "slider",
-            "likert",
-            "scale ranging",
-            "items",
-            "response scale"
-          ]
-        },
-        {
-          "dimension": "Statistical models",
-          "definition": "The statistical tests that are used to analyse the data, based on the manipulated and measured variables, to address the research questions and hypotheses.",
-          "keywords": [
-            "t-test",
-            "t test",
-            "anova",
-            "regression",
-            "mixed model",
-            "mixed-effects",
-            "we analy",
-            "statistical analys",
-            "alpha =",
-            "afex",
-            "emmeans",
-            "linear model",
-            "correlation"
-          ]
-        },
-        {
-          "dimension": "Transformations",
-          "definition": "Approaches to processing data from one form, structure, or scale to another to prepare it for analysis (e.g., log transforming, centering, or recoding the data).",
-          "keywords": [
-            "transform",
-            "log-transform",
-            "log10",
-            "centered",
-            "centred",
-            "mean-cent",
-            "z-score",
-            "standardi",
-            "recode",
-            "rescal",
-            "winsoriz",
-            "square-root"
-          ]
-        },
-        {
-          "dimension": "Missing data",
-          "definition": "Information about how missing data will be handled in the processing and analysis of the study.",
-          "keywords": [
-            "missing data",
-            "missing value",
-            "imputation",
-            "imputed",
-            "listwise",
-            "pairwise deletion",
-            "complete case",
-            "incomplete",
-            "fiml",
-            "multiple imputation"
-          ]
-        }
-      ]
+ "order": [
+  "psychology",
+  "clinical",
+  "economics",
+  "preclinical",
+  "political_science"
+ ],
+ "sets": {
+  "psychology": {
+   "label": "Psychology",
+   "dimensions": [
+    {
+     "dimension": "Hypotheses",
+     "definition": "Specific, directional (verbal) predictions the study set to test out (usually stated in the Introduction [frequently at the end of the introduction] or right before the introduction of a new study), including effects which are confirmatory vs. exploratory. Relevant keywords: 'expect(ed)', 'predict(ed)', or 'hypothesise(d)'. for primary hypotheses: 'key', 'leading', 'main', 'major', 'primary', or 'principal'. for secondary hypotheses: 'additional', 'auxiliary', 'minor', or 'secondary'.",
+     "keywords": [
+      "hypothes",
+      "we predict",
+      "we expect",
+      "predicted that",
+      "directional",
+      "one-tailed",
+      "one-sided",
+      "h1",
+      "h2",
+      "confirmatory"
+     ]
     },
-    "clinical": {
-      "label": "Clinical / Medical",
-      "dimensions": [
-        {
-          "dimension": "Eligibility – inclusion criteria",
-          "definition": "All explicitly stated conditions, characteristics, or thresholds that must be satisfied for a participant or study unit (e.g., individual, cluster, site) to be enrolled in the study. This includes required demographic characteristics (e.g., age range, sex/gender, pregnancy/menopausal status), diagnosis or target condition (including staging, severity, symptom duration, biomarker status), clinical status (e.g., performance status, treatment-naïve status), prior or current treatments that are required or permitted, contextual factors (e.g., recruitment setting, healthcare setting, geography), and other positive requirements (e.g., language proficiency, ability to comply with study procedures, capacity to consent, access to required technology or devices), typically expressed using terms such as “must have,” “must meet,” “only participants with,” or “eligible if.” Commonly appears as bullet points or prose under headings such as “Inclusion criteria,” “Eligibility criteria,” or “Participants” in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "inclusion criteri",
-            "eligib",
-            "eligible if",
-            "must have",
-            "must meet",
-            "key inclusion",
-            "were eligible",
-            "diagnosis of",
-            "aged"
-          ]
-        },
-        {
-          "dimension": "Eligibility – exclusion criteria",
-          "definition": "All explicitly stated conditions or characteristics that disqualify a participant from enrollment or continued participation in the study. This includes safety-related exclusions (e.g., contraindications, relevant comorbidities, allergies, pregnancy where specified as exclusion, severe organ dysfunction), protocol- or confounding-related exclusions (e.g., concurrent trial participation, use of prohibited concomitant treatments, prior exposure to the study intervention beyond allowed limits), feasibility-related exclusions (e.g., inability or unwillingness to adhere to required visits, procedures, or follow-up), and history or condition-based exclusions indicated by phrases such as “must not,” “excluded if,” “no history of,” or “not eligible if.” Commonly appears under “Exclusion criteria” or within “Eligibility”/“Participants” sections in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "exclusion criteri",
-            "excluded if",
-            "must not",
-            "were excluded",
-            "contraindicat",
-            "no history of",
-            "not eligible",
-            "ineligible"
-          ]
-        },
-        {
-          "dimension": "Intervention/treatment and control/placebo",
-          "definition": "The detailed specification of each study arm, including both experimental and comparator arms. This encompasses the name or identity of the intervention (e.g., drug, biologic, device, surgical procedure, behavioural or psychological program, digital/app-based intervention), the dose or intensity (e.g., strength, amount, frequency, duration of sessions), route or mode of administration (e.g., oral, IV, subcutaneous, inhaled, implanted, online, in-person, telephone), schedule and timing (including dosing schedules, titration, tapering, timing relative to baseline or randomisation), planned duration of administration, and a clear description of the control or comparator condition, such as placebo (including route and appearance), sham procedure, active control (with its own dose and schedule), or usual/standard care (with defining elements). It also includes any mandated co-interventions (e.g., background therapy) and any explicitly prohibited concomitant treatments. Commonly appears under headings such as “Interventions,” “Study treatments,” “Arm description,” “Trial arms,” or “Treatment protocol.”",
-          "keywords": [
-            "intervention",
-            "treatment arm",
-            "control arm",
-            "placebo",
-            "comparator",
-            "dose",
-            "dosing",
-            "administered",
-            "standard of care",
-            "usual care",
-            "sham",
-            "route of administration"
-          ]
-        },
-        {
-          "dimension": "Ethical approval – number",
-          "definition": "The specific identifier(s) associated with ethical approval of the study, including ethics committee/IRB/REC/REB approval numbers, protocol codes linked to ethics approval, national or institutional reference numbers, and identifiers for substantial amendments where explicitly reported. These identifiers are typically presented in sections or statements labelled “Ethics approval,” “Ethical considerations,” “IRB (Institutional Review Board) approval,” or similar, and may appear in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "ethics approval",
-            "irb",
-            "approval number",
-            "protocol number",
-            "rec reference",
-            "reference number"
-          ]
-        },
-        {
-          "dimension": "Ethical approval – committee",
-          "definition": "The official name(s) of the ethics body or bodies responsible for reviewing and approving the study, such as Institutional Review Boards (IRBs), Research Ethics Committees (RECs), Research Ethics Boards (REBs), hospital or university ethics committees, and national or regional competent authorities performing ethics review. Names often include the institution and country or region (e.g., “University X Research Ethics Committee, Country Y”) and are typically reported in ethics-related sections or statements in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "ethics committee",
-            "institutional review board",
-            "irb",
-            "research ethics committee",
-            "review board",
-            "ethics board"
-          ]
-        },
-        {
-          "dimension": "Ethical approval – date",
-          "definition": "The calendar date on which ethics approval was granted for the primary study protocol, and, where explicitly reported, the dates on which major amendments were approved. Dates may be presented in full (e.g., “15 March 2022”) or in partial formats (e.g., month/year) and are usually mentioned alongside the ethics committee name or approval number in sections titled “Ethics approval,” “Ethical considerations,” or similar in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "approved on",
-            "date of approval",
-            "approved in",
-            "granted on",
-            "ethics approval"
-          ]
-        },
-        {
-          "dimension": "Sample size",
-          "definition": "The numerical specification of the number of participants associated with the study, including planned or target total sample size, planned or target per-arm sample size (where reported), and actual numbers enrolled, randomized, allocated, or analyzed, overall and by arm (where reported). Expressions may include phrases such as “target sample size,” “planned enrollment,” “anticipated enrollment,” “a total of N participants,” “we aimed to recruit,” or “N participants were randomized/analyzed,” and typically appear in “Sample size,” “Methods,” “Participants,” “Study design,” “Statistical methods,” enrollment fields, or CONSORT-style flow diagrams.",
-          "keywords": [
-            "sample size",
-            "n =",
-            "power calculation",
-            "power analysis",
-            "to detect",
-            "randomi",
-            "enrolled",
-            "recruited",
-            "were analy",
-            "consort",
-            "allocated"
-          ]
-        },
-        {
-          "dimension": "Date recruitment started",
-          "definition": "The planned or actual date on which enrollment of the first participant began. This may be expressed as an exact date (e.g., “Recruitment started on 01 June 2021”) or a less specific time reference (e.g., “Recruitment commenced in June 2021”) and is commonly found in fields or text labelled “Study start date,” “Date of first enrollment,” “Recruitment,” or within “Methods” and “Study design” sections in trial registries, protocols, and manuscripts.",
-          "keywords": [
-            "recruitment",
-            "first patient",
-            "enrolment began",
-            "enrollment began",
-            "study start",
-            "recruited between",
-            "enrolled from"
-          ]
-        },
-        {
-          "dimension": "Outcomes – primary",
-          "definition": "All outcome measures explicitly designated as “primary,” “main,” or “primary endpoint(s)” that define the principal endpoints of interest for evaluating the intervention. A well-specified primary outcome typically includes: (a) the outcome domain or construct (e.g., overall survival, hospitalization, pain, HbA1c, depression severity), (b) the measurement instrument or operational definition (e.g., named clinical scale, laboratory test, imaging modality, diagnostic or response criteria, event definition algorithm), (c) the metric or scale (e.g., absolute value, change from baseline, proportion meeting a threshold, time-to-event, rate, composite index, including units where applicable), and (d) the assessment timepoint(s) (e.g., at 12 weeks, day 28, at discharge, 6 months post-randomisation). Such information is typically reported in “Primary outcome(s)” or “Endpoints” fields, “Outcomes” or “Endpoints” sections, abstracts, and statistical analysis descriptions. Some primary outcomes may be composites of other primary or secondary outcomes.",
-          "keywords": [
-            "primary outcome",
-            "primary endpoint",
-            "primary efficacy",
-            "main outcome"
-          ]
-        },
-        {
-          "dimension": "Outcomes – secondary",
-          "definition": "All outcome measures explicitly labelled as “secondary,” “key secondary,” or similar that are intended to provide supportive, exploratory, mechanistic, or safety-related information beyond the primary endpoints. A well-specified secondary outcome similarly includes: (a) the outcome domain or construct, (b) the measurement instrument or operational definition, (c) the metric or scale, and (d) the assessment timepoint(s). These outcomes may include safety endpoints, adverse events, laboratory parameters, quality of life, functional status, biomarker changes, intermediate clinical outcomes, or subgroup-specific effects, and are typically documented in “Secondary outcome(s)” fields and “Secondary outcomes” or “Endpoints” sections. Some secondary outcomes may be composites of other primary or secondary outcomes.",
-          "keywords": [
-            "secondary outcome",
-            "secondary endpoint",
-            "key secondary",
-            "exploratory endpoint",
-            "safety endpoint",
-            "adverse event"
-          ]
-        },
-        {
-          "dimension": "Method of randomisation and allocation",
-          "definition": "The described method used to generate and implement the allocation of participants or clusters to study arms. This includes the sequence generation approach (e.g., computer-generated random numbers, random-number tables, permuted block randomisation with or without specified block sizes, stratified randomisation by site or baseline characteristics, minimiz(s)ation or dynamic allocation procedures), the allocation ratio between arms (e.g., 1:1, 2:1, 3:1:1), and, where described in the same context, the allocation concealment mechanism (e.g., central randomisation, secure web- or telephone-based systems such as IWRS/IVRS, pharmacy-controlled allocation, sealed opaque sequentially numbered envelopes). Common textual indicators include phrases such as “participants were randomiz(s)ed using…,” “random sequence generated by…,” “block size…,” “stratified by…,” and “allocation was concealed using…,” and this information typically appears in “Randomiz(s)ation,” “Study design,” or “Methods” sections and corresponding fields in trial documentation.",
-          "keywords": [
-            "randomi",
-            "random sequence",
-            "allocation",
-            "block randomi",
-            "stratified",
-            "allocation concealment",
-            "1:1",
-            "computer-generated",
-            "randomly allocated"
-          ]
-        }
-      ]
+    {
+     "dimension": "Data source",
+     "definition": "Where the data will be / was obtained, and the processes therein. For example, a student sample, online (e.g., m-turk, prolific), the community, an existing archival dataset, etc.",
+     "keywords": [
+      "prolific",
+      "mturk",
+      "mechanical turk",
+      "recruited",
+      "recruitment",
+      "sample of",
+      "online panel",
+      "community sample",
+      "student sample",
+      "archival",
+      "data were collected",
+      "sona"
+     ]
     },
-    "economics": {
-      "label": "Economics",
-      "dimensions": [
-        {
-          "dimension": "Research question & hypotheses",
-          "definition": "The central question or claim the study is designed to address and the specific predictions it sets out to test, as stated prior to data collection. This includes the direction of each predicted effect where applicable, the distinction between confirmatory (pre-specified, hypothesis-testing) and exploratory (hypothesis-generating) analyses, and any primary versus secondary hypotheses. Note whether the questions and predictions tested in the paper match those registered in the pre-analysis plan, and whether any were added, dropped, or reframed after seeing the data. Typically stated in the introduction, 'Research questions', 'Hypotheses', or a pre-analysis-plan summary.",
-          "keywords": [
-            "hypothes",
-            "research question",
-            "we predict",
-            "we test whether",
-            "pre-specified",
-            "pre-analysis plan",
-            "confirmatory",
-            "exploratory",
-            "primary hypothesis"
-          ]
-        },
-        {
-          "dimension": "Data & sample",
-          "definition": "The data underlying the analysis and how the analysis sample is built. This includes the dataset(s) or data source (e.g., administrative records, survey, experiment, panel, archival/secondary data), the unit of observation (individual, household, firm, region, country-year), the time period and geographic scope, and the sample-construction rules (inclusion/exclusion filters, trimming, the population frame, and for primary data the collection procedure and target sample). Note any difference between the planned sample and the realised analysis sample. Typically reported in 'Data', 'Sample', 'Setting', or the early 'Methods'/'Empirical strategy' sections.",
-          "keywords": [
-            "data set",
-            "dataset",
-            "administrative data",
-            "survey",
-            "panel",
-            "sample",
-            "observations",
-            "unit of observation",
-            "time period",
-            "data come from",
-            "data source"
-          ]
-        },
-        {
-          "dimension": "Identification & research design",
-          "definition": "The research design used to identify the effect of interest and the assumptions it relies on. This includes the design type (randomised controlled trial / field experiment, instrumental variables, difference-in-differences, regression discontinuity, event study, synthetic control, matching, panel/fixed-effects, or a structural model), the source of identifying variation, the unit or level of randomisation or treatment assignment, and the key identifying assumptions (e.g., exclusion restriction and instrument relevance, parallel trends, continuity at the threshold, conditional independence/selection on observables). Note whether the strategy and assumptions in the paper match the pre-specified design. Typically reported in 'Empirical strategy', 'Identification', 'Research design', or 'Methods'.",
-          "keywords": [
-            "identification",
-            "difference-in-differences",
-            "diff-in-diff",
-            "instrumental variable",
-            "regression discontinuity",
-            "event study",
-            "fixed effects",
-            "parallel trends",
-            "exclusion restriction",
-            "natural experiment"
-          ]
-        },
-        {
-          "dimension": "Treatment/intervention & comparison",
-          "definition": "The treatment or causal variable of interest and the comparison against which its effect is estimated. For experiments this includes the treatment arm(s) and intervention content (what was delivered, dose/intensity, delivery mode, timing, and duration), the control or comparison arm, the randomisation ratio, and expected take-up/compliance. For observational designs this includes the definition of the treatment/exposure variable, any instrument(s) and the exclusion restriction invoked, and the comparison group or counterfactual (e.g., not-yet-treated units, below-threshold units). Note any mandated co-interventions or excluded conditions. Typically reported in 'Intervention', 'Treatment', 'Experimental design', or 'Empirical strategy'.",
-          "keywords": [
-            "treatment",
-            "treated group",
-            "control group",
-            "intervention",
-            "comparison group",
-            "counterfactual",
-            "take-up",
-            "treatment effect",
-            "instrument"
-          ]
-        },
-        {
-          "dimension": "Outcome variables (primary & secondary)",
-          "definition": "The dependent variables used to evaluate the effect, distinguishing primary from secondary outcomes. A well-specified outcome includes (a) the construct or domain (e.g., earnings, employment, test scores, consumption, take-up), (b) the operational definition and data source, (c) how it is constructed and scaled (level, log, change, share, standardised z-score, an index of several measures, winsorised/top-coded), and (d) the measurement timing or horizon. Note any pre-specified primary outcome or index, whether the paper's primary outcome matches the registered one, and any outcomes reported but not pre-specified (or vice versa). Typically reported in 'Outcomes', 'Variables', 'Measurement', or the pre-analysis plan.",
-          "keywords": [
-            "outcome variable",
-            "dependent variable",
-            "primary outcome",
-            "secondary outcome",
-            "we measure",
-            "index",
-            "log of",
-            "standardi"
-          ]
-        },
-        {
-          "dimension": "Sample size, power & MDE",
-          "definition": "The basis for the study's statistical precision, as planned. This includes the target sample size (overall and per arm or cell), any a priori power calculation or minimum detectable effect (MDE), and the assumptions behind it (assumed effect size, baseline variance, significance level and power, intra-cluster correlation and number of clusters for clustered designs, and expected take-up/attrition). Note whether the realised sample and design achieve the planned precision and whether the power analysis was pre-specified. Typically reported in 'Power', 'Sample size', 'Experimental design', or the pre-analysis plan; it is often absent in observational work, which is itself worth noting.",
-          "keywords": [
-            "sample size",
-            "power",
-            "minimum detectable effect",
-            "mde",
-            "power calculation",
-            "number of clusters",
-            "intra-cluster",
-            "attrition",
-            "we aimed to"
-          ]
-        },
-        {
-          "dimension": "Estimation & specification",
-          "definition": "The estimating equation(s) and model used to obtain the main results, as pre-specified. This includes the estimator (e.g., OLS, 2SLS/IV, logit/probit, Poisson, maximum likelihood, GMM, local polynomial), the exact specification (outcome and treatment variables, control variables/covariates, fixed effects, interaction terms, functional form, and any weighting), the level of aggregation, and how the treatment-effect parameter is defined (intention-to-treat versus treatment-on-the-treated/LATE). Note any divergence between the planned and reported specification, including added or dropped controls or a changed functional form. Typically reported in 'Empirical strategy', 'Estimation', 'Specification', or 'Methods'.",
-          "keywords": [
-            "ols",
-            "2sls",
-            "iv",
-            "probit",
-            "logit",
-            "poisson",
-            "specification",
-            "estimating equation",
-            "we estimate",
-            "regression of",
-            "fixed effects",
-            "covariates",
-            "clustered"
-          ]
-        },
-        {
-          "dimension": "Inference & multiple-hypothesis testing",
-          "definition": "How statistical inference is conducted and how multiple comparisons are handled, as planned. This includes the method for computing standard errors and the level of clustering (e.g., heteroskedasticity-robust, cluster-robust at a stated level, HAC/Newey-West, wild-cluster bootstrap, randomisation/permutation inference), and the approach to multiple-hypothesis testing across outcomes, subgroups, or treatment arms (e.g., pre-specified outcome families, summary indices, family-wise error-rate or false-discovery-rate corrections, sharpened q-values). Note whether the inference and corrections in the paper match what was pre-specified. Typically reported in 'Inference', 'Standard errors', 'Statistical analysis', or notes to the main tables.",
-          "keywords": [
-            "standard errors",
-            "clustered",
-            "robust",
-            "wild bootstrap",
-            "randomization inference",
-            "permutation",
-            "multiple hypothes",
-            "family-wise",
-            "false discovery",
-            "q-value",
-            "bonferroni"
-          ]
-        },
-        {
-          "dimension": "Heterogeneity & subgroup analyses",
-          "definition": "Pre-specified analyses of how the effect varies across units or contexts. This includes the subgroups or moderators to be examined (e.g., by sex, age, baseline status, region, treatment intensity), the dimensions of treatment-effect heterogeneity of interest, and how these will be tested (interaction terms, split samples, or pre-specified machine-learning/causal-forest approaches), including any correction for the additional tests. Note whether the heterogeneity analyses in the paper were pre-registered or appear exploratory, and whether subgroups were added or dropped. Typically reported in 'Heterogeneity', 'Subgroup analysis', or the pre-analysis plan.",
-          "keywords": [
-            "heterogene",
-            "subgroup",
-            "interaction",
-            "moderat",
-            "treatment effect heterogene",
-            "split sample",
-            "causal forest",
-            "varies by"
-          ]
-        },
-        {
-          "dimension": "Attrition, missing data & robustness",
-          "definition": "How the study handles incomplete data and shows that results are not artefacts of analytic choices, as planned. This includes the treatment of attrition and non-response (e.g., differential-attrition tests, bounds such as Lee bounds, inverse-probability weighting), the handling of missing values and outliers (imputation, winsorising, trimming), and the set of pre-specified robustness and sensitivity checks (alternative specifications, alternative samples or RDD bandwidths, placebo/falsification tests, controlling for additional covariates). Note any divergence between planned and reported handling, and any robustness checks added after the fact. Typically reported in 'Robustness', 'Sensitivity analysis', 'Attrition', or appendices.",
-          "keywords": [
-            "attrition",
-            "missing",
-            "imputation",
-            "robustness",
-            "sensitivity analys",
-            "lee bounds",
-            "balance",
-            "differential attrition",
-            "placebo test",
-            "falsification",
-            "winsoriz",
-            "trimming"
-          ]
-        }
-      ]
+    {
+     "dimension": "Inclusion and exclusion criteria",
+     "definition": "Inclusion criteria specify how subjects (or units of analysis otherwise specified) are selected for eligibility in the study.\nExclusion criteria specify how data exclusions are determined (e.g., how will outliers be determined? Will awareness checks be implemented?).",
+     "keywords": [
+      "exclud",
+      "exclusion",
+      "inclusion",
+      "attention check",
+      "failed the",
+      "did not pass",
+      "removed from",
+      "eligib",
+      "comprehension check",
+      "outlier",
+      "screening"
+     ]
     },
-    "preclinical": {
-      "label": "Preclinical / Animal",
-      "dimensions": [
-        {
-          "dimension": "Study type (exploratory vs. confirmatory)",
-          "definition": "Whether the study is described as exploratory (hypothesis-generating, with outcomes and analyses not fully pre-specified) or confirmatory (hypothesis-testing, with pre-specified predictions, outcomes, and analyses), and whether this designation is consistent between the protocol/preregistration and the publication. Confirmatory work states specific predictions before data collection and tests them with pre-specified analyses; exploratory work investigates patterns without prespecified hypotheses. Look for explicit statements (e.g., 'this study was exploratory/confirmatory', 'hypothesis-generating', 'pre-specified primary analysis') and for whether the paper retrospectively reframes exploratory analyses as confirmatory (or vice versa). Commonly indicated in the title, abstract, 'Study design', or 'Statistical analysis' sections.",
-          "keywords": [
-            "exploratory",
-            "confirmatory",
-            "hypothesis-generating",
-            "hypothesis-testing",
-            "pre-specified",
-            "pilot study"
-          ]
-        },
-        {
-          "dimension": "Total number of animals",
-          "definition": "The total number of animals planned for the study, the sum across all experimental and control groups as stated in the protocol, and, where reported, the number of animals actually used, randomised, or analysed overall. May be described as total sample size, number of animals, total N, planned cohort size, or the estimated number of animals declared to an ethics or animal-welfare body. The experimental unit (animal, litter, cage, or cohort) should be considered, and discrepancies may arise from attrition, mortality, humane endpoints, or exclusions; note any difference between the planned total and the number ultimately analysed. Typically reported in 'Animals', 'Sample size', 'Methods', ethics/licence sections, or a study-flow diagram.",
-          "keywords": [
-            "animals were",
-            "total of",
-            "n =",
-            "number of animals",
-            "mice",
-            "rats",
-            "sample size",
-            "animals used"
-          ]
-        },
-        {
-          "dimension": "Number of animals per group",
-          "definition": "The planned number of animals allocated to each experimental and control group (group size, per-group sample size, n per arm/condition) as stated in the protocol, and, where reported, the actual numbers per group. This is often justified by an a priori power or sample-size calculation (assumed effect size, variability, alpha, power) or by a resource-equation/3Rs rationale. Note any divergence between planned and realised group sizes and whether the experimental unit is the individual animal or a higher-level unit (litter, cage). Typically reported in 'Animals', 'Sample size', 'Experimental design', or 'Statistical methods' sections, or in figure legends.",
-          "keywords": [
-            "per group",
-            "n =",
-            "group size",
-            "animals per",
-            "each group",
-            "group of",
-            "n per"
-          ]
-        },
-        {
-          "dimension": "Intervention and control",
-          "definition": "The specific intervention(s) planned and the control or comparator condition against which they are assessed. For the intervention this includes its identity (e.g., compound/drug, biologic, genetic or surgical manipulation, dietary or behavioural manipulation, device), the dose or intensity (amount, concentration, frequency), the route or mode of administration (e.g., oral gavage, intraperitoneal, intravenous, subcutaneous, inhaled, surgical), and the schedule, timing, and planned duration of administration. For the control this includes the comparator condition (e.g., vehicle, sham surgery, untreated, wild-type or littermate control, naive animals) specified with the same level of detail (route, volume, timing). It also includes any mandated co-interventions and explicitly prohibited concomitant treatments. Typically reported under 'Interventions', 'Treatments', 'Experimental groups', 'Study design', or 'Methods'.",
-          "keywords": [
-            "vehicle",
-            "sham",
-            "treatment group",
-            "control group",
-            "administered",
-            "dose",
-            "injected",
-            "gavage",
-            "intraperitoneal",
-            "i.p.",
-            "wild-type",
-            "littermate",
-            "knockout"
-          ]
-        },
-        {
-          "dimension": "Measures to reduce bias",
-          "definition": "Methods planned to reduce the risk of bias in conducting and analysing the study. This includes randomisation of animals (or higher-level units) to groups and the sequence-generation method (e.g., computer-generated random numbers, block or stratified randomisation), allocation concealment, and blinding/masking of those administering interventions, caring for animals, assessing outcomes, and analysing data. It also covers other bias-mitigation steps such as pre-specified inclusion/exclusion rules for animals or data points, randomised order of treatment and measurement, and steps to control for cage, litter, batch, or experimenter effects. Note whether each measure is stated as planned and whether the paper reports it as implemented. Commonly reported in 'Randomisation', 'Blinding', 'Experimental design', or 'Methods' sections (aligned with ARRIVE 2.0 items).",
-          "keywords": [
-            "randomi",
-            "blind",
-            "masked",
-            "allocation concealment",
-            "blinded to",
-            "randomly assigned",
-            "arrive",
-            "sequence generation"
-          ]
-        },
-        {
-          "dimension": "Primary outcomes",
-          "definition": "All outcome measures explicitly designated as primary, main, or the principal endpoint(s) used to evaluate the intervention. A well-specified primary outcome includes (a) the outcome domain or construct (e.g., tumour volume, infarct size, lesion area, survival, a behavioural readout, a physiological or molecular marker), (b) the measurement instrument or operational definition (e.g., named assay, imaging modality, behavioural test, histological scoring method), (c) the metric or scale (e.g., absolute value, change from baseline, proportion meeting a threshold, time-to-event, including units), and (d) the assessment timepoint(s) (e.g., at day 14, 6 weeks post-induction, terminal). Note whether the primary outcome named in the paper matches the one pre-specified in the protocol. Typically reported in 'Primary outcome', 'Outcomes', 'Endpoints', or the statistical-analysis description. Some primary outcomes may be composites of other outcomes.",
-          "keywords": [
-            "primary outcome",
-            "primary endpoint",
-            "main outcome",
-            "primary measure"
-          ]
-        },
-        {
-          "dimension": "Secondary outcomes",
-          "definition": "All outcome measures explicitly labelled as secondary, additional, or exploratory that provide supportive, mechanistic, or safety/welfare-related information beyond the primary endpoint. A well-specified secondary outcome similarly includes (a) the outcome domain or construct, (b) the measurement instrument or operational definition, (c) the metric or scale, and (d) the assessment timepoint(s). These may include additional behavioural, physiological, biochemical, histological, or molecular measures, adverse events or tolerability/welfare indicators, and subgroup or time-course analyses. Note any secondary outcomes reported in the paper that were not pre-specified, or pre-specified ones not reported. Typically reported in 'Secondary outcomes', 'Outcomes', or 'Endpoints' sections.",
-          "keywords": [
-            "secondary outcome",
-            "secondary endpoint",
-            "additional outcome",
-            "exploratory outcome"
-          ]
-        },
-        {
-          "dimension": "Statistical analyses",
-          "definition": "The statistical methods planned to test each hypothesis or estimate each effect, as specified before data collection. This includes the specific tests or models (e.g., t-test, ANOVA, mixed-effects/multilevel models, survival analysis, regression), the experimental unit used for analysis (animal, litter, cage), the handling of nested or repeated-measures data, covariates and factors included, planned corrections for multiple comparisons, the criterion for statistical significance, and rules for handling missing data, outliers, and excluded animals. Note any divergence between the planned analysis and the analysis reported, including added, removed, or changed tests. Typically reported in 'Statistical analysis', 'Data analysis', or 'Methods' sections.",
-          "keywords": [
-            "t-test",
-            "anova",
-            "statistical analys",
-            "we analy",
-            "p <",
-            "mixed model",
-            "post hoc",
-            "multiple comparison",
-            "prism",
-            "mann-whitney"
-          ]
-        },
-        {
-          "dimension": "Hypotheses",
-          "definition": "The specific predictions the study set out to test, as stated prior to data collection, including their direction (e.g., which group is expected to differ and in which direction) and whether each is designated confirmatory or exploratory. A well-specified hypothesis links a predicted effect to the intervention and the primary outcome. Note whether the hypotheses tested in the paper match those registered in direction and operationalisation, and whether any predictions appear to have been added, dropped, or reversed after seeing the data. Typically reported in the introduction, 'Objectives/Aims', 'Hypotheses', or 'Study design' sections.",
-          "keywords": [
-            "hypothes",
-            "we predict",
-            "we expect",
-            "predicted",
-            "directional",
-            "we hypothesi"
-          ]
-        }
-      ]
+    {
+     "dimension": "Sample size",
+     "definition": "The precise number of participants that the researchers intend to sample or a range, minimum, or maximum. This can also include a stopping rule if one is specified.",
+     "keywords": [
+      "sample size",
+      "n =",
+      "power analysis",
+      "g*power",
+      "a priori power",
+      "stopping rule",
+      "we collected",
+      "we recruited",
+      "final sample",
+      "target sample"
+     ]
+    },
+    {
+     "dimension": "Manipulated variables",
+     "definition": "Variables that are experimentally manipulated, that is, the experimenter controlled the level / treatment that participants received.",
+     "keywords": [
+      "manipulat",
+      "condition",
+      "randomly assigned",
+      "random assignment",
+      "between-subjects",
+      "within-subjects",
+      "independent variable",
+      "experimental condition",
+      "assigned to",
+      "we varied"
+     ]
+    },
+    {
+     "dimension": "Measured variables",
+     "definition": "Variables that are observed/ recorded in a study. This can include outcome measures, as well as any measured predictors or covariates.",
+     "keywords": [
+      "dependent variable",
+      "dependent measure",
+      "outcome measure",
+      "we measured",
+      "we assessed",
+      "rated",
+      "slider",
+      "likert",
+      "scale ranging",
+      "items",
+      "response scale"
+     ]
+    },
+    {
+     "dimension": "Statistical models",
+     "definition": "The statistical tests that are used to analyse the data, based on the manipulated and measured variables, to address the research questions and hypotheses.",
+     "keywords": [
+      "t-test",
+      "t test",
+      "anova",
+      "regression",
+      "mixed model",
+      "mixed-effects",
+      "we analy",
+      "statistical analys",
+      "alpha =",
+      "afex",
+      "emmeans",
+      "linear model",
+      "correlation"
+     ]
+    },
+    {
+     "dimension": "Transformations",
+     "definition": "Approaches to processing data from one form, structure, or scale to another to prepare it for analysis (e.g., log transforming, centering, or recoding the data).",
+     "keywords": [
+      "transform",
+      "log-transform",
+      "log10",
+      "centered",
+      "centred",
+      "mean-cent",
+      "z-score",
+      "standardi",
+      "recode",
+      "rescal",
+      "winsoriz",
+      "square-root"
+     ]
+    },
+    {
+     "dimension": "Missing data",
+     "definition": "Information about how missing data will be handled in the processing and analysis of the study.",
+     "keywords": [
+      "missing data",
+      "missing value",
+      "imputation",
+      "imputed",
+      "listwise",
+      "pairwise deletion",
+      "complete case",
+      "incomplete",
+      "fiml",
+      "multiple imputation"
+     ]
     }
+   ]
+  },
+  "clinical": {
+   "label": "Clinical / Medical",
+   "dimensions": [
+    {
+     "dimension": "Eligibility – inclusion criteria",
+     "definition": "All explicitly stated conditions, characteristics, or thresholds that must be satisfied for a participant or study unit (e.g., individual, cluster, site) to be enrolled in the study. This includes required demographic characteristics (e.g., age range, sex/gender, pregnancy/menopausal status), diagnosis or target condition (including staging, severity, symptom duration, biomarker status), clinical status (e.g., performance status, treatment-naïve status), prior or current treatments that are required or permitted, contextual factors (e.g., recruitment setting, healthcare setting, geography), and other positive requirements (e.g., language proficiency, ability to comply with study procedures, capacity to consent, access to required technology or devices), typically expressed using terms such as “must have,” “must meet,” “only participants with,” or “eligible if.” Commonly appears as bullet points or prose under headings such as “Inclusion criteria,” “Eligibility criteria,” or “Participants” in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "inclusion criteri",
+      "eligib",
+      "eligible if",
+      "must have",
+      "must meet",
+      "key inclusion",
+      "were eligible",
+      "diagnosis of",
+      "aged"
+     ]
+    },
+    {
+     "dimension": "Eligibility – exclusion criteria",
+     "definition": "All explicitly stated conditions or characteristics that disqualify a participant from enrollment or continued participation in the study. This includes safety-related exclusions (e.g., contraindications, relevant comorbidities, allergies, pregnancy where specified as exclusion, severe organ dysfunction), protocol- or confounding-related exclusions (e.g., concurrent trial participation, use of prohibited concomitant treatments, prior exposure to the study intervention beyond allowed limits), feasibility-related exclusions (e.g., inability or unwillingness to adhere to required visits, procedures, or follow-up), and history or condition-based exclusions indicated by phrases such as “must not,” “excluded if,” “no history of,” or “not eligible if.” Commonly appears under “Exclusion criteria” or within “Eligibility”/“Participants” sections in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "exclusion criteri",
+      "excluded if",
+      "must not",
+      "were excluded",
+      "contraindicat",
+      "no history of",
+      "not eligible",
+      "ineligible"
+     ]
+    },
+    {
+     "dimension": "Intervention/treatment and control/placebo",
+     "definition": "The detailed specification of each study arm, including both experimental and comparator arms. This encompasses the name or identity of the intervention (e.g., drug, biologic, device, surgical procedure, behavioural or psychological program, digital/app-based intervention), the dose or intensity (e.g., strength, amount, frequency, duration of sessions), route or mode of administration (e.g., oral, IV, subcutaneous, inhaled, implanted, online, in-person, telephone), schedule and timing (including dosing schedules, titration, tapering, timing relative to baseline or randomisation), planned duration of administration, and a clear description of the control or comparator condition, such as placebo (including route and appearance), sham procedure, active control (with its own dose and schedule), or usual/standard care (with defining elements). It also includes any mandated co-interventions (e.g., background therapy) and any explicitly prohibited concomitant treatments. Commonly appears under headings such as “Interventions,” “Study treatments,” “Arm description,” “Trial arms,” or “Treatment protocol.”",
+     "keywords": [
+      "intervention",
+      "treatment arm",
+      "control arm",
+      "placebo",
+      "comparator",
+      "dose",
+      "dosing",
+      "administered",
+      "standard of care",
+      "usual care",
+      "sham",
+      "route of administration"
+     ]
+    },
+    {
+     "dimension": "Ethical approval – number",
+     "definition": "The specific identifier(s) associated with ethical approval of the study, including ethics committee/IRB/REC/REB approval numbers, protocol codes linked to ethics approval, national or institutional reference numbers, and identifiers for substantial amendments where explicitly reported. These identifiers are typically presented in sections or statements labelled “Ethics approval,” “Ethical considerations,” “IRB (Institutional Review Board) approval,” or similar, and may appear in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "ethics approval",
+      "irb",
+      "approval number",
+      "protocol number",
+      "rec reference",
+      "reference number"
+     ]
+    },
+    {
+     "dimension": "Ethical approval – committee",
+     "definition": "The official name(s) of the ethics body or bodies responsible for reviewing and approving the study, such as Institutional Review Boards (IRBs), Research Ethics Committees (RECs), Research Ethics Boards (REBs), hospital or university ethics committees, and national or regional competent authorities performing ethics review. Names often include the institution and country or region (e.g., “University X Research Ethics Committee, Country Y”) and are typically reported in ethics-related sections or statements in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "ethics committee",
+      "institutional review board",
+      "irb",
+      "research ethics committee",
+      "review board",
+      "ethics board"
+     ]
+    },
+    {
+     "dimension": "Ethical approval – date",
+     "definition": "The calendar date on which ethics approval was granted for the primary study protocol, and, where explicitly reported, the dates on which major amendments were approved. Dates may be presented in full (e.g., “15 March 2022”) or in partial formats (e.g., month/year) and are usually mentioned alongside the ethics committee name or approval number in sections titled “Ethics approval,” “Ethical considerations,” or similar in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "approved on",
+      "date of approval",
+      "approved in",
+      "granted on",
+      "ethics approval"
+     ]
+    },
+    {
+     "dimension": "Sample size",
+     "definition": "The numerical specification of the number of participants associated with the study, including planned or target total sample size, planned or target per-arm sample size (where reported), and actual numbers enrolled, randomized, allocated, or analyzed, overall and by arm (where reported). Expressions may include phrases such as “target sample size,” “planned enrollment,” “anticipated enrollment,” “a total of N participants,” “we aimed to recruit,” or “N participants were randomized/analyzed,” and typically appear in “Sample size,” “Methods,” “Participants,” “Study design,” “Statistical methods,” enrollment fields, or CONSORT-style flow diagrams.",
+     "keywords": [
+      "sample size",
+      "n =",
+      "power calculation",
+      "power analysis",
+      "to detect",
+      "randomi",
+      "enrolled",
+      "recruited",
+      "were analy",
+      "consort",
+      "allocated"
+     ]
+    },
+    {
+     "dimension": "Date recruitment started",
+     "definition": "The planned or actual date on which enrollment of the first participant began. This may be expressed as an exact date (e.g., “Recruitment started on 01 June 2021”) or a less specific time reference (e.g., “Recruitment commenced in June 2021”) and is commonly found in fields or text labelled “Study start date,” “Date of first enrollment,” “Recruitment,” or within “Methods” and “Study design” sections in trial registries, protocols, and manuscripts.",
+     "keywords": [
+      "recruitment",
+      "first patient",
+      "enrolment began",
+      "enrollment began",
+      "study start",
+      "recruited between",
+      "enrolled from"
+     ]
+    },
+    {
+     "dimension": "Outcomes – primary",
+     "definition": "All outcome measures explicitly designated as “primary,” “main,” or “primary endpoint(s)” that define the principal endpoints of interest for evaluating the intervention. A well-specified primary outcome typically includes: (a) the outcome domain or construct (e.g., overall survival, hospitalization, pain, HbA1c, depression severity), (b) the measurement instrument or operational definition (e.g., named clinical scale, laboratory test, imaging modality, diagnostic or response criteria, event definition algorithm), (c) the metric or scale (e.g., absolute value, change from baseline, proportion meeting a threshold, time-to-event, rate, composite index, including units where applicable), and (d) the assessment timepoint(s) (e.g., at 12 weeks, day 28, at discharge, 6 months post-randomisation). Such information is typically reported in “Primary outcome(s)” or “Endpoints” fields, “Outcomes” or “Endpoints” sections, abstracts, and statistical analysis descriptions. Some primary outcomes may be composites of other primary or secondary outcomes.",
+     "keywords": [
+      "primary outcome",
+      "primary endpoint",
+      "primary efficacy",
+      "main outcome"
+     ]
+    },
+    {
+     "dimension": "Outcomes – secondary",
+     "definition": "All outcome measures explicitly labelled as “secondary,” “key secondary,” or similar that are intended to provide supportive, exploratory, mechanistic, or safety-related information beyond the primary endpoints. A well-specified secondary outcome similarly includes: (a) the outcome domain or construct, (b) the measurement instrument or operational definition, (c) the metric or scale, and (d) the assessment timepoint(s). These outcomes may include safety endpoints, adverse events, laboratory parameters, quality of life, functional status, biomarker changes, intermediate clinical outcomes, or subgroup-specific effects, and are typically documented in “Secondary outcome(s)” fields and “Secondary outcomes” or “Endpoints” sections. Some secondary outcomes may be composites of other primary or secondary outcomes.",
+     "keywords": [
+      "secondary outcome",
+      "secondary endpoint",
+      "key secondary",
+      "exploratory endpoint",
+      "safety endpoint",
+      "adverse event"
+     ]
+    },
+    {
+     "dimension": "Method of randomisation and allocation",
+     "definition": "The described method used to generate and implement the allocation of participants or clusters to study arms. This includes the sequence generation approach (e.g., computer-generated random numbers, random-number tables, permuted block randomisation with or without specified block sizes, stratified randomisation by site or baseline characteristics, minimiz(s)ation or dynamic allocation procedures), the allocation ratio between arms (e.g., 1:1, 2:1, 3:1:1), and, where described in the same context, the allocation concealment mechanism (e.g., central randomisation, secure web- or telephone-based systems such as IWRS/IVRS, pharmacy-controlled allocation, sealed opaque sequentially numbered envelopes). Common textual indicators include phrases such as “participants were randomiz(s)ed using…,” “random sequence generated by…,” “block size…,” “stratified by…,” and “allocation was concealed using…,” and this information typically appears in “Randomiz(s)ation,” “Study design,” or “Methods” sections and corresponding fields in trial documentation.",
+     "keywords": [
+      "randomi",
+      "random sequence",
+      "allocation",
+      "block randomi",
+      "stratified",
+      "allocation concealment",
+      "1:1",
+      "computer-generated",
+      "randomly allocated"
+     ]
+    }
+   ]
+  },
+  "economics": {
+   "label": "Economics",
+   "dimensions": [
+    {
+     "dimension": "Research question & hypotheses",
+     "definition": "The central question or claim the study is designed to address and the specific predictions it sets out to test, as stated prior to data collection. This includes the direction of each predicted effect where applicable, the distinction between confirmatory (pre-specified, hypothesis-testing) and exploratory (hypothesis-generating) analyses, and any primary versus secondary hypotheses. Note whether the questions and predictions tested in the paper match those registered in the pre-analysis plan, and whether any were added, dropped, or reframed after seeing the data. Typically stated in the introduction, 'Research questions', 'Hypotheses', or a pre-analysis-plan summary.",
+     "keywords": [
+      "hypothes",
+      "research question",
+      "we predict",
+      "we test whether",
+      "pre-specified",
+      "pre-analysis plan",
+      "confirmatory",
+      "exploratory",
+      "primary hypothesis"
+     ]
+    },
+    {
+     "dimension": "Data & sample",
+     "definition": "The data underlying the analysis and how the analysis sample is built. This includes the dataset(s) or data source (e.g., administrative records, survey, experiment, panel, archival/secondary data), the unit of observation (individual, household, firm, region, country-year), the time period and geographic scope, and the sample-construction rules (inclusion/exclusion filters, trimming, the population frame, and for primary data the collection procedure and target sample). Note any difference between the planned sample and the realised analysis sample. Typically reported in 'Data', 'Sample', 'Setting', or the early 'Methods'/'Empirical strategy' sections.",
+     "keywords": [
+      "data set",
+      "dataset",
+      "administrative data",
+      "survey",
+      "panel",
+      "sample",
+      "observations",
+      "unit of observation",
+      "time period",
+      "data come from",
+      "data source"
+     ]
+    },
+    {
+     "dimension": "Identification & research design",
+     "definition": "The research design used to identify the effect of interest and the assumptions it relies on. This includes the design type (randomised controlled trial / field experiment, instrumental variables, difference-in-differences, regression discontinuity, event study, synthetic control, matching, panel/fixed-effects, or a structural model), the source of identifying variation, the unit or level of randomisation or treatment assignment, and the key identifying assumptions (e.g., exclusion restriction and instrument relevance, parallel trends, continuity at the threshold, conditional independence/selection on observables). Note whether the strategy and assumptions in the paper match the pre-specified design. Typically reported in 'Empirical strategy', 'Identification', 'Research design', or 'Methods'.",
+     "keywords": [
+      "identification",
+      "difference-in-differences",
+      "diff-in-diff",
+      "instrumental variable",
+      "regression discontinuity",
+      "event study",
+      "fixed effects",
+      "parallel trends",
+      "exclusion restriction",
+      "natural experiment"
+     ]
+    },
+    {
+     "dimension": "Treatment/intervention & comparison",
+     "definition": "The treatment or causal variable of interest and the comparison against which its effect is estimated. For experiments this includes the treatment arm(s) and intervention content (what was delivered, dose/intensity, delivery mode, timing, and duration), the control or comparison arm, the randomisation ratio, and expected take-up/compliance. For observational designs this includes the definition of the treatment/exposure variable, any instrument(s) and the exclusion restriction invoked, and the comparison group or counterfactual (e.g., not-yet-treated units, below-threshold units). Note any mandated co-interventions or excluded conditions. Typically reported in 'Intervention', 'Treatment', 'Experimental design', or 'Empirical strategy'.",
+     "keywords": [
+      "treatment",
+      "treated group",
+      "control group",
+      "intervention",
+      "comparison group",
+      "counterfactual",
+      "take-up",
+      "treatment effect",
+      "instrument"
+     ]
+    },
+    {
+     "dimension": "Outcome variables (primary & secondary)",
+     "definition": "The dependent variables used to evaluate the effect, distinguishing primary from secondary outcomes. A well-specified outcome includes (a) the construct or domain (e.g., earnings, employment, test scores, consumption, take-up), (b) the operational definition and data source, (c) how it is constructed and scaled (level, log, change, share, standardised z-score, an index of several measures, winsorised/top-coded), and (d) the measurement timing or horizon. Note any pre-specified primary outcome or index, whether the paper's primary outcome matches the registered one, and any outcomes reported but not pre-specified (or vice versa). Typically reported in 'Outcomes', 'Variables', 'Measurement', or the pre-analysis plan.",
+     "keywords": [
+      "outcome variable",
+      "dependent variable",
+      "primary outcome",
+      "secondary outcome",
+      "we measure",
+      "index",
+      "log of",
+      "standardi"
+     ]
+    },
+    {
+     "dimension": "Sample size, power & MDE",
+     "definition": "The basis for the study's statistical precision, as planned. This includes the target sample size (overall and per arm or cell), any a priori power calculation or minimum detectable effect (MDE), and the assumptions behind it (assumed effect size, baseline variance, significance level and power, intra-cluster correlation and number of clusters for clustered designs, and expected take-up/attrition). Note whether the realised sample and design achieve the planned precision and whether the power analysis was pre-specified. Typically reported in 'Power', 'Sample size', 'Experimental design', or the pre-analysis plan; it is often absent in observational work, which is itself worth noting.",
+     "keywords": [
+      "sample size",
+      "power",
+      "minimum detectable effect",
+      "mde",
+      "power calculation",
+      "number of clusters",
+      "intra-cluster",
+      "attrition",
+      "we aimed to"
+     ]
+    },
+    {
+     "dimension": "Estimation & specification",
+     "definition": "The estimating equation(s) and model used to obtain the main results, as pre-specified. This includes the estimator (e.g., OLS, 2SLS/IV, logit/probit, Poisson, maximum likelihood, GMM, local polynomial), the exact specification (outcome and treatment variables, control variables/covariates, fixed effects, interaction terms, functional form, and any weighting), the level of aggregation, and how the treatment-effect parameter is defined (intention-to-treat versus treatment-on-the-treated/LATE). Note any divergence between the planned and reported specification, including added or dropped controls or a changed functional form. Typically reported in 'Empirical strategy', 'Estimation', 'Specification', or 'Methods'.",
+     "keywords": [
+      "ols",
+      "2sls",
+      "iv",
+      "probit",
+      "logit",
+      "poisson",
+      "specification",
+      "estimating equation",
+      "we estimate",
+      "regression of",
+      "fixed effects",
+      "covariates",
+      "clustered"
+     ]
+    },
+    {
+     "dimension": "Inference & multiple-hypothesis testing",
+     "definition": "How statistical inference is conducted and how multiple comparisons are handled, as planned. This includes the method for computing standard errors and the level of clustering (e.g., heteroskedasticity-robust, cluster-robust at a stated level, HAC/Newey-West, wild-cluster bootstrap, randomisation/permutation inference), and the approach to multiple-hypothesis testing across outcomes, subgroups, or treatment arms (e.g., pre-specified outcome families, summary indices, family-wise error-rate or false-discovery-rate corrections, sharpened q-values). Note whether the inference and corrections in the paper match what was pre-specified. Typically reported in 'Inference', 'Standard errors', 'Statistical analysis', or notes to the main tables.",
+     "keywords": [
+      "standard errors",
+      "clustered",
+      "robust",
+      "wild bootstrap",
+      "randomization inference",
+      "permutation",
+      "multiple hypothes",
+      "family-wise",
+      "false discovery",
+      "q-value",
+      "bonferroni"
+     ]
+    },
+    {
+     "dimension": "Heterogeneity & subgroup analyses",
+     "definition": "Pre-specified analyses of how the effect varies across units or contexts. This includes the subgroups or moderators to be examined (e.g., by sex, age, baseline status, region, treatment intensity), the dimensions of treatment-effect heterogeneity of interest, and how these will be tested (interaction terms, split samples, or pre-specified machine-learning/causal-forest approaches), including any correction for the additional tests. Note whether the heterogeneity analyses in the paper were pre-registered or appear exploratory, and whether subgroups were added or dropped. Typically reported in 'Heterogeneity', 'Subgroup analysis', or the pre-analysis plan.",
+     "keywords": [
+      "heterogene",
+      "subgroup",
+      "interaction",
+      "moderat",
+      "treatment effect heterogene",
+      "split sample",
+      "causal forest",
+      "varies by"
+     ]
+    },
+    {
+     "dimension": "Attrition, missing data & robustness",
+     "definition": "How the study handles incomplete data and shows that results are not artefacts of analytic choices, as planned. This includes the treatment of attrition and non-response (e.g., differential-attrition tests, bounds such as Lee bounds, inverse-probability weighting), the handling of missing values and outliers (imputation, winsorising, trimming), and the set of pre-specified robustness and sensitivity checks (alternative specifications, alternative samples or RDD bandwidths, placebo/falsification tests, controlling for additional covariates). Note any divergence between planned and reported handling, and any robustness checks added after the fact. Typically reported in 'Robustness', 'Sensitivity analysis', 'Attrition', or appendices.",
+     "keywords": [
+      "attrition",
+      "missing",
+      "imputation",
+      "robustness",
+      "sensitivity analys",
+      "lee bounds",
+      "balance",
+      "differential attrition",
+      "placebo test",
+      "falsification",
+      "winsoriz",
+      "trimming"
+     ]
+    }
+   ]
+  },
+  "preclinical": {
+   "label": "Preclinical / Animal",
+   "dimensions": [
+    {
+     "dimension": "Study type (exploratory vs. confirmatory)",
+     "definition": "Whether the study is described as exploratory (hypothesis-generating, with outcomes and analyses not fully pre-specified) or confirmatory (hypothesis-testing, with pre-specified predictions, outcomes, and analyses), and whether this designation is consistent between the protocol/preregistration and the publication. Confirmatory work states specific predictions before data collection and tests them with pre-specified analyses; exploratory work investigates patterns without prespecified hypotheses. Look for explicit statements (e.g., 'this study was exploratory/confirmatory', 'hypothesis-generating', 'pre-specified primary analysis') and for whether the paper retrospectively reframes exploratory analyses as confirmatory (or vice versa). Commonly indicated in the title, abstract, 'Study design', or 'Statistical analysis' sections.",
+     "keywords": [
+      "exploratory",
+      "confirmatory",
+      "hypothesis-generating",
+      "hypothesis-testing",
+      "pre-specified",
+      "pilot study"
+     ]
+    },
+    {
+     "dimension": "Total number of animals",
+     "definition": "The total number of animals planned for the study, the sum across all experimental and control groups as stated in the protocol, and, where reported, the number of animals actually used, randomised, or analysed overall. May be described as total sample size, number of animals, total N, planned cohort size, or the estimated number of animals declared to an ethics or animal-welfare body. The experimental unit (animal, litter, cage, or cohort) should be considered, and discrepancies may arise from attrition, mortality, humane endpoints, or exclusions; note any difference between the planned total and the number ultimately analysed. Typically reported in 'Animals', 'Sample size', 'Methods', ethics/licence sections, or a study-flow diagram.",
+     "keywords": [
+      "animals were",
+      "total of",
+      "n =",
+      "number of animals",
+      "mice",
+      "rats",
+      "sample size",
+      "animals used"
+     ]
+    },
+    {
+     "dimension": "Number of animals per group",
+     "definition": "The planned number of animals allocated to each experimental and control group (group size, per-group sample size, n per arm/condition) as stated in the protocol, and, where reported, the actual numbers per group. This is often justified by an a priori power or sample-size calculation (assumed effect size, variability, alpha, power) or by a resource-equation/3Rs rationale. Note any divergence between planned and realised group sizes and whether the experimental unit is the individual animal or a higher-level unit (litter, cage). Typically reported in 'Animals', 'Sample size', 'Experimental design', or 'Statistical methods' sections, or in figure legends.",
+     "keywords": [
+      "per group",
+      "n =",
+      "group size",
+      "animals per",
+      "each group",
+      "group of",
+      "n per"
+     ]
+    },
+    {
+     "dimension": "Intervention and control",
+     "definition": "The specific intervention(s) planned and the control or comparator condition against which they are assessed. For the intervention this includes its identity (e.g., compound/drug, biologic, genetic or surgical manipulation, dietary or behavioural manipulation, device), the dose or intensity (amount, concentration, frequency), the route or mode of administration (e.g., oral gavage, intraperitoneal, intravenous, subcutaneous, inhaled, surgical), and the schedule, timing, and planned duration of administration. For the control this includes the comparator condition (e.g., vehicle, sham surgery, untreated, wild-type or littermate control, naive animals) specified with the same level of detail (route, volume, timing). It also includes any mandated co-interventions and explicitly prohibited concomitant treatments. Typically reported under 'Interventions', 'Treatments', 'Experimental groups', 'Study design', or 'Methods'.",
+     "keywords": [
+      "vehicle",
+      "sham",
+      "treatment group",
+      "control group",
+      "administered",
+      "dose",
+      "injected",
+      "gavage",
+      "intraperitoneal",
+      "i.p.",
+      "wild-type",
+      "littermate",
+      "knockout"
+     ]
+    },
+    {
+     "dimension": "Measures to reduce bias",
+     "definition": "Methods planned to reduce the risk of bias in conducting and analysing the study. This includes randomisation of animals (or higher-level units) to groups and the sequence-generation method (e.g., computer-generated random numbers, block or stratified randomisation), allocation concealment, and blinding/masking of those administering interventions, caring for animals, assessing outcomes, and analysing data. It also covers other bias-mitigation steps such as pre-specified inclusion/exclusion rules for animals or data points, randomised order of treatment and measurement, and steps to control for cage, litter, batch, or experimenter effects. Note whether each measure is stated as planned and whether the paper reports it as implemented. Commonly reported in 'Randomisation', 'Blinding', 'Experimental design', or 'Methods' sections (aligned with ARRIVE 2.0 items).",
+     "keywords": [
+      "randomi",
+      "blind",
+      "masked",
+      "allocation concealment",
+      "blinded to",
+      "randomly assigned",
+      "arrive",
+      "sequence generation"
+     ]
+    },
+    {
+     "dimension": "Primary outcomes",
+     "definition": "All outcome measures explicitly designated as primary, main, or the principal endpoint(s) used to evaluate the intervention. A well-specified primary outcome includes (a) the outcome domain or construct (e.g., tumour volume, infarct size, lesion area, survival, a behavioural readout, a physiological or molecular marker), (b) the measurement instrument or operational definition (e.g., named assay, imaging modality, behavioural test, histological scoring method), (c) the metric or scale (e.g., absolute value, change from baseline, proportion meeting a threshold, time-to-event, including units), and (d) the assessment timepoint(s) (e.g., at day 14, 6 weeks post-induction, terminal). Note whether the primary outcome named in the paper matches the one pre-specified in the protocol. Typically reported in 'Primary outcome', 'Outcomes', 'Endpoints', or the statistical-analysis description. Some primary outcomes may be composites of other outcomes.",
+     "keywords": [
+      "primary outcome",
+      "primary endpoint",
+      "main outcome",
+      "primary measure"
+     ]
+    },
+    {
+     "dimension": "Secondary outcomes",
+     "definition": "All outcome measures explicitly labelled as secondary, additional, or exploratory that provide supportive, mechanistic, or safety/welfare-related information beyond the primary endpoint. A well-specified secondary outcome similarly includes (a) the outcome domain or construct, (b) the measurement instrument or operational definition, (c) the metric or scale, and (d) the assessment timepoint(s). These may include additional behavioural, physiological, biochemical, histological, or molecular measures, adverse events or tolerability/welfare indicators, and subgroup or time-course analyses. Note any secondary outcomes reported in the paper that were not pre-specified, or pre-specified ones not reported. Typically reported in 'Secondary outcomes', 'Outcomes', or 'Endpoints' sections.",
+     "keywords": [
+      "secondary outcome",
+      "secondary endpoint",
+      "additional outcome",
+      "exploratory outcome"
+     ]
+    },
+    {
+     "dimension": "Statistical analyses",
+     "definition": "The statistical methods planned to test each hypothesis or estimate each effect, as specified before data collection. This includes the specific tests or models (e.g., t-test, ANOVA, mixed-effects/multilevel models, survival analysis, regression), the experimental unit used for analysis (animal, litter, cage), the handling of nested or repeated-measures data, covariates and factors included, planned corrections for multiple comparisons, the criterion for statistical significance, and rules for handling missing data, outliers, and excluded animals. Note any divergence between the planned analysis and the analysis reported, including added, removed, or changed tests. Typically reported in 'Statistical analysis', 'Data analysis', or 'Methods' sections.",
+     "keywords": [
+      "t-test",
+      "anova",
+      "statistical analys",
+      "we analy",
+      "p <",
+      "mixed model",
+      "post hoc",
+      "multiple comparison",
+      "prism",
+      "mann-whitney"
+     ]
+    },
+    {
+     "dimension": "Hypotheses",
+     "definition": "The specific predictions the study set out to test, as stated prior to data collection, including their direction (e.g., which group is expected to differ and in which direction) and whether each is designated confirmatory or exploratory. A well-specified hypothesis links a predicted effect to the intervention and the primary outcome. Note whether the hypotheses tested in the paper match those registered in direction and operationalisation, and whether any predictions appear to have been added, dropped, or reversed after seeing the data. Typically reported in the introduction, 'Objectives/Aims', 'Hypotheses', or 'Study design' sections.",
+     "keywords": [
+      "hypothes",
+      "we predict",
+      "we expect",
+      "predicted",
+      "directional",
+      "we hypothesi"
+     ]
+    }
+   ]
+  },
+  "political_science": {
+   "label": "Political science",
+   "dimensions": [
+    {
+     "dimension": "Hypotheses",
+     "definition": "Specific predictions or expectations the study set out to test, including their status as confirmatory or exploratory, their direction, and any preregistered null or equivalence expectations.",
+     "keywords": [
+      "hypothes",
+      "we expect",
+      "we predict",
+      "h1",
+      "h2",
+      "confirmatory",
+      "exploratory",
+      "directional"
+     ]
+    },
+    {
+     "dimension": "Data source and sample",
+     "definition": "Where and from whom the data come: target population, sampling frame, survey firm or panel provider, country or case selection, recruitment channels, and any registered data-collection window or waves.",
+     "keywords": [
+      "sample",
+      "population",
+      "survey firm",
+      "panel",
+      "yougov",
+      "lucid",
+      "prolific",
+      "cloudresearch",
+      "recruit",
+      "wave",
+      "fieldwork"
+     ]
+    },
+    {
+     "dimension": "Treatments and manipulations",
+     "definition": "The experimental or quasi-experimental interventions: treatment and control conditions, vignettes, framing or information treatments, conjoint attributes and levels, and the randomisation procedure and unit of assignment.",
+     "keywords": [
+      "treatment",
+      "control group",
+      "vignette",
+      "conjoint",
+      "attribute",
+      "randomi",
+      "assignment",
+      "framing",
+      "manipulation"
+     ]
+    },
+    {
+     "dimension": "Outcome measurement",
+     "definition": "The outcome variables and how they are measured: question wording, scales, indices and how they are constructed, behavioural measures, coding schemes, and the designation of primary versus secondary outcomes.",
+     "keywords": [
+      "outcome",
+      "dependent variable",
+      "scale",
+      "index",
+      "item",
+      "question wording",
+      "coded",
+      "measure"
+     ]
+    },
+    {
+     "dimension": "Estimand and model specification",
+     "definition": "The quantity to be estimated (e.g. average treatment effect, conditional effects, intention-to-treat) and the estimation strategy: estimator, model form, covariate set, fixed effects, standard-error clustering or robust corrections, and any registered hierarchy of specifications.",
+     "keywords": [
+      "estimand",
+      "ate",
+      "intention-to-treat",
+      "ols",
+      "logit",
+      "regression",
+      "fixed effects",
+      "clustered",
+      "standard errors",
+      "covariate",
+      "specification"
+     ]
+    },
+    {
+     "dimension": "Sample size and power",
+     "definition": "The planned and achieved number of observations, power analysis or minimum-detectable-effect calculations, and any stopping or data-collection rules.",
+     "keywords": [
+      "sample size",
+      "power",
+      "minimum detectable effect",
+      "mde",
+      "n =",
+      "observations",
+      "stopping"
+     ]
+    },
+    {
+     "dimension": "Inclusion, exclusion, and attention checks",
+     "definition": "Who is included or excluded and on what registered criteria: eligibility rules, attention or comprehension screeners, speeders, duplicate or fraudulent responses, and whether exclusions are applied pre- or post-treatment.",
+     "keywords": [
+      "exclusion",
+      "inclusion",
+      "attention check",
+      "screener",
+      "speeder",
+      "duplicate",
+      "eligib",
+      "pre-treatment"
+     ]
+    },
+    {
+     "dimension": "Heterogeneity and subgroup analyses",
+     "definition": "Preregistered moderators, interaction terms, and subgroup analyses, including which are confirmatory versus exploratory and any registered expectations about heterogeneous effects.",
+     "keywords": [
+      "heterogen",
+      "moderator",
+      "interaction",
+      "subgroup",
+      "conditional effect",
+      "cate"
+     ]
+    },
+    {
+     "dimension": "Attrition and missing data",
+     "definition": "How dropout, nonresponse, and missing values are handled: registered rules for imputation or exclusion, checks for differential attrition across conditions, and item-nonresponse handling.",
+     "keywords": [
+      "attrition",
+      "dropout",
+      "missing",
+      "imputation",
+      "nonresponse",
+      "differential"
+     ]
+    },
+    {
+     "dimension": "Weighting and multiplicity",
+     "definition": "Whether and how survey weights, post-stratification, or raking are applied, and any registered corrections for multiple comparisons across outcomes, specifications, or subgroups.",
+     "keywords": [
+      "weight",
+      "post-stratification",
+      "raking",
+      "multiple comparisons",
+      "bonferroni",
+      "fdr",
+      "adjustment"
+     ]
+    }
+   ]
   }
+ },
+ "rr_addons": [
+  {
+   "dimension": "Outcome-neutral quality checks",
+   "definition": "Outcome-neutral criteria specified at Stage 1 that determine whether the data can test the hypotheses regardless of results: data-quality thresholds, manipulation checks, positive and negative controls, and baseline or randomisation checks — and whether Stage 2 reports them and whether they were satisfied.",
+   "keywords": [
+    "outcome-neutral",
+    "quality check",
+    "manipulation check",
+    "positive control",
+    "baseline",
+    "randomisation check",
+    "randomization check",
+    "data quality"
+   ]
+  }
+ ]
 }

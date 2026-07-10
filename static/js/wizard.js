@@ -563,6 +563,42 @@
                 setPreregSource(selectedSource());
             });
         }
+
+        // Registered Report mode: relabel the two upload panes as Stage 1 / Stage 2
+        // and drop the ClinicalTrials.gov source (an RR Stage 1 is a manuscript,
+        // uploaded or fetched from OSF — never a CT.gov record).
+        const comparisonModeSelect = document.getElementById("comparison_mode");
+        function applyComparisonMode() {
+            const rr = !!comparisonModeSelect && comparisonModeSelect.value === "registered_report";
+            const regTitle = document.querySelector("#registration-slot .dropzone__title");
+            const regHint = document.querySelector("#registration-slot .dropzone__hint");
+            const paperSlot = document.getElementById("paper_file");
+            const paperZone = paperSlot ? paperSlot.closest(".dropzone") : null;
+            if (regTitle) regTitle.textContent = rr ? "Stage 1 manuscript" : "Preregistration";
+            if (regHint) regHint.textContent = rr
+                ? "The in-principle-accepted Stage 1 manuscript (one or more files)"
+                : "Provide one or more files (e.g., registration, statistical analysis plan)";
+            if (paperZone) {
+                const t = paperZone.querySelector(".dropzone__title");
+                const h = paperZone.querySelector(".dropzone__hint");
+                if (t) t.textContent = rr ? "Stage 2 manuscript" : "Paper";
+                if (h) h.textContent = rr
+                    ? "The completed Stage 2 manuscript (one or more files)"
+                    : "Provide one or more files (e.g., paper, supplementary materials)";
+            }
+            if (comparisonSelect) {
+                const clinicalOption = comparisonSelect.querySelector('option[value="clinical"]');
+                if (clinicalOption) clinicalOption.hidden = rr;
+                if (rr && comparisonSelect.value === "clinical") {
+                    comparisonSelect.value = "upload";
+                    setPreregSource(selectedSource());
+                }
+            }
+        }
+        if (comparisonModeSelect) {
+            comparisonModeSelect.addEventListener("change", applyComparisonMode);
+            applyComparisonMode();
+        }
         if (registrationInput) registrationInput.addEventListener("input", checkFiles);
         if (osfUrlInput) osfUrlInput.addEventListener("input", checkFiles);
 
