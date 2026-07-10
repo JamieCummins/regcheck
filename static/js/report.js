@@ -357,12 +357,9 @@
     /* ── top-level render ────────────────────────────────────────────────── */
 
     function render() {
-        renderRRIntegrity();
         const hasItems = state.items.length > 0;
         const inDocuments = state.view === "documents" && hasItems;
         if (els.viewDecision) els.viewDecision.classList.toggle("d-none", inDocuments);
-        const rrPanel = document.getElementById("rr-integrity");
-        if (rrPanel) rrPanel.classList.toggle("d-none", inDocuments || !state.rrIntegrity);
         if (els.viewDocuments) els.viewDocuments.classList.toggle("d-none", !inDocuments);
 
         // Overview ⇄ Comparison toggle: only meaningful once the report has loaded.
@@ -1504,7 +1501,6 @@
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
-            if (data.rr_integrity) state.rrIntegrity = data.rr_integrity;
             if (data.evidence_available === false) {
                 state.manifest = null;
                 state.manifestUnavailable = data.state === "SUCCESS";
@@ -1522,79 +1518,11 @@
     }
 
 
-    /* ── Registered Report: carried-forward text integrity (Track A) ─────────── */
-    const RR_KIND_LABELS = { modified: "Modified", deleted: "Removed", inserted: "Added" };
-    const RR_CLASS_LABELS = { licensed: "Licensed", substantive: "Substantive", grey: "Grey area", pending: "Unclassified" };
-    const RR_EQUAL_CONTEXT_WORDS = 10;
-
-    function rrDiffHtml(change) {
-        if (change.kind === "deleted") return `<del>${escapeHtml(change.stage1_text || "")}</del>`;
-        if (change.kind === "inserted") return `<ins>${escapeHtml(change.stage2_text || "")}</ins>`;
-        const parts = [];
-        (change.diff || []).forEach((op) => {
-            if (op.op === "equal") {
-                const words = (op.stage1 || "").split(" ");
-                parts.push(escapeHtml(
-                    words.length > RR_EQUAL_CONTEXT_WORDS * 2 + 3
-                        ? words.slice(0, RR_EQUAL_CONTEXT_WORDS).join(" ") + " (…) " + words.slice(-RR_EQUAL_CONTEXT_WORDS).join(" ")
-                        : op.stage1
-                ));
-            } else {
-                if (op.stage1) parts.push(`<del>${escapeHtml(op.stage1)}</del>`);
-                if (op.stage2) parts.push(`<ins>${escapeHtml(op.stage2)}</ins>`);
-            }
-        });
-        return parts.join(" ");
-    }
-
-    function renderRRIntegrity() {
-        const data = state.rrIntegrity;
-        let panel = document.getElementById("rr-integrity");
-        if (!data) { if (panel) panel.classList.add("d-none"); return; }
-        if (!panel) {
-            panel = document.createElement("section");
-            panel.id = "rr-integrity";
-            panel.className = "rr-integrity";
-            const app = document.getElementById("report-app");
-            const decision = document.getElementById("view-decision");
-            if (app && decision) app.insertBefore(panel, decision);
-            else return;
-        }
-        const st = data.stats || {};
-        const changes = Array.isArray(data.changes) ? data.changes : [];
-        const shown = changes.slice(0, 50);
-        const summary = `${st.stage1_blocks ?? 0} Stage 1 blocks — ${st.identical ?? 0} carried forward unchanged`
-            + `${st.moved ? ` (+${st.moved} moved verbatim)` : ""}, ${st.modified ?? 0} modified, `
-            + `${st.deleted ?? 0} removed, ${st.inserted ?? 0} added in Stage 2.`;
-        panel.innerHTML = `
-            <details class="rr-integrity__card" ${changes.length ? "open" : ""}>
-                <summary class="rr-integrity__summary">
-                    <span class="rr-integrity__title">Carried-forward text (Stage 1 → Stage 2)</span>
-                    <span class="rr-integrity__stats">${escapeHtml(summary)}</span>
-                </summary>
-                ${changes.length === 0 ? '<p class="rr-integrity__clean">Every Stage 1 block is carried forward verbatim.</p>' : ""}
-                <ol class="rr-integrity__list">
-                    ${shown.map((c) => `
-                        <li class="rr-change rr-change--${escapeHtml(c.kind)}">
-                            <div class="rr-change__meta">
-                                <span class="rr-chip rr-chip--kind">${RR_KIND_LABELS[c.kind] || escapeHtml(c.kind)}</span>
-                                <span class="rr-chip rr-chip--class rr-chip--${escapeHtml(c.classification || "pending")}">${RR_CLASS_LABELS[c.classification] || escapeHtml(c.classification || "")}</span>
-                                ${c.category ? `<span class="rr-chip rr-chip--cat">${escapeHtml(c.category)}</span>` : ""}
-                            </div>
-                            <div class="rr-change__text">${rrDiffHtml(c)}</div>
-                            ${c.note ? `<div class="rr-change__note">${escapeHtml(c.note)}</div>` : ""}
-                        </li>`).join("")}
-                </ol>
-                ${changes.length > shown.length ? `<p class="rr-integrity__more">…and ${changes.length - shown.length} further changes (see the CSV/JSON export).</p>` : ""}
-            </details>`;
-    }
-
     // Hydrate the viewer from a static {items, manifest, render_data} bundle —
     // shared by the /demo fixture and the CLI's self-contained offline HTML report
     // (which inlines the bundle as window.__REGCHECK_BUNDLE__). No polling/fetch.
     function applyStaticBundle(data, statusLabel) {
         state.items = Array.isArray(data.items) ? data.items : [];
-        if (data.rr_integrity) state.rrIntegrity = data.rr_integrity;
         state.manifest = data.manifest || null;
         state.manifestUnavailable = !state.manifest;
         if (data.render_data) {

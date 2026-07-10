@@ -1171,9 +1171,14 @@ async def general_preregistration_comparison(
             )
 
     # Track A (Registered Reports): deterministic carried-forward-text integrity.
-    # Runs on the CANONICAL final texts (post-parse, post-isolation) and never
-    # blocks Track B — an alignment failure degrades to a dimension-only report.
-    if comparison_context == "registered_report":
+    # DISABLED BY DEFAULT (RR_TRACK_A=1 to enable): Jamie wants RR reports to be
+    # shape-identical to standard reports — same views, same sections — with only
+    # the scaffolding (prompt framing, licensed-changes rule, dimension sets)
+    # differing. The engine and its tests remain for a possible future where
+    # Track A's findings feed the STANDARD report shape instead of a new panel.
+    if comparison_context == "registered_report" and (
+        (os.environ.get("RR_TRACK_A") or "").strip().lower() in {"1", "true", "yes", "on"}
+    ):
         try:
             if task_id and redis_client:
                 await redis_client.hset(
@@ -1181,7 +1186,9 @@ async def general_preregistration_comparison(
                 )
             from .rr_alignment import RR_CLASSIFIER_ENABLED, align_stages, classify_changes
 
-            rr_integrity = align_stages(preregistration_input, extracted_paper_sections)
+            rr_integrity = await asyncio.to_thread(
+                align_stages, preregistration_input, extracted_paper_sections
+            )
             if RR_CLASSIFIER_ENABLED and rr_integrity.get("changes"):
                 rr_integrity["changes"] = await asyncio.to_thread(
                     classify_changes,
@@ -1278,6 +1285,32 @@ async def general_preregistration_comparison(
                     task_id,
                     mapping={"status": f"Embedding and retrieving for '{dimension_name}'"},
                 )
+            if (
+                dimension_name == CARRIED_FORWARD_DIMENSION
+                and comparison_context == "registered_report"
+                and runner is run_comparison
+            ):
+                comparison = await asyncio.to_thread(
+                    run_carried_forward_dimension,
+                    preregistration_input,
+                    extracted_paper_sections,
+                    client_choice,
+                    reasoning_effort=reasoning_effort,
+                    num_voters=num_voters,
+                    definition=dimension_definition,
+                )
+                result_obj.items.extend(comparison.items)
+                processed_count = index
+                if task_id and redis_client:
+                    await redis_client.hset(
+                        task_id,
+                        mapping={
+                            "result_json": result_obj.model_dump_json(),
+                            "processed_dimensions": index,
+                            "status": f"Processed {index}/{total_dimensions}: {dimension_name}",
+                        },
+                    )
+                continue
             comparison = await asyncio.to_thread(
                 runner,
                 preregistration_input,
@@ -2283,6 +2316,108 @@ def _aggregate_dimension_votes(items: list[ComparisonItem], voters: int) -> Comp
     base = (canonical.deviation_information or "").rstrip()
     canonical.deviation_information = f"{base}\n\n{note}" if base else note
     return canonical
+
+
+CARRIED_FORWARD_DIMENSION = "Carried-forward text fidelity"
+
+# Approved preamble for the carried-forward evidence (appended to the dimension
+# definition so the standard prompt assembly carries it — no prompt fork).
+_CARRIED_FORWARD_PREAMBLE = (
+    "The following are the most heavily edited carried-forward passages, selected "
+    "mechanically (not by topic). For each pair, judge whether the Stage 2 version "
+    "preserves the Stage 1 substance — including the strength and epistemic status of "
+    "claims — or changes it beyond the licensed categories. The summary line reports "
+    "how much of Stage 1 carried forward unchanged."
+)
+
+_EVIDENCE_ID_RE = re.compile(r"\[(?:PREREG|PAPER)_\d+(?:, relevance_score=[0-9.]+)?\]\s*")
+
+
+def _strip_evidence_ids(text: str) -> str:
+    return _EVIDENCE_ID_RE.sub("", text or "").strip()
+
+
+def run_carried_forward_dimension(
+    stage1_text: str,
+    stage2_text: str,
+    client_choice: str,
+    *,
+    reasoning_effort: str | None = None,
+    num_voters: int = 1,
+    definition: str | None = None,
+) -> ComparisonResult:
+    """RR-only 'Carried-forward text fidelity' dimension. The free deterministic
+    alignment engine selects the ~10 most-changed carried-forward block pairs as
+    the EVIDENCE for one ordinary judgement through the standard run_comparison
+    machinery (RR doctrine, verdict rules, consensus voters all apply). Costs one
+    dimension judgement; when nothing changed, no LLM call is made at all.
+
+    The mini-corpora built here use the standard PREREG_/PAPER_ chunk prefixes,
+    which would collide with the report manifest's real chunk IDs — so bracketed
+    IDs are stripped from the returned item and quote-tracing for this dimension
+    falls back to the viewer's string-search tiers (the quoted text is verbatim
+    document text, so it locates)."""
+    from .rr_alignment import align_stages
+
+    integrity = align_stages(stage1_text or "", stage2_text or "")
+    stats = integrity["stats"]
+    carried = stats["identical"] + stats["moved"]
+    summary_line = (
+        f"{carried} of {stats['stage1_blocks']} Stage 1 blocks carried forward unchanged"
+        + (f" ({stats['moved']} moved verbatim)" if stats["moved"] else "")
+        + f"; {stats['modified']} modified, {stats['deleted']} removed."
+    )
+
+    # Most-changed carried-forward material: modified pairs by ascending similarity,
+    # then removed blocks. Stage-2 insertions are excluded — appended results and
+    # discussion are format-licensed, and unregistered additions are the topical
+    # dimensions' job (they carry the content those dimensions retrieve).
+    changes = [ch for ch in integrity["changes"] if ch["kind"] in ("modified", "deleted")]
+    changes.sort(key=lambda ch: (0 if ch["kind"] == "modified" else 1, ch.get("similarity", 0.0)))
+    top = changes[:10]
+
+    if not top:
+        item = ComparisonItem(
+            dimension=CARRIED_FORWARD_DIMENSION,
+            deviation_judgement="no",
+            deviation_information=(
+                "Mechanical comparison of the two manuscripts found no modified or removed "
+                f"carried-forward text. {summary_line}"
+            ),
+            registration_content_summary=f"Stage 1 comprises {stats['stage1_blocks']} text blocks.",
+            paper_content_summary="Stage 2 carries every Stage 1 block forward verbatim.",
+        )
+        return ComparisonResult(items=[item])
+
+    s1_doc = "\n\n".join(
+        (ch["stage1_text"] or "(no Stage 1 counterpart)") for ch in top
+    )
+    s2_doc = "\n\n".join(
+        (ch["stage2_text"] or "(removed in Stage 2 — no counterpart)") for ch in top
+    )
+    combined_definition = (
+        f"{(definition or '').strip()} {_CARRIED_FORWARD_PREAMBLE} "
+        f"Summary of the mechanical comparison: {summary_line}"
+    ).strip()
+
+    result = run_comparison(
+        s1_doc,
+        s2_doc,
+        client_choice,
+        CARRIED_FORWARD_DIMENSION,
+        dimension_definition=combined_definition,
+        top_k=12,
+        num_voters=num_voters,
+        reasoning_effort=reasoning_effort,
+        comparison_context="registered_report",
+    )
+    for item in result.items:
+        item.paper_content_quotes = _strip_evidence_ids(item.paper_content_quotes)
+        item.registration_content_quotes = _strip_evidence_ids(item.registration_content_quotes)
+        item.paper_content_summary = _strip_evidence_ids(item.paper_content_summary)
+        item.registration_content_summary = _strip_evidence_ids(item.registration_content_summary)
+        item.deviation_information = _strip_evidence_ids(item.deviation_information)
+    return result
 
 
 def run_comparison(

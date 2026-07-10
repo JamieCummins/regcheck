@@ -1447,3 +1447,29 @@ def test_political_science_preset_exists_with_definitions():
     names = [d["dimension"] for d in dims]
     assert "Estimand and model specification" in names
     assert "Heterogeneity and subgroup analyses" in names
+
+
+def test_carried_forward_fast_path_skips_llm_when_nothing_changed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", lambda *a, **kw: calls.append(1))
+    text = "Intro block one.\n\nHypotheses block two.\n\nMethod block three."
+    result = comparisons.run_carried_forward_dimension(text, text, "openai")
+    item = result.items[0]
+    assert calls == []  # no LLM call for a verbatim carry-forward
+    assert item.dimension == comparisons.CARRIED_FORWARD_DIMENSION
+    assert _normalize_verdict(item.deviation_judgement) == "no"
+    assert "3 of 3 Stage 1 blocks carried forward unchanged" in item.deviation_information
+
+
+def test_carried_forward_strips_colliding_evidence_ids():
+    assert comparisons._strip_evidence_ids(
+        "[PREREG_0001, relevance_score=0.512] we predict X\n\n[PAPER_0002] we explored X"
+    ) == "we predict X\n\nwe explored X"
+    assert comparisons._strip_evidence_ids("no ids here") == "no ids here"
+
+
+def test_rr_addons_include_carried_forward_dimension():
+    from backend.services.dimensions import rr_addon_dimensions
+
+    names = [d["dimension"] for d in rr_addon_dimensions()]
+    assert names == ["Outcome-neutral quality checks", "Carried-forward text fidelity"]

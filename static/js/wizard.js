@@ -280,6 +280,25 @@
             renderEditor();
         }
 
+        /* Quick-start field question: the default flow loads the chosen field's
+           preset dimensions (the custom flow has the full two-pane editor instead). */
+        const defaultDisciplineSelect = document.getElementById("default_discipline");
+        if (defaultDisciplineSelect && !defaultDisciplineSelect.options.length) {
+            DISCIPLINES.forEach((d) => {
+                const opt = document.createElement("option");
+                opt.value = d.key;
+                opt.textContent = d.label + " (" + d.meta + ")";
+                defaultDisciplineSelect.appendChild(opt);
+            });
+        }
+        function applyDefaultDiscipline() {
+            if (!defaultDisciplineSelect || !defaultDisciplineSelect.value) return;
+            applyPreset(defaultDisciplineSelect.value, false);
+        }
+        if (defaultDisciplineSelect) {
+            defaultDisciplineSelect.addEventListener("change", applyDefaultDiscipline);
+        }
+
         function applyPreset(key, userInitiated) {
             activeDiscipline = key;
             dimensions = loadDiscipline(key);
@@ -313,7 +332,7 @@
         }
 
         function getActiveSequence() {
-            const base = defaultModeActive ? [1, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
+            const base = defaultModeActive ? [1, 9, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
             // "Append previous outputs?" (step 5) only makes sense with >= 2 dimensions.
             return countDimensions() < 2 ? base.filter((s) => s !== 5) : base;
         }
@@ -532,7 +551,8 @@
                 if (appendSelect) appendSelect.value = "yes";
                 updateReasoningEffortVisibility();
                 defaultModeActive = true;
-                goToStep(6);
+                applyDefaultDiscipline();
+                goToStep(9);
             });
         }
         if (customModeButton) {
