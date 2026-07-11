@@ -92,6 +92,7 @@ ComparisonType = Literal[
     "clinical_trials",
     "general_preregistration",
     "registered_report",
+    "registration_quality",
     "animals_trials",
 ]
 
@@ -423,38 +424,44 @@ async def _queue_comparison(
         extra={"client": client, "reasoning_effort": effort_normalized, "comparison_type": comparison_type},
     )
 
+    # Registration-quality reports assess the registration alone — no paper.
+    requires_paper = comparison_type != "registration_quality"
     # An empty file input arrives as an UploadFile with a blank filename (not
     # None), so guard on the filename rather than identity.
-    if paper is None or not (getattr(paper, "filename", "") or "").strip():
+    if requires_paper and (paper is None or not (getattr(paper, "filename", "") or "").strip()):
         raise HTTPException(status_code=400, detail="Paper upload is required")
     task_id = str(uuid.uuid4())
-    paper_path, paper_ext = await _save_upload(
-        upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
-    )
-    # Validate the paper type at submit (the prereg is validated below). Otherwise
-    # an unsupported paper only fails later in the worker with a cryptic error.
-    if (paper_ext or "").lower() not in _SUPPORTED_DOC_EXTS:
-        Path(paper_path).unlink(missing_ok=True)
-        _validate_doc_ext(paper_ext, kind="paper")
-    paper_redis_key = f"upload:{task_id}:paper"
+    paper_path: str | None = None
+    paper_ext: str | None = None
+    paper_redis_key: str | None = None
     prereg_redis_key: str | None = None
     csv_redis_key: str | None = None
 
     # Prefer durable object storage (S3) so worker dynos can always access uploads.
     # Fall back to storing compressed blobs in Redis when S3 isn't configured.
     s3_keys: dict[str, str | None] = {"paper": None, "prereg": None, "csv": None}
-    if get_s3_config() is not None:
-        s3_keys["paper"] = await _store_upload_to_s3(task_id, paper_path, label="paper")
-        try:
+    if requires_paper:
+        paper_path, paper_ext = await _save_upload(
+            upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
+        )
+        # Validate the paper type at submit (the prereg is validated below). Otherwise
+        # an unsupported paper only fails later in the worker with a cryptic error.
+        if (paper_ext or "").lower() not in _SUPPORTED_DOC_EXTS:
             Path(paper_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-    else:
-        await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
-        try:
-            Path(paper_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+            _validate_doc_ext(paper_ext, kind="paper")
+        paper_redis_key = f"upload:{task_id}:paper"
+        if get_s3_config() is not None:
+            s3_keys["paper"] = await _store_upload_to_s3(task_id, paper_path, label="paper")
+            try:
+                Path(paper_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
+            try:
+                Path(paper_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
@@ -465,7 +472,7 @@ async def _queue_comparison(
             raise HTTPException(
                 status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
             )
-    elif comparison_type in ("general_preregistration", "registered_report"):
+    elif comparison_type in ("general_preregistration", "registered_report", "registration_quality"):
         if osf_url and osf_url.strip():
             # Preregistration comes from an OSF link; validate it here and fetch
             # it in the worker (no file to store).
@@ -536,7 +543,12 @@ async def _queue_comparison(
     owner = getattr(request.state, "user", None) if owner_override is _UNSET else owner_override
     report_title = reports_service.generate_default_title(
         comparison_type=comparison_type,
-        paper_filename=getattr(paper, "filename", None),
+        # Quality reports have no paper; name them after the registration instead.
+        paper_filename=(
+            getattr(preregistration, "filename", None)
+            if comparison_type == "registration_quality"
+            else getattr(paper, "filename", None)
+        ),
         registration_id=registration_id,
     )
     if owner is not None:
@@ -636,6 +648,14 @@ async def _queue_comparison(
                 "registration_id": registration_id,
                 "paper_path": paper_path,
                 "paper_ext": paper_ext,
+            }
+        )
+    elif comparison_type == "registration_quality":
+        job_payload.update(
+            {
+                "prereg_path": stored_prereg_path,
+                "prereg_ext": prereg_ext or "",
+                "osf_url": (osf_url or "").strip() or None,
             }
         )
     elif comparison_type in ("general_preregistration", "registered_report"):
@@ -812,6 +832,39 @@ async def compare_post(
         preregistration=prereg_file,
         osf_url=osf_url,
         paper=paper_file,
+        dimensions_data=dimensions_data,
+        visibility=visibility,
+    )
+
+
+@router.post("/evaluate_registration", name="evaluate_registration_post", dependencies=[Depends(comparison_rate_limit)])
+async def evaluate_registration_post(
+    request: Request,
+    parser_choice: str = Form(...),
+    client: str = Form(...),
+    reasoning_effort: str | None = Form(None),
+    append_previous_output: str = Form("yes"),
+    prereg_source: str = Form("upload"),
+    preregistration: list[UploadFile] = File([]),
+    osf_url: str | None = Form(None),
+    dimensions_data: str = Form(...),
+    visibility: str | None = Form(None),
+):
+    """Evaluate Registration Quality: the registration is assessed on its own
+    against completeness criteria — there is no paper in this flow."""
+    upload_dir = Path(request.app.state.settings.upload_dir)
+    prereg_file = await _coalesce_uploads(
+        preregistration, upload_dir=upload_dir, kind="registration", max_bytes=MAX_UPLOAD_BYTES
+    )
+    return await _compare_and_redirect(
+        request,
+        comparison_type="registration_quality",
+        parser_choice=parser_choice,
+        client=client,
+        reasoning_effort=reasoning_effort,
+        append_previous_output=append_previous_output,
+        preregistration=prereg_file,
+        osf_url=osf_url,
         dimensions_data=dimensions_data,
         visibility=visibility,
     )

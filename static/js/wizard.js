@@ -4,6 +4,10 @@
     document.addEventListener("DOMContentLoaded", function () {
         const form = document.getElementById("wizard-form");
         if (!form) return;
+        // One wizard script, two flows: "compare" (registration vs paper, the
+        // default) and "quality" (single-document registration-quality
+        // assessment; fewer steps, no paper upload). Set via data-flow on the form.
+        const FLOW = form.dataset.flow || "compare";
 
         const steps = Array.from(document.querySelectorAll(".form-step"));
         const panel = document.querySelector(".wizard-panel");
@@ -87,7 +91,7 @@
 
         let dimensions = [];
         let selectedId = null;
-        let activeDiscipline = "psychology";
+        let activeDiscipline = DISCIPLINES[0] ? DISCIPLINES[0].key : "psychology";
         let dimensionsTouched = false;
         let dragFromId = null;
         let pendingFocusName = false;
@@ -332,8 +336,14 @@
         }
 
         function getActiveSequence() {
-            // Step 10 (preregistration vs Registered Report) opens BOTH flows.
-            const base = defaultModeActive ? [1, 10, 9, 6, 7, 8] : [1, 10, 2, 3, 4, 5, 6, 7, 8];
+            let base;
+            if (FLOW === "quality") {
+                // Single-document flow: no RR tiles, no field question, no multi-study.
+                base = defaultModeActive ? [1, 7, 8] : [1, 2, 3, 4, 5, 7, 8];
+            } else {
+                // Step 10 (preregistration vs Registered Report) opens BOTH modes.
+                base = defaultModeActive ? [1, 10, 9, 6, 7, 8] : [1, 10, 2, 3, 4, 5, 6, 7, 8];
+            }
             // "Append previous outputs?" (step 5) only makes sense with >= 2 dimensions.
             return countDimensions() < 2 ? base.filter((s) => s !== 5) : base;
         }
@@ -507,7 +517,7 @@
             if (preregFileInput) preregFileInput.disabled = isClinical || isOsf;
             if (registrationInput) registrationInput.disabled = !isClinical;
             if (osfUrlInput) osfUrlInput.disabled = !isOsf;
-            if (!dimensionsTouched) {
+            if (!dimensionsTouched && FLOW !== "quality") {
                 applyPreset(isClinical ? "clinical" : "psychology", false);
             }
             checkFiles();
@@ -515,15 +525,16 @@
 
         function checkFiles() {
             if (!submitButton) return;
-            const hasPaper = paperFileInput && paperFileInput.files.length > 0;
+            // The quality flow assesses the registration alone — no paper upload.
+            const paperOk = FLOW === "quality" || (paperFileInput && paperFileInput.files.length > 0);
             const source = selectedSource();
             let ready;
             if (source === "clinical") {
-                ready = registrationInput && registrationInput.value.trim().length > 0 && hasPaper;
+                ready = registrationInput && registrationInput.value.trim().length > 0 && paperOk;
             } else if (source === "osf") {
-                ready = osfUrlInput && osfUrlInput.value.trim().length > 0 && hasPaper;
+                ready = osfUrlInput && osfUrlInput.value.trim().length > 0 && paperOk;
             } else {
-                ready = preregFileInput && preregFileInput.files.length > 0 && hasPaper;
+                ready = preregFileInput && preregFileInput.files.length > 0 && paperOk;
             }
             submitButton.disabled = !ready;
             submitButton.classList.toggle("is-ready", !!ready);
@@ -555,13 +566,13 @@
                 updateReasoningEffortVisibility();
                 defaultModeActive = true;
                 applyDefaultDiscipline();
-                goToStep(10);
+                goToStep(getActiveSequence()[1]);
             });
         }
         if (customModeButton) {
             customModeButton.addEventListener("click", function () {
                 defaultModeActive = false;
-                goToStep(10);
+                goToStep(getActiveSequence()[1]);
             });
         }
 
@@ -595,7 +606,10 @@
         const comparisonModeInput = document.getElementById("comparison_mode");
         const comparisonModeCards = Array.from(document.querySelectorAll(".comparison-mode-card"));
         function applyComparisonMode() {
-            const rr = !!comparisonModeInput && comparisonModeInput.value === "registered_report";
+            // Only the compare flow has a comparison mode; the quality page's own
+            // labels must not be overwritten with comparison-flow wording.
+            if (!comparisonModeInput) return;
+            const rr = comparisonModeInput.value === "registered_report";
             const regTitle = document.querySelector("#registration-slot .dropzone__title");
             const regHint = document.querySelector("#registration-slot .dropzone__hint");
             const paperSlot = document.getElementById("paper_file");

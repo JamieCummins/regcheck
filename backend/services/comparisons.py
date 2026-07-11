@@ -81,6 +81,7 @@ from .llm import (
     get_groq_openai_client,
     get_openai_client,
 )
+from . import cost_tracking
 from .dimensions import (
     CLINICAL_DEFAULT_DIMENSIONS,
     PRECLINICAL_DEFAULT_DIMENSIONS,
@@ -131,6 +132,10 @@ async def run_with_concurrency_limit(func: Callable[[], Awaitable[T]]) -> T:
 
 class ComparisonItem(BaseModel):
     dimension: str = ""
+    # Reasoning text captured from providers that expose it (e.g. DeepSeek);
+    # empty for models that don't. Optional-with-default: old stored payloads
+    # simply lack it (report persistence back-compat).
+    chain_of_thought: str = ""
     paper_content_quotes: str = ""
     paper_content_summary: str = ""
     registration_content_quotes: str = ""
@@ -223,6 +228,34 @@ class ComparisonItem(BaseModel):
 
 class ComparisonResult(BaseModel):
     items: list[ComparisonItem]
+    # Live token/cost estimate for the run (see cost_tracking); optional so old
+    # stored payloads and bare test results validate unchanged.
+    cost: dict[str, Any] | None = None
+
+
+class _ComparisonResponseSchema(BaseModel):
+    """Schema-constrained decoding shape for judge replies (OpenAI parse()).
+    Deliberately EXCLUDES chain_of_thought: that field is captured from the
+    provider's reasoning channel, never requested from the model itself."""
+
+    dimension: str = ""
+    paper_content_quotes: str = ""
+    paper_content_summary: str = ""
+    registration_content_quotes: str = ""
+    registration_content_summary: str = ""
+    deviation_judgement: str = ""
+    deviation_information: str = ""
+    unlocated_in_paper: str = ""
+    unlocated_in_registration: str = ""
+
+
+def _result_json_with_cost(result_obj: "ComparisonResult") -> str:
+    """Serialise a result with the run's current cost snapshot attached, so the
+    stored result_json (and the status poll reading it) carries live costs."""
+    tracker = cost_tracking.current()
+    if tracker is not None:
+        result_obj.cost = tracker.snapshot()
+    return result_obj.model_dump_json()
 
 
 def _compute_top_k(total_segments: int, pct: float = 0.1, min_k: int = 6, max_k: int = 20) -> int:
@@ -806,6 +839,7 @@ async def extract_experiment_specific_paper_text(
                 messages=messages,
                 temperature=0,
             )
+            cost_tracking.record_llm_usage(_deepseek_model(), getattr(response, "usage", None))
             raw_content = _message_content_to_text(response.choices[0].message)
             return _strip_deepseek_reasoning(raw_content)
         if client_choice == "qwen":
@@ -896,6 +930,7 @@ async def general_preregistration_comparison(
     isolation_passes: int = 1,
     comparison_context: ComparisonContext = "preregistration",
 ) -> ComparisonResult:
+    cost_tracking.start_run()  # live per-run token/cost accounting
     processed_count = 0
     if prereg_ext == ".pdf":
         try:
@@ -1004,7 +1039,7 @@ async def general_preregistration_comparison(
                 task_id,
                 mapping={
                     "state": "IN_PROGRESS",
-                    "result_json": result_obj.model_dump_json(),
+                    "result_json": _result_json_with_cost(result_obj),
                     "total_dimensions": total_dimensions,
                     "processed_dimensions": 0,
                     "dimensions": json.dumps(dimension_names),
@@ -1043,7 +1078,7 @@ async def general_preregistration_comparison(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
-                        "result_json": result_obj.model_dump_json(),
+                        "result_json": _result_json_with_cost(result_obj),
                         "total_dimensions": total_dimensions,
                         "processed_dimensions": 0,
                         "dimensions": json.dumps(dimension_names),
@@ -1226,7 +1261,7 @@ async def general_preregistration_comparison(
             task_id,
             mapping={
                 "state": "IN_PROGRESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": 0,
                 "dimensions": json.dumps(dimension_names),
@@ -1307,7 +1342,7 @@ async def general_preregistration_comparison(
                     await redis_client.hset(
                         task_id,
                         mapping={
-                            "result_json": result_obj.model_dump_json(),
+                            "result_json": _result_json_with_cost(result_obj),
                             "processed_dimensions": index,
                             "status": f"Processed {index}/{total_dimensions}: {dimension_name}",
                         },
@@ -1342,7 +1377,7 @@ async def general_preregistration_comparison(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
-                        "result_json": result_obj.model_dump_json(),
+                        "result_json": _result_json_with_cost(result_obj),
                         "processed_dimensions": index,
                         "total_dimensions": total_dimensions,
                         "status": f"Processed {index}/{total_dimensions}: {dimension_name}",
@@ -1355,7 +1390,7 @@ async def general_preregistration_comparison(
                 mapping={
                     "state": "FAILURE",
                     "status": f"Processing failed: {exc}",
-                    "result_json": result_obj.model_dump_json(),
+                    "result_json": _result_json_with_cost(result_obj),
                     "processed_dimensions": processed_count,
                     "total_dimensions": total_dimensions,
                 },
@@ -1368,7 +1403,7 @@ async def general_preregistration_comparison(
             task_id,
             mapping={
                 "state": "SUCCESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
@@ -1376,6 +1411,9 @@ async def general_preregistration_comparison(
                 **evidence_fields,
             },
         )
+    tracker = cost_tracking.current()
+    if tracker is not None:
+        result_obj.cost = tracker.snapshot()
     return result_obj
 
 
@@ -1398,6 +1436,7 @@ async def clinical_trial_comparison(
     reasoning_effort: str | None = None,
     num_voters: int = 1,
 ) -> ComparisonResult:
+    cost_tracking.start_run()  # live per-run token/cost accounting
     logger.info("Started clinical trial comparison", extra={"task_id": task_id})
     extract_nct = nct_extractor or extract_nct_id
     nct_id = extract_nct(registration_id)
@@ -1467,7 +1506,7 @@ async def clinical_trial_comparison(
             task_id,
             mapping={
                 "state": "IN_PROGRESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": 0,
                 "dimensions": json.dumps(dimension_names),
@@ -1582,7 +1621,7 @@ async def clinical_trial_comparison(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
-                        "result_json": result_obj.model_dump_json(),
+                        "result_json": _result_json_with_cost(result_obj),
                         "processed_dimensions": index,
                         "total_dimensions": total_dimensions,
                         "status": f"LLM judgement complete for '{dimension}' ({index}/{total_dimensions})",
@@ -1595,7 +1634,7 @@ async def clinical_trial_comparison(
                 mapping={
                     "state": "FAILURE",
                     "status": f"Processing failed: {exc}",
-                    "result_json": result_obj.model_dump_json(),
+                    "result_json": _result_json_with_cost(result_obj),
                     "processed_dimensions": processed_count,
                     "total_dimensions": total_dimensions,
                 },
@@ -1608,7 +1647,7 @@ async def clinical_trial_comparison(
             task_id,
             mapping={
                 "state": "SUCCESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
@@ -1616,6 +1655,9 @@ async def clinical_trial_comparison(
                 **evidence_fields,
             },
         )
+    tracker = cost_tracking.current()
+    if tracker is not None:
+        result_obj.cost = tracker.snapshot()
     return result_obj
 
 
@@ -1637,6 +1679,7 @@ async def animals_trial_comparison(
     reasoning_effort: str | None = None,
     num_voters: int = 1,
 ) -> ComparisonResult:
+    cost_tracking.start_run()  # live per-run token/cost accounting
     logger.info(
         "Started animals trial comparison",
         extra={"task_id": task_id, "pct_id": registration_id},
@@ -1705,7 +1748,7 @@ async def animals_trial_comparison(
             task_id,
             mapping={
                 "state": "IN_PROGRESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": 0,
                 "dimensions": json.dumps(dimension_names),
@@ -1824,7 +1867,7 @@ async def animals_trial_comparison(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
-                        "result_json": result_obj.model_dump_json(),
+                        "result_json": _result_json_with_cost(result_obj),
                         "processed_dimensions": index,
                         "total_dimensions": total_dimensions,
                         "status": f"LLM judgement complete for '{dimension}' ({index}/{total_dimensions})",
@@ -1837,7 +1880,7 @@ async def animals_trial_comparison(
                 mapping={
                     "state": "FAILURE",
                     "status": f"Processing failed: {exc}",
-                    "result_json": result_obj.model_dump_json(),
+                    "result_json": _result_json_with_cost(result_obj),
                     "processed_dimensions": processed_count,
                     "total_dimensions": total_dimensions,
                 },
@@ -1850,7 +1893,7 @@ async def animals_trial_comparison(
             task_id,
             mapping={
                 "state": "SUCCESS",
-                "result_json": result_obj.model_dump_json(),
+                "result_json": _result_json_with_cost(result_obj),
                 "total_dimensions": total_dimensions,
                 "processed_dimensions": total_dimensions,
                 "dimensions": json.dumps(dimension_names),
@@ -1858,6 +1901,9 @@ async def animals_trial_comparison(
                 **evidence_fields,
             },
         )
+    tracker = cost_tracking.current()
+    if tracker is not None:
+        result_obj.cost = tracker.snapshot()
     return result_obj
 
 
@@ -2037,10 +2083,15 @@ def _dispatch_judgement(
     *,
     client_choice: str,
     reasoning_effort: str | None,
+    response_model: type | None = None,
+    claude_tool: dict[str, Any] | None = None,
 ) -> str:
     """Send the assembled prompt to the chosen provider and return the raw reply text
     (expected to be a single JSON object). Provider-specific extraction only; parsing,
-    retrying, and validation are handled by the caller."""
+    retrying, and validation are handled by the caller. ``response_model`` /
+    ``claude_tool`` override the schema-constrained decoding shape (defaults:
+    ComparisonItem / the comparison tool) so other flows — e.g. the registration
+    quality assessment — can reuse the provider plumbing with their own schema."""
     if client_choice in _OPENAI_CLIENTS:
         openai_client = get_openai_client()
         model = _openai_family_model(client_choice)
@@ -2052,8 +2103,9 @@ def _dispatch_judgement(
                 model=model,
                 messages=messages,
                 reasoning_effort=normalized_effort,
-                response_format=ComparisonItem,
+                response_format=response_model or _ComparisonResponseSchema,
             )
+            cost_tracking.record_llm_usage(model, getattr(response, "usage", None))
             return response.choices[0].message.content
         except Exception as exc:
             logger.info(
@@ -2075,7 +2127,10 @@ def _dispatch_judgement(
             temperature=0,
             response_format={"type": "json_object"},
         )
+        cost_tracking.record_llm_usage(_deepseek_model(), getattr(response, "usage", None))
         message = response.choices[0].message
+        # DeepSeek reasoning models expose chain-of-thought separately; capture it.
+        cost_tracking.stash_reasoning(getattr(message, "reasoning_content", None))
         raw_content = _message_content_to_text(message)
         if not raw_content:
             message_dump = None
@@ -2110,7 +2165,7 @@ def _dispatch_judgement(
     if client_choice == "claude":
         # Forced tool call => schema-constrained JSON (Claude has no response_format),
         # which removes the sporadic unescaped-quote parse failures.
-        return _claude_structured(messages, model=_claude_model(), tool=_COMPARISON_TOOL)
+        return _claude_structured(messages, model=_claude_model(), tool=claude_tool or _COMPARISON_TOOL)
     raise ValueError("Invalid client selection")
 
 
@@ -2266,6 +2321,7 @@ def _judge_dimension_once(
     without a second chance. Quote fields are overridden with the deterministic excerpts.
     The consensus-vote path calls this N times on the SAME ``messages`` (retrieval +
     prompt are built once upstream), so only the stochastic judgement repeats."""
+    cost_tracking.pop_reasoning()  # discard any stale stash from a prior call
     parsed_payload: Any = None
     for attempt in range(_JUDGEMENT_ATTEMPTS):
         result_json = _dispatch_judgement(
@@ -2310,6 +2366,7 @@ def _judge_dimension_once(
     cited = _judge_cited_ids(parsed_item)
     parsed_item.paper_content_quotes = _filter_display_quotes(paper_top, cited)
     parsed_item.registration_content_quotes = _filter_display_quotes(prereg_top, cited)
+    parsed_item.chain_of_thought = cost_tracking.pop_reasoning()
     return parsed_item
 
 
@@ -2626,7 +2683,7 @@ def run_comparison(
             )
         for item in previous_dimension_responses:
             label = (item.dimension or "this dimension").strip() or "this dimension"
-            dumped = json.dumps(item.model_dump())
+            dumped = json.dumps(item.model_dump(exclude={"chain_of_thought"}))
             history_lines.append(f"For {label}, you gave this output: {dumped}")
         history_context = "\n".join(history_lines).strip()
         logger.debug(

@@ -1566,3 +1566,10 @@ body.is-col-resizing * {
     font-family: var(--rc-font-mono);
 }
 
+
+/* Live model-cost estimate beside the status pill. */
+.report-cost-line {
+    color: var(--rc-muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}

@@ -164,6 +164,30 @@ async def _run_general(args) -> dict:
     return payload
 
 
+async def _run_quality(args) -> dict:
+    """Evaluate Registration Quality: single-document completeness assessment
+    (defaults to the registration-quality criteria set when no CSV is given)."""
+    from backend.services.registration_quality import registration_quality_assessment
+
+    dimensions = _resolve_dimensions_arg(args, require=False)
+    prereg_path, prereg_ext = _resolve_general_prereg(args)
+    logger.info(
+        "Running registration quality assessment (dimensions=%s)",
+        "custom" if dimensions else "default",
+    )
+    result = await registration_quality_assessment(
+        prereg_path,
+        prereg_ext,
+        args.client,
+        args.parser_choice,
+        selected_dimensions=dimensions,
+        append_previous_output=args.append_previous_output,
+        reasoning_effort=args.reasoning_effort,
+    )
+    logger.info("Completed registration quality assessment.")
+    return result.model_dump()
+
+
 async def _run_clinical(args) -> dict:
     dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
@@ -214,6 +238,122 @@ async def _run_animals(args) -> dict:
     return result.model_dump()
 
 
+def _print_cost_summary(payload: dict, *, label: str = "") -> None:
+    """One-line cost estimate on stderr (the payload itself carries the full
+    breakdown under 'cost'; see backend/services/cost_tracking.py)."""
+    cost = payload.get("cost") if isinstance(payload, dict) else None
+    if not cost:
+        return
+    prefix = f"[{label}] " if label else ""
+    note = "" if cost.get("estimate_complete", True) else " (some models unpriced — tokens counted, USD partial)"
+    print(
+        f"{prefix}Estimated cost: ${cost.get('total_usd', 0):.4f} — "
+        f"{cost.get('input_tokens', 0)} in / {cost.get('output_tokens', 0)} out / "
+        f"{cost.get('embedding_tokens', 0)} embedding tokens{note}",
+        file=sys.stderr,
+    )
+
+
+_BATCH_TYPES = {"quality", "general", "clinical"}
+
+
+def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
+    """Build the per-row argument namespace a single-run function expects, from
+    the batch-level flags plus one manifest row."""
+    get = lambda key: (row.get(key) or "").strip() or None  # noqa: E731
+    return argparse.Namespace(
+        preregistration=get("preregistration"),
+        osf_url=get("osf_url"),
+        paper=get("paper"),
+        registration_id=get("registration_id"),
+        dimensions_csv=get("dimensions_csv"),
+        dimension_set=get("dimension_set"),
+        client=args.client,
+        parser_choice=args.parser_choice,
+        append_previous_output=args.append_previous_output,
+        reasoning_effort=args.reasoning_effort,
+        # General-flow extras (per-row overridable where they make sense).
+        multiple_experiments=(get("experiment_number") is not None),
+        experiment_number=get("experiment_number"),
+        experiment_text=None,
+        comparison_type="preregistration",
+        isolation_passes=1,
+        no_isolation_cache=False,
+        isolation_cache_dir=None,
+        report_html=None,
+        report_title=None,
+        embedding_model=getattr(args, "embedding_model", None),
+    )
+
+
+async def _run_batch(args) -> dict:
+    """Batch processing: one manifest CSV row per run. Columns: ``type``
+    (quality|general|clinical), ``preregistration``/``osf_url``, ``paper``,
+    ``registration_id``, optional ``dimensions_csv``/``dimension_set`` and
+    ``label``. Per-row results are written to --output-dir; failures are
+    recorded and the batch continues (use --stop-on-error to abort instead)."""
+    manifest_path = Path(args.manifest)
+    if not manifest_path.exists():
+        raise ValueError(f"Manifest not found: {args.manifest}")
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with manifest_path.open(newline="", encoding="utf-8-sig") as fh:
+        rows = [row for row in csv.DictReader(fh)]
+    if not rows:
+        raise ValueError("Manifest contains no rows.")
+
+    runners = {"quality": _run_quality, "general": _run_general, "clinical": _run_clinical}
+    summary: list[dict] = []
+    for index, row in enumerate(rows, start=1):
+        run_type = (row.get("type") or "quality").strip().lower()
+        label = (row.get("label") or "").strip() or f"row{index:03d}"
+        entry: dict = {"row": index, "label": label, "type": run_type}
+        logger.info("Batch %d/%d (%s, %s)", index, len(rows), label, run_type)
+        try:
+            if run_type not in _BATCH_TYPES:
+                raise ValueError(f"Unknown type '{run_type}' (use one of: {', '.join(sorted(_BATCH_TYPES))})")
+            payload = await runners[run_type](_batch_row_namespace(args, row))
+            out_path = out_dir / f"{label}.{args.output_format}"
+            _write_output(payload, str(out_path), args.output_format)
+            _print_cost_summary(payload, label=label)
+            entry.update(
+                {
+                    "status": "ok",
+                    "output": str(out_path),
+                    "dimensions": len(payload.get("items", [])),
+                    "cost_usd": (payload.get("cost") or {}).get("total_usd"),
+                }
+            )
+        except Exception as exc:
+            logger.error("Batch row %s failed: %s", label, exc)
+            entry.update({"status": "error", "error": str(exc)})
+            if getattr(args, "stop_on_error", False):
+                summary.append(entry)
+                break
+        summary.append(entry)
+
+    ok = sum(1 for e in summary if e.get("status") == "ok")
+    failed = [e["label"] for e in summary if e.get("status") == "error"]
+    total_usd = round(sum(e.get("cost_usd") or 0 for e in summary), 4)
+    summary_payload = {
+        "total": len(summary),
+        "succeeded": ok,
+        "failed": failed,
+        "estimated_total_usd": total_usd,
+        "rows": summary,
+    }
+    summary_path = out_dir / "batch_summary.json"
+    summary_path.write_text(json.dumps(summary_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(
+        f"Batch complete: {ok}/{len(summary)} succeeded"
+        + (f", failed: {', '.join(failed)}" if failed else "")
+        + f" — estimated total ${total_usd:.4f}. Summary: {summary_path}",
+        file=sys.stderr,
+    )
+    return summary_payload
+
+
 def _write_output(payload: dict, output_path: str | None, output_format: str) -> None:
     """Write results to stdout or file in the requested format."""
     if output_format == "json":
@@ -236,6 +376,7 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         "deviation_information",
         "unlocated_in_paper",
         "unlocated_in_registration",
+        "chain_of_thought",
     ]
     rows: list[dict[str, str]] = []
     for item in items:
@@ -453,6 +594,93 @@ def build_parser() -> argparse.ArgumentParser:
     clinical = subparsers.add_parser(
         "clinical", help="Compare a clinical trial registration (by ID) to a paper."
     )
+
+    batch = subparsers.add_parser(
+        "batch",
+        help="Run many comparisons/assessments from a manifest CSV (columns: type, preregistration, osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
+    )
+    batch.add_argument("--manifest", required=True, help="CSV manifest, one run per row.")
+    batch.add_argument("--output-dir", required=True, help="Directory for per-row outputs + batch_summary.json.")
+    batch.add_argument(
+        "--client",
+        default="openai",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider for every row.",
+    )
+    batch.add_argument("--embedding-model", help="Embeddings model for retrieval (default: text-embedding-3-large).")
+    batch.add_argument(
+        "--parser-choice",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser for every row (default pymupdf).",
+    )
+    batch.add_argument("--append-previous-output", action="store_true")
+    batch.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high"])
+    batch.add_argument(
+        "--output-format", default="json", choices=["csv", "json"], help="Per-row output format (default json)."
+    )
+    batch.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Abort the batch on the first failing row (default: record the failure and continue).",
+    )
+
+    quality = subparsers.add_parser(
+        "quality",
+        help="Evaluate the completeness/specificity of a registration on its own (no paper).",
+    )
+    quality.add_argument(
+        "--preregistration",
+        help="Path to the registration file (.pdf/.docx/.txt/.html). Or use --osf-url.",
+    )
+    quality.add_argument(
+        "--osf-url",
+        help="OSF link to a registration or file to assess (alternative to --preregistration).",
+    )
+    quality.add_argument(
+        "--dimensions-csv",
+        help="Optional CSV with 'dimension' and 'definition' columns to override the registration-quality defaults.",
+    )
+    quality.add_argument(
+        "--client",
+        default="openai",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    quality.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
+    )
+    quality.add_argument(
+        "--parser-choice",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser to extract registration text (default pymupdf).",
+    )
+    quality.add_argument(
+        "--append-previous-output",
+        action="store_true",
+        help="Append previous dimension assessments into later prompts.",
+    )
+    quality.add_argument(
+        "--reasoning-effort",
+        default="medium",
+        choices=["low", "medium", "high"],
+        help="Reasoning setting for OpenAI models (ignored by other providers).",
+    )
+    quality.add_argument(
+        "--output",
+        help="Optional path to write results. Defaults to stdout.",
+    )
+    quality.add_argument(
+        "--output-format",
+        default="csv",
+        choices=["csv", "json"],
+        help="Output format (csv or json). Defaults to csv.",
+    )
     clinical.add_argument(
         "--registration-id",
         required=True,
@@ -632,16 +860,24 @@ def main(argv: Iterable[str] | None = None) -> None:
     try:
         if args.command == "general":
             payload = asyncio.run(_run_general(args))
+        elif args.command == "quality":
+            payload = asyncio.run(_run_quality(args))
         elif args.command == "clinical":
             payload = asyncio.run(_run_clinical(args))
         elif args.command == "animals":
             payload = asyncio.run(_run_animals(args))
+        elif args.command == "batch":
+            summary = asyncio.run(_run_batch(args))
+            if summary.get("failed"):
+                sys.exit(1)
+            return
         else:
             parser.error("Unknown command")
             return
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    _print_cost_summary(payload)
     _write_output(payload, getattr(args, "output", None), getattr(args, "output_format", "csv"))
 
 

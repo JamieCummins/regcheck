@@ -601,6 +601,14 @@
 }
 
 /* uploads ------------------------------------------------------------------- */
+/* Quality flow: one document, one centred dropzone. */
+.upload-grid--single {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .upload-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
