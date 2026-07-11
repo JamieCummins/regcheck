@@ -53,9 +53,9 @@ async def login(request: Request, next: str = "/"):
         return RedirectResponse(_safe_next(next), status_code=302)
     settings = _settings(request)
     return request.app.state.templates.TemplateResponse(
+        request,
         "login.html",
         {
-            "request": request,
             "providers": available_providers(settings),
             "auth_enabled": settings.auth_enabled,
             "next": _safe_next(next),
@@ -104,9 +104,14 @@ async def oauth_callback(request: Request, provider: str, db: AsyncSession = Dep
                 request.app.state.redis, db, owner_id=user.id, task_ids=list(owned)
             )
             await db.commit()
-            if claimed:
-                claimed_set = set(claimed)
-                request.session["owned_reports"] = [t for t in owned if t not in claimed_set]
+            # Prune the session list: drop everything just claimed, then keep only
+            # entries still session-manageable (no owned DB row) — so a handle to a
+            # report owned by another account never lingers in this browser session.
+            claimed_set = set(claimed)
+            remaining = [t for t in owned if t not in claimed_set]
+            request.session["owned_reports"] = await reports_service.filter_session_manageable(
+                db, remaining
+            )
         except Exception:  # pragma: no cover - never block sign-in on claim failure
             logger.warning("Failed to claim anonymous reports on login", exc_info=True)
 
@@ -117,6 +122,10 @@ async def oauth_callback(request: Request, provider: str, db: AsyncSession = Dep
 @router.post("/logout", name="logout")
 async def logout(request: Request):
     request.session.pop("user_id", None)
+    # Clear the browser session's report-ownership list on logout. Owned reports
+    # are already recoverable from the account dashboard, and leaving stale
+    # task_ids here would let the next person on a shared browser act on them.
+    request.session.pop("owned_reports", None)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -130,9 +139,9 @@ async def profile(request: Request, db: AsyncSession = Depends(get_db)):
     # A freshly created key's plaintext is shown exactly once, then cleared.
     new_key = request.session.pop("new_api_key", None)
     return request.app.state.templates.TemplateResponse(
+        request,
         "profile.html",
         {
-            "request": request,
             "user": user,
             "questions": SURVEY_QUESTIONS,
             "saved": request.query_params.get("saved") == "1",

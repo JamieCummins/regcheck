@@ -12,6 +12,7 @@ class FakeRedis:
         self.lists: dict[str, list[str]] = {}
         self.hashes: dict[str, dict] = {}
         self.expires: dict[str, int] = {}
+        self.strings: dict[str, str] = {}
 
     async def lrange(self, key, start, end):
         items = self.lists.get(key, [])
@@ -35,6 +36,19 @@ class FakeRedis:
 
     async def expire(self, key, ttl):
         self.expires[key] = ttl
+
+    async def keys(self, pattern):
+        prefix = pattern[:-1] if pattern.endswith("*") else pattern
+        return [k for k in self.lists if k.startswith(prefix)]
+
+    async def exists(self, key):
+        return 1 if (key in self.strings or key in self.hashes or key in self.lists) else 0
+
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.strings:
+            return None
+        self.strings[key] = value
+        return True
 
 
 def test_recover_requeues_jobs_under_limit():
@@ -192,3 +206,38 @@ def test_dispatch_unknown_type_is_noop(tmp_path, monkeypatch):
     asyncio.run(worker_mod._dispatch_job(job, redis))
     assert "t1" not in redis.hashes
     assert not paper.exists()
+
+
+def test_orphan_recovery_reclaims_dead_worker_but_not_live_peer():
+    from backend.worker import _recover_orphaned_processing, _heartbeat_key, _processing_key
+
+    redis = FakeRedis()
+    live, dead, me = "wLIVE", "wDEAD", "wME"
+    redis.lists[_processing_key(live)] = [json.dumps({"task_id": "a"})]
+    redis.lists[_processing_key(dead)] = [json.dumps({"task_id": "b"})]
+    redis.lists[_processing_key(me)] = [json.dumps({"task_id": "c"})]  # my own — never touch
+    redis.strings[_heartbeat_key(live)] = "1"  # live peer has a heartbeat
+    # dead worker: no heartbeat key
+
+    requeued, dead_n = asyncio.run(_recover_orphaned_processing(
+        redis, my_worker_id=me, max_attempts=3, task_ttl_seconds=100
+    ))
+    assert requeued == 1 and dead_n == 0
+    # Only the dead worker's job was requeued; live peer + my own list untouched.
+    assert redis.lists.get("comparison:queue") == [json.dumps({"task_id": "b", "attempts": 1})]
+    assert _processing_key(dead) not in redis.lists       # cleared
+    assert _processing_key(live) in redis.lists           # left alone
+    assert _processing_key(me) in redis.lists             # left alone
+
+
+def test_orphan_recovery_reclaims_legacy_shared_list():
+    from backend.worker import _recover_orphaned_processing, LEGACY_PROCESSING_KEY
+
+    redis = FakeRedis()
+    redis.lists[LEGACY_PROCESSING_KEY] = [json.dumps({"task_id": "legacy"})]
+    requeued, _ = asyncio.run(_recover_orphaned_processing(
+        redis, my_worker_id="wME", max_attempts=3, task_ttl_seconds=100
+    ))
+    assert requeued == 1
+    assert redis.lists.get("comparison:queue") == [json.dumps({"task_id": "legacy", "attempts": 1})]
+    assert LEGACY_PROCESSING_KEY not in redis.lists

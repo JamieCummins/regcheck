@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -9,7 +8,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.storage import get_s3_config, s3_delete_key
+from ..core.rate_limit import comparison_rate_limit
+from ..core.storage import get_s3_config
 from ..db import models
 from ..db.session import get_db
 from ..services import reports as reports_service
@@ -29,40 +29,17 @@ def _session_owned(request: Request) -> set[str]:
 
 
 def _can_manage(request: Request, task_id: str, report: models.Report | None) -> bool:
-    """A report is manageable by its signed-in owner, or by the browser session
-    that created it (covers anonymous creators)."""
+    """Who may rename/delete/regenerate a report.
+
+    An OWNED report (DB row with an ``owner_id``) is manageable ONLY by that owner —
+    browser-session ownership never overrides DB ownership, so a second account (or
+    an anonymous user) sharing a browser cannot manage the first account's reports.
+    A report with no owned row (anonymous / Redis-only) is manageable by the browser
+    session that created it."""
     user = _current_user(request)
-    if user is not None and report is not None and report.owner_id == user.id:
-        return True
+    if report is not None and (report.owner_id or "").strip():
+        return user is not None and report.owner_id == user.id
     return task_id in _session_owned(request)
-
-
-async def _cleanup_retained_uploads(redis_client, task_id: str) -> None:
-    """Remove the uploads kept for regeneration when a report is deleted. Redis blobs
-    use a deterministic key; S3 objects come from the stored job's s3_keys. Best-effort
-    — anything missed (e.g. an anon report that simply expired) is cleaned by the Redis
-    TTL or an S3 lifecycle rule on the upload prefix."""
-    s3_keys: dict = {}
-    try:
-        raw = await redis_client.hget(task_id, "regen_job")
-        if raw:
-            payload = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
-            s3_keys = (json.loads(payload).get("s3_keys") or {})
-    except Exception:  # pragma: no cover - defensive
-        s3_keys = {}
-    for suffix in ("paper", "prereg", "csv"):
-        try:
-            await redis_client.delete(f"upload:{task_id}:{suffix}")
-        except Exception:  # pragma: no cover - best-effort
-            pass
-    cfg = get_s3_config()
-    if cfg is not None:
-        for key in s3_keys.values():
-            if key:
-                try:
-                    await asyncio.to_thread(s3_delete_key, cfg, key=key)
-                except Exception:  # pragma: no cover - best-effort
-                    pass
 
 
 @router.get("/reports", name="my_reports")
@@ -72,8 +49,9 @@ async def my_reports(request: Request, db: AsyncSession = Depends(get_db)):
         return RedirectResponse(url=f"{request.url_for('login')}?next=/reports", status_code=302)
     reports = await reports_service.list_reports_for_owner(db, user.id)
     return request.app.state.templates.TemplateResponse(
+        request,
         "dashboard.html",
-        {"request": request, "user": user, "reports": reports},
+        {"user": user, "reports": reports},
     )
 
 
@@ -85,8 +63,9 @@ async def public_profile(request: Request, handle: str, db: AsyncSession = Depen
         raise HTTPException(status_code=404, detail="Profile not found")
     reports = await reports_service.list_public_reports_for_owner(db, profile_user.id)
     return request.app.state.templates.TemplateResponse(
+        request,
         "public_profile.html",
-        {"request": request, "profile_user": profile_user, "reports": reports},
+        {"profile_user": profile_user, "reports": reports},
     )
 
 
@@ -191,7 +170,7 @@ async def report_delete(
     report = await reports_service.get_report_row(db, task_id)
     if not _can_manage(request, task_id, report):
         raise HTTPException(status_code=403, detail="Not allowed to delete this report")
-    await _cleanup_retained_uploads(request.app.state.redis, task_id)
+    # Centralized: tombstone + retained uploads + artifacts + survey + row.
     await reports_service.delete_report_everywhere(request.app.state.redis, db, task_id, report)
     if report is not None:
         await db.commit()
@@ -202,7 +181,11 @@ async def report_delete(
     return JSONResponse({"ok": True})
 
 
-@router.post("/reports/{task_id}/regenerate", name="report_regenerate")
+@router.post(
+    "/reports/{task_id}/regenerate",
+    name="report_regenerate",
+    dependencies=[Depends(comparison_rate_limit)],
+)
 async def report_regenerate(
     request: Request,
     task_id: str,
@@ -216,6 +199,20 @@ async def report_regenerate(
         raise HTTPException(status_code=403, detail="Not allowed to regenerate this report")
 
     redis_client = request.app.state.redis
+    if await reports_service.is_deleted(redis_client, task_id):
+        raise HTTPException(status_code=409, detail="This report has been deleted.")
+
+    # Idempotency: one regeneration at a time per report. A short NX lock absorbs
+    # double-clicks / retries so two POSTs don't queue (and pay for) the same job
+    # twice; it clears on its own so a genuine later re-run is never blocked.
+    lock_key = f"regen:lock:{task_id}"
+    if not await redis_client.set(lock_key, "1", nx=True, ex=120):
+        raise HTTPException(status_code=409, detail="A regeneration is already in progress.")
+
+    current_state = (await redis_client.hget(task_id, "state") or "").strip().upper()
+    if current_state in {"PENDING", "IN_PROGRESS"}:
+        raise HTTPException(status_code=409, detail="This report is already being generated.")
+
     raw = await redis_client.hget(task_id, "regen_job")
     if not raw:
         raise HTTPException(

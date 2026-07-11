@@ -143,6 +143,14 @@ def get_settings() -> Settings:
     from ..db.session import resolve_database_url
 
     database_url = resolve_database_url()
+    if is_production and database_url.startswith("sqlite"):
+        # The SQLite fallback is a dev convenience only. On an ephemeral
+        # production filesystem it would silently drop accounts/ownership on
+        # every restart — refuse to boot instead of running in that state.
+        raise RuntimeError(
+            "DATABASE_URL is not set (or resolved to SQLite) in a production "
+            "environment. Set DATABASE_URL to the managed Postgres instance."
+        )
 
     settings = Settings(
         redis_url=redis_url,
