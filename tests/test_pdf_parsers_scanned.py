@@ -247,3 +247,52 @@ async def test_extract_pdf_text_external_failure_falls_back(tmp_path, monkeypatc
     text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=broken_external)
     assert used == "pymupdf_fallback"
     assert "Selectable body text" in text
+
+
+# ── external escalation is opt-in (default chain is local-only) ────────────────
+
+
+@pytest.mark.asyncio
+async def test_default_chain_never_calls_external_parser(tmp_path, monkeypatch):
+    # No fallback env config: a grobid failure must recover via LOCAL pymupdf and
+    # the document must never be sent to the external DPT2 service.
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.delenv("SCANNED_PDF_FALLBACK", raising=False)
+    pdf_path = tmp_path / "text.pdf"
+    _make_text_pdf(str(pdf_path), "local rescue")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid down")
+
+    dpt_calls = []
+
+    async def dpt_spy(_path: str):
+        dpt_calls.append(_path)
+        return {"text": "should never run"}
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path), parser_choice="grobid", pdf_parser=fake_grobid_fail, dpt_parser=dpt_spy
+    )
+    assert "local rescue" in extracted
+    assert used == "pymupdf_fallback"
+    assert dpt_calls == []
+
+
+@pytest.mark.asyncio
+async def test_default_chain_scanned_pdf_instructs_instead_of_external_ocr(tmp_path, monkeypatch):
+    # A scanned PDF with no configured fallback fails with guidance rather than
+    # silently OCRing via the external service.
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.delenv("SCANNED_PDF_FALLBACK", raising=False)
+    pdf_path = tmp_path / "scan.pdf"
+    _make_scanned_pdf(str(pdf_path))
+
+    dpt_calls = []
+
+    async def dpt_spy(_path: str):
+        dpt_calls.append(_path)
+        return {"text": "should never run"}
+
+    with pytest.raises(ValueError, match="no usable text"):
+        await extract_pdf_text(str(pdf_path), parser_choice="pymupdf", dpt_parser=dpt_spy)
+    assert dpt_calls == []

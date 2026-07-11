@@ -905,11 +905,11 @@ async def general_preregistration_comparison(
                 pdf_parser=pdf_parser,
                 dpt_parser=dpt_parser,
             )
-            if task_id and redis_client and prereg_parser_used != (parser_choice or "grobid").lower():
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned prereg PDF detected; using {prereg_parser_used} fallback"},
-                )
+            if task_id and redis_client:
+                fields: dict[str, str] = {"prereg_parser_used": prereg_parser_used}
+                if prereg_parser_used != (parser_choice or "grobid").lower():
+                    fields["status"] = f"Scanned prereg PDF detected; using {prereg_parser_used} fallback"
+                await redis_client.hset(task_id, mapping=fields)
         except Exception as exc:
             if task_id and redis_client:
                 await redis_client.hset(
@@ -953,11 +953,13 @@ async def general_preregistration_comparison(
                 pdf_parser=pdf_parser,
                 dpt_parser=dpt_parser,
             )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
+            if task_id and redis_client:
+                # Persist the parser that actually ran (disclosure: the report's
+                # "View settings" shows it when it differs from the choice).
+                fields: dict[str, str] = {"parser_used": used_parser}
+                if used_parser != parser_choice_normalized:
+                    fields["status"] = f"Scanned PDF detected; using {used_parser} fallback"
+                await redis_client.hset(task_id, mapping=fields)
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
@@ -1425,11 +1427,13 @@ async def clinical_trial_comparison(
                 pdf_parser=pdf_parser,
                 dpt_parser=dpt_parser,
             )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
+            if task_id and redis_client:
+                # Persist the parser that actually ran (disclosure: the report's
+                # "View settings" shows it when it differs from the choice).
+                fields: dict[str, str] = {"parser_used": used_parser}
+                if used_parser != parser_choice_normalized:
+                    fields["status"] = f"Scanned PDF detected; using {used_parser} fallback"
+                await redis_client.hset(task_id, mapping=fields)
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
@@ -1661,11 +1665,13 @@ async def animals_trial_comparison(
                 pdf_parser=pdf_parser,
                 dpt_parser=dpt_parser,
             )
-            if task_id and redis_client and used_parser != parser_choice_normalized:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Scanned PDF detected; using {used_parser} fallback"},
-                )
+            if task_id and redis_client:
+                # Persist the parser that actually ran (disclosure: the report's
+                # "View settings" shows it when it differs from the choice).
+                fields: dict[str, str] = {"parser_used": used_parser}
+                if used_parser != parser_choice_normalized:
+                    fields["status"] = f"Scanned PDF detected; using {used_parser} fallback"
+                await redis_client.hset(task_id, mapping=fields)
         elif paper_ext == ".docx":
             reader = docx_reader or extract_text_from_docx
             extracted_paper_sections = reader(paper_input)
@@ -2108,6 +2114,45 @@ def _dispatch_judgement(
     raise ValueError("Invalid client selection")
 
 
+_CITED_ID_RE = re.compile(r"(?:PAPER|PREREG)_\d+")
+
+
+def _judge_cited_ids(item: ComparisonItem) -> set[str]:
+    """Every evidence ID the judge cited anywhere in its output — the quote fields
+    (bare IDs under quotes-as-IDs, IDs kept in text otherwise), both summaries, and
+    the rationale. The union keeps any ID the visible report text references
+    resolvable to a displayed quote card."""
+    text = " ".join(
+        filter(
+            None,
+            [
+                item.paper_content_quotes,
+                item.registration_content_quotes,
+                item.paper_content_summary,
+                item.registration_content_summary,
+                item.deviation_information,
+            ],
+        )
+    )
+    return set(_CITED_ID_RE.findall(text))
+
+
+def _filter_display_quotes(retrieved_rows: list[str], cited_ids: set[str]) -> str:
+    """Quote cards show the excerpts that ground the judgement, not everything
+    retrieved. Keep the retrieved rows (in retrieval/score order) whose chunk ID the
+    judge cited; if the judge cited nothing recognisable, fall back to ALL retrieved
+    rows so the evidence panel is never empty."""
+    if cited_ids:
+        kept = [
+            row
+            for row in retrieved_rows
+            if (m := _CITED_ID_RE.search(row)) and m.group(0) in cited_ids
+        ]
+        if kept:
+            return "\n\n".join(kept)
+    return "\n\n".join(retrieved_rows)
+
+
 def _degraded_item(dimension_query: str, paper_top: list[str], prereg_top: list[str]) -> ComparisonItem:
     """Fallback shown when no parseable judgement could be produced for a dimension
     (keeps the deterministic retrieved quotes so the evidence panel is still useful)."""
@@ -2262,8 +2307,9 @@ def _judge_dimension_once(
             for k, v in normalized_payload.items()
         }
         parsed_item = ComparisonItem.model_validate(fallback)
-    parsed_item.paper_content_quotes = "\n\n".join(paper_top)
-    parsed_item.registration_content_quotes = "\n\n".join(prereg_top)
+    cited = _judge_cited_ids(parsed_item)
+    parsed_item.paper_content_quotes = _filter_display_quotes(paper_top, cited)
+    parsed_item.registration_content_quotes = _filter_display_quotes(prereg_top, cited)
     return parsed_item
 
 

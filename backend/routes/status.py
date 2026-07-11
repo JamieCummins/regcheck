@@ -133,6 +133,14 @@ async def task_status(request: Request, task_id: str):
             parsed_settings = json.loads(settings_raw)
         except (json.JSONDecodeError, TypeError):  # pragma: no cover - defensive
             parsed_settings = None
+    if isinstance(parsed_settings, dict):
+        # settings_json records the REQUESTED settings at submission; the worker
+        # writes the parser that actually ran (a scanned-PDF fallback may differ),
+        # and the viewer discloses the difference.
+        for key in ("parser_used", "prereg_parser_used"):
+            value = _decode(data.get(key))
+            if value:
+                parsed_settings[key] = value
 
     # Registered Report runs: Track A carried-forward-text integrity payload.
     rr_raw = data.get("rr_integrity")
