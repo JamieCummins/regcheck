@@ -332,7 +332,8 @@
         }
 
         function getActiveSequence() {
-            const base = defaultModeActive ? [1, 9, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
+            // Step 10 (preregistration vs Registered Report) opens BOTH flows.
+            const base = defaultModeActive ? [1, 10, 9, 6, 7, 8] : [1, 10, 2, 3, 4, 5, 6, 7, 8];
             // "Append previous outputs?" (step 5) only makes sense with >= 2 dimensions.
             return countDimensions() < 2 ? base.filter((s) => s !== 5) : base;
         }
@@ -383,13 +384,15 @@
             const finalStep = sequence[sequence.length - 1];
             const isIntro = currentStep === 1;
             const isFinal = currentStep === finalStep;
+            // Tile-choice steps advance by clicking a tile, not via Next.
+            const isTileStep = currentStep === 10;
             if (backButton) {
                 backButton.classList.toggle("is-hidden", isIntro);
                 backButton.disabled = isIntro;
             }
             if (forwardButton) {
-                forwardButton.classList.toggle("is-hidden", isIntro || isFinal);
-                forwardButton.disabled = isIntro || isFinal;
+                forwardButton.classList.toggle("is-hidden", isIntro || isFinal || isTileStep);
+                forwardButton.disabled = isIntro || isFinal || isTileStep;
             }
             if (submitButton) submitButton.classList.toggle("d-none", !isFinal);
         }
@@ -552,13 +555,13 @@
                 updateReasoningEffortVisibility();
                 defaultModeActive = true;
                 applyDefaultDiscipline();
-                goToStep(9);
+                goToStep(10);
             });
         }
         if (customModeButton) {
             customModeButton.addEventListener("click", function () {
                 defaultModeActive = false;
-                goToStep(2);
+                goToStep(10);
             });
         }
 
@@ -584,12 +587,15 @@
             });
         }
 
-        // Registered Report mode: relabel the two upload panes as Stage 1 / Stage 2
-        // and drop the ClinicalTrials.gov source (an RR Stage 1 is a manuscript,
-        // uploaded or fetched from OSF — never a CT.gov record).
-        const comparisonModeSelect = document.getElementById("comparison_mode");
+        // Registered Report mode: chosen on the step-10 tiles (posted via the
+        // hidden comparison_mode input). RR relabels the two upload panes as
+        // Stage 1 / Stage 2, retitles the source step, and drops the
+        // ClinicalTrials.gov source (an RR Stage 1 is a manuscript, uploaded or
+        // fetched from OSF — never a CT.gov record).
+        const comparisonModeInput = document.getElementById("comparison_mode");
+        const comparisonModeCards = Array.from(document.querySelectorAll(".comparison-mode-card"));
         function applyComparisonMode() {
-            const rr = !!comparisonModeSelect && comparisonModeSelect.value === "registered_report";
+            const rr = !!comparisonModeInput && comparisonModeInput.value === "registered_report";
             const regTitle = document.querySelector("#registration-slot .dropzone__title");
             const regHint = document.querySelector("#registration-slot .dropzone__hint");
             const paperSlot = document.getElementById("paper_file");
@@ -606,6 +612,17 @@
                     ? "The completed Stage 2 manuscript (one or more files)"
                     : "Provide one or more files (e.g., paper, supplementary materials)";
             }
+            const sourceStep = document.querySelector('.form-step[data-step="7"]');
+            if (sourceStep) {
+                const heading = sourceStep.querySelector(".step-heading");
+                const sub = sourceStep.querySelector(".step-sub");
+                const srcLabel = sourceStep.querySelector('label[for="prereg_source"]');
+                if (heading) heading.textContent = rr ? "Where is your Stage 1 manuscript?" : "Where is your preregistration?";
+                if (sub) sub.textContent = rr
+                    ? "Upload files or paste a link to the Open Science Framework."
+                    : "Upload files, provide a ClinicalTrials.gov identifier, or paste a link to the Open Science Framework.";
+                if (srcLabel) srcLabel.textContent = rr ? "Stage 1 source" : "Preregistration source";
+            }
             if (comparisonSelect) {
                 const clinicalOption = comparisonSelect.querySelector('option[value="clinical"]');
                 if (clinicalOption) clinicalOption.hidden = rr;
@@ -615,10 +632,22 @@
                 }
             }
         }
-        if (comparisonModeSelect) {
-            comparisonModeSelect.addEventListener("change", applyComparisonMode);
+        function setComparisonMode(mode) {
+            if (comparisonModeInput) comparisonModeInput.value = mode;
+            comparisonModeCards.forEach((card) => {
+                const on = card.dataset.comparisonMode === mode;
+                card.classList.toggle("is-selected", on);
+                card.setAttribute("aria-pressed", String(on));
+            });
             applyComparisonMode();
         }
+        comparisonModeCards.forEach((card) => {
+            card.addEventListener("click", function () {
+                setComparisonMode(card.dataset.comparisonMode || "standard");
+                goToNext();
+            });
+        });
+        applyComparisonMode();
         if (registrationInput) registrationInput.addEventListener("input", checkFiles);
         if (osfUrlInput) osfUrlInput.addEventListener("input", checkFiles);
 
