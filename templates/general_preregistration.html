@@ -43,6 +43,23 @@
                       </div>
                   </section>
 
+                  <section class="form-step" data-step="10">
+                      <h2 class="step-heading">What are you comparing?</h2>
+                      <p class="step-sub">Choose the kind of documents RegCheck should check against each other.</p>
+                      <div class="mode-choice">
+                          <button type="button" class="mode-card comparison-mode-card" id="mode-standard" data-comparison-mode="standard" aria-pressed="false">
+                              <span class="mode-card__title">Preregistration vs. paper</span>
+                              <span class="mode-card__desc">Compare a preregistration or registration (uploaded file, ClinicalTrials.gov, or OSF) with the published paper.</span>
+                              <span class="mode-card__cta">Select &rsaquo;</span>
+                          </button>
+                          <button type="button" class="mode-card mode-card--ghost comparison-mode-card" id="mode-registered-report" data-comparison-mode="registered_report" aria-pressed="false">
+                              <span class="mode-card__title">Registered Report</span>
+                              <span class="mode-card__desc">Compare a Registered Report&rsquo;s in-principle-accepted Stage&nbsp;1 manuscript with its completed Stage&nbsp;2 manuscript.</span>
+                              <span class="mode-card__cta">Select &rsaquo;</span>
+                          </button>
+                      </div>
+                  </section>
+
                   <section class="form-step choice-step" data-step="2">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Choose a parser</h2>
@@ -170,13 +187,6 @@
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
-                              <label class="field-label" for="comparison_mode">Comparison type</label>
-                              <select class="form-control app-toggles" id="comparison_mode" name="comparison_mode">
-                                  <option value="standard" selected>Preregistration vs. published paper</option>
-                                  <option value="registered_report">Registered Report: Stage 1 vs. Stage 2</option>
-                              </select>
-                          </div>
-                          <div class="field">
                               <label class="field-label" for="prereg_source">Preregistration source</label>
                               <select class="form-control app-toggles" id="prereg_source" name="prereg_source">
                                   <option value="upload" selected>Upload a file</option>
@@ -251,6 +261,7 @@
 
           <input type="hidden" id="experiment_text" name="experiment_text" value="">
           <input type="hidden" id="comparison_type" name="comparison_type" value="general_preregistration">
+          <input type="hidden" id="comparison_mode" name="comparison_mode" value="standard">
         </form>
       </main>
 

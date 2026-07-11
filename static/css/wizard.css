@@ -252,6 +252,15 @@
     border-color: var(--rc-accent-strong);
 }
 
+/* Chosen tile on the comparison-type step (revisited via Back). */
+.mode-card.is-selected {
+    border-color: var(--rc-accent-strong);
+    box-shadow: 0 0 0 2px var(--rc-accent-soft);
+}
+.mode-card.is-selected .mode-card__cta::after {
+    content: " \2713";
+}
+
 .mode-card__title {
     font-size: 1.05rem;
     font-weight: 600;
