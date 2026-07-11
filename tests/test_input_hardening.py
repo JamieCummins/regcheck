@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import ssl
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -220,3 +222,37 @@ def test_production_refuses_sqlite_fallback(monkeypatch):
             config_mod.get_settings()
     finally:
         config_mod.get_settings.cache_clear()
+
+
+def test_production_allows_explicit_sqlite_database_url(monkeypatch, tmp_path):
+    # Only the SILENT fallback is refused; an explicitly configured sqlite URL
+    # is a deliberate deployment choice and must boot.
+    monkeypatch.setenv("DYNO", "web.1")
+    monkeypatch.setenv("REDIS_URL", "rediss://example.com:6379/0")
+    monkeypatch.setenv("SESSION_SECRET", "s" * 32)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/explicit.db")
+    config_mod.get_settings.cache_clear()
+    try:
+        settings = config_mod.get_settings()
+        assert settings.database_url.startswith("sqlite+aiosqlite")
+    finally:
+        config_mod.get_settings.cache_clear()
+
+
+def test_db_metadata_importable_without_database(tmp_path):
+    # Alembic's env.py imports backend.db.base on the release dyno; that import
+    # must not drag in the app (whose settings guard would raise before
+    # migrations even start). Regression for the v1.0.0 staging deploy failure.
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k not in {"DATABASE_URL", "HEROKU_POSTGRESQL_URL"}}
+    env["DYNO"] = "web.1"
+    proc = subprocess.run(
+        [sys.executable, "-c", "import backend.db.base, backend.db.models, backend.db.session"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(Path(__file__).resolve().parents[1]),
+    )
+    assert proc.returncode == 0, proc.stderr

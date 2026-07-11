@@ -220,28 +220,6 @@
 }
 
 /* mode choice --------------------------------------------------------------- */
-.beta-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-    margin: 0.4rem 0 0;
-    color: var(--rc-muted);
-    font-size: 0.86rem;
-}
-
-.beta-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
-    background: var(--rc-accent-soft);
-    color: var(--rc-accent-strong);
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
 .mode-choice {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -873,8 +851,7 @@
 
 /* small uppercase labels — Spline Sans Mono */
 .wizard-progress__count,
-.field-label,
-.beta-badge {
+.field-label {
     font-family: var(--rc-font-mono);
 }
 

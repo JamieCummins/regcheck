@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -10,6 +11,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from backend.db.base import Base
 from backend.db import models  # noqa: F401 - ensures models register on Base.metadata
 from backend.db.session import create_engine_from_url, resolve_database_url
+
+# Fail the RELEASE phase with a clear message when a production dyno has no
+# database configured — otherwise `alembic upgrade head` would silently run
+# against the ephemeral SQLite fallback and the web dyno would refuse to boot
+# afterwards. Failing here makes Heroku roll the deploy back instead.
+if (os.environ.get("DYNO") or "").strip() and not (
+    (os.environ.get("DATABASE_URL") or "").strip()
+    or (os.environ.get("HEROKU_POSTGRESQL_URL") or "").strip()
+):
+    raise RuntimeError(
+        "DATABASE_URL is not set on this production app; refusing to run "
+        "migrations against the ephemeral SQLite fallback. Attach Heroku "
+        "Postgres (heroku addons:create heroku-postgresql) or set "
+        "DATABASE_URL, then redeploy."
+    )
 
 config = context.config
 

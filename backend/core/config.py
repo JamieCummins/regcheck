@@ -143,13 +143,21 @@ def get_settings() -> Settings:
     from ..db.session import resolve_database_url
 
     database_url = resolve_database_url()
-    if is_production and database_url.startswith("sqlite"):
-        # The SQLite fallback is a dev convenience only. On an ephemeral
-        # production filesystem it would silently drop accounts/ownership on
-        # every restart — refuse to boot instead of running in that state.
+    _db_env_set = bool(
+        (os.environ.get("DATABASE_URL") or "").strip()
+        or (os.environ.get("HEROKU_POSTGRESQL_URL") or "").strip()
+    )
+    if is_production and not _db_env_set:
+        # The SILENT SQLite fallback is a dev convenience only. On an ephemeral
+        # production filesystem it would drop accounts/ownership on every
+        # restart — refuse to boot instead of running in that state. An
+        # explicitly configured sqlite DATABASE_URL is honoured (deliberate
+        # choice), only the unset case is refused.
         raise RuntimeError(
-            "DATABASE_URL is not set (or resolved to SQLite) in a production "
-            "environment. Set DATABASE_URL to the managed Postgres instance."
+            "DATABASE_URL is not set in a production environment, so the "
+            "database would fall back to ephemeral SQLite. Attach/set the "
+            "managed Postgres instance (heroku addons:create heroku-postgresql "
+            "or heroku config:set DATABASE_URL=…)."
         )
 
     settings = Settings(
