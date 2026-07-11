@@ -79,8 +79,23 @@
             .replace(/'/g, "&#039;");
     }
 
+    // Registration-quality reports assess ONE document against completeness
+    // criteria; the viewer collapses to two panels and relabels the verdicts.
+    // Flag-gated on the report's stored settings so every existing comparison
+    // report renders exactly as before.
+    function isQualityReport() {
+        const s = state.reportSettings;
+        return !!(s && s.comparison_type === "registration_quality");
+    }
+
     function judgementInfo(value) {
         const normalized = (value || "").toString().trim().toLowerCase();
+        if (isQualityReport()) {
+            if (normalized === "complete") return { label: "Fully specified", tone: "ok", desc: "The registration specifies this criterion precisely enough that a deviation could later be detected." };
+            if (normalized === "partial") return { label: "Partially specified", tone: "warn", desc: "The registration addresses this criterion, but at least one element is missing, vague, or ambiguous." };
+            if (normalized === "absent") return { label: "Not specified", tone: "flag", desc: "The registration does not usably address this criterion." };
+            return { label: "Not assessed", tone: "warn", desc: "No reliable assessment could be produced for this criterion." };
+        }
         if (normalized === "yes") return { label: "Deviation", tone: "flag", desc: "The paper deviates from what was registered for this dimension." };
         if (normalized === "no") return { label: "No deviation", tone: "ok", desc: "The paper matches what was registered for this dimension." };
         return { label: "Insufficient evidence", tone: "warn", desc: "Not enough information in the provided text to judge this dimension reliably." };
@@ -604,10 +619,13 @@
     }
 
     // Overview right pane: registration + paper summaries (evidence quotes now
-    // live only on the Evidence view).
+    // live only on the Evidence view). Quality reports have no summaries — the
+    // overview is just the criterion rail + the decision panel.
     function renderSummariesPane() {
         if (!els.quotesPane) return;
-        if (!state.items.length) {
+        const paneSection = els.quotesPane.closest(".report-quotes");
+        if (paneSection) paneSection.classList.toggle("d-none", isQualityReport());
+        if (isQualityReport() || !state.items.length) {
             els.quotesPane.innerHTML = "";
             return;
         }
@@ -685,6 +703,17 @@
             state.activeQuoteId = all.length ? all[0].id : null;
         }
 
+        // Quality reports have ONE document: the evidence view collapses to two
+        // panels (quotes + the registration render).
+        const quality = isQualityReport();
+        const paperPanelHtml = quality ? "" : `
+                <section class="docs-panel docs-panel--doc">
+                    <div class="docs-panel__head">
+                        <span class="docs-tag docs-tag--ppr">Paper</span>
+                    </div>
+                    <div class="docs-toolbar" id="docs-ppr-tools"></div>
+                    <div class="docs-panel__scroll" id="docs-ppr-scroll"><div class="source-placeholder">Loading…</div></div>
+                </section>`;
         els.viewDocuments.innerHTML = `
             <div class="docs-bar">
                 <select class="docs-bar__dim" id="docs-dim-select" aria-label="Switch dimension">${
@@ -707,14 +736,7 @@
                     </div>
                     <div class="docs-toolbar" id="docs-reg-tools"></div>
                     <div class="docs-panel__scroll" id="docs-reg-scroll"><div class="source-placeholder">Loading…</div></div>
-                </section>
-                <section class="docs-panel docs-panel--doc">
-                    <div class="docs-panel__head">
-                        <span class="docs-tag docs-tag--ppr">Paper</span>
-                    </div>
-                    <div class="docs-toolbar" id="docs-ppr-tools"></div>
-                    <div class="docs-panel__scroll" id="docs-ppr-scroll"><div class="source-placeholder">Loading…</div></div>
-                </section>
+                </section>${paperPanelHtml}
             </div>
         `;
 
@@ -731,15 +753,19 @@
         bindLimitControl(els.viewDocuments, renderDocumentsView);
 
         const body = els.viewDocuments.querySelector(".docs-body");
-        // DOM order is now Quotes | Registration | Paper (quotes moved to the left).
+        // DOM order is Quotes | Registration | Paper (the paper panel is absent
+        // on quality reports; separate resizer key so widths don't fight).
         const panels = [...els.viewDocuments.querySelectorAll(".docs-panel")];
-        installResizers(body, panels, "regcheck.report.docsCols.v2", [200, 220, 220], [1.3, 2, 2]);
+        if (quality) {
+            installResizers(body, panels, "regcheck.report.docsCols.quality.v1", [200, 220], [1.3, 2.6]);
+        } else {
+            installResizers(body, panels, "regcheck.report.docsCols.v2", [200, 220, 220], [1.3, 2, 2]);
+        }
 
         renderMiddleQuotes(regQuotes, pprQuotes);
-        Promise.all([
-            renderDocPanel(item, "reg", regQuotes),
-            renderDocPanel(item, "ppr", pprQuotes),
-        ]).then(() => {
+        const panelRenders = [renderDocPanel(item, "reg", regQuotes)];
+        if (!quality) panelRenders.push(renderDocPanel(item, "ppr", pprQuotes));
+        Promise.all(panelRenders).then(() => {
             refreshActiveHighlight();
             markUnlocatedQuotes();
             scrollActiveIntoView();
@@ -749,6 +775,17 @@
     function renderMiddleQuotes(regQuotes, pprQuotes) {
         const container = els.viewDocuments.querySelector("#docs-quotes");
         if (!container) return;
+        if (isQualityReport()) {
+            // One document → one quote column, no per-source captions needed.
+            container.innerHTML = `
+                <div class="evidence-column">
+                    <p class="evidence-column__title evidence-column__title--reg">Registration</p>
+                    <div class="evidence-list" id="docs-reg-quotes"></div>
+                </div>
+            `;
+            renderQuoteList(document.getElementById("docs-reg-quotes"), regQuotes, "reg", { compact: true, onPick: (quote) => setActiveQuote(quote.id), activeId: state.activeQuoteId });
+            return;
+        }
         container.innerHTML = `
             <div class="evidence-column">
                 <p class="evidence-column__title evidence-column__title--reg">Registration</p>
@@ -1341,6 +1378,28 @@
             .join("\n\n");
     }
 
+    // Live cost line (updated on every status poll while the report generates,
+    // and persisted for completed reports since cost rides result_json).
+    function formatCost(cost) {
+        if (!cost) return "";
+        const tokens = (cost.input_tokens || 0) + (cost.output_tokens || 0);
+        const parts = [];
+        if (typeof cost.total_usd === "number" && (cost.total_usd > 0 || cost.estimate_complete)) {
+            parts.push(`≈ $${cost.total_usd.toFixed(cost.total_usd < 0.1 ? 4 : 2)}${cost.estimate_complete === false ? "+" : ""}`);
+        }
+        if (tokens) parts.push(`${(tokens / 1000).toFixed(1)}k tokens`);
+        if (cost.embedding_tokens) parts.push(`${(cost.embedding_tokens / 1000).toFixed(1)}k embed`);
+        return parts.join(" · ");
+    }
+
+    function updateCostLine() {
+        const el = document.getElementById("report-cost-line");
+        if (!el) return;
+        const label = formatCost(state.reportCost);
+        el.textContent = label;
+        el.classList.toggle("d-none", !label);
+    }
+
     function downloadCsv() {
         const rows = [[
             "Dimension",
@@ -1350,6 +1409,7 @@
             "Paper Summary",
             "Deviation Information",
             "Deviation Judgement",
+            "Chain Of Thought",
         ]];
         state.items.forEach((item) => {
             rows.push([
@@ -1360,6 +1420,7 @@
                 item.paper_content_summary || "",
                 item.deviation_information || "",
                 item.deviation_judgement || "",
+                item.chain_of_thought || "",
             ]);
         });
         const csvText = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
@@ -1501,6 +1562,10 @@
                 state.items = data.result.items;
                 if (state.activeIndex >= state.items.length) state.activeIndex = 0;
             }
+            if (data.result && data.result.cost) {
+                state.reportCost = data.result.cost;
+                updateCostLine();
+            }
             if (data.evidence_available === false) {
                 state.manifest = null;
                 state.manifestUnavailable = data.state === "SUCCESS";
@@ -1629,7 +1694,7 @@
 
     const SETTINGS_MODEL_LABELS = { openai: "ChatGPT (GPT-5)", claude: "Claude Opus 4.8", gpustack: "Local model (GPUStack)" };
     const SETTINGS_PARSER_LABELS = { pymupdf: "PyMuPDF", grobid: "GROBID", dpt2: "DPT-2", external: "External (bibr)" };
-    const SETTINGS_TYPE_LABELS = { preregistration: "Preregistration", clinical_trials: "Clinical trial (ClinicalTrials.gov)", registered_report: "Registered report" };
+    const SETTINGS_TYPE_LABELS = { preregistration: "Preregistration", clinical_trials: "Clinical trial (ClinicalTrials.gov)", registered_report: "Registered report", registration_quality: "Registration quality" };
     const titleCase = (v) => String(v || "").replace(/^\w/, (c) => c.toUpperCase());
 
     function settingsRows(s) {
@@ -1650,6 +1715,8 @@
         rows.push(["Append prior outputs", s.append_previous_output ? "Yes" : "No"]);
         const dims = Array.isArray(s.dimensions) ? s.dimensions : [];
         rows.push([`Dimensions (${dims.length})`, dims.length ? dims.join(", ") : "—"]);
+        const costLabel = formatCost(state.reportCost);
+        if (costLabel) rows.push(["Estimated cost", costLabel]);
         return rows;
     }
 

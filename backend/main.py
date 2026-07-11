@@ -31,7 +31,7 @@ APP_VERSION = "1.0.0"
 # Single source of truth for static-asset cache-busting. Bump this on any
 # CSS/JS change so browsers refetch; it is exposed to every template as the
 # `static_version` global (templates reference it as `?v={{ static_version }}`).
-STATIC_VERSION = "20260711-field-labels"
+STATIC_VERSION = "20260711-cost-tracking"
 
 
 def create_app() -> FastAPI:

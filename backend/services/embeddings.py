@@ -391,12 +391,15 @@ def _embed_client():
 
 
 def openai_embed_segments(segments: Sequence[str], model: str = "text-embedding-3-large") -> np.ndarray:
+    from . import cost_tracking
+
     client = _embed_client()
     max_batch = 2048
     embeddings: list[list[float]] = []
     for start in range(0, len(segments), max_batch):
         batch = segments[start : start + max_batch]
         response = client.embeddings.create(input=list(batch), model=model)
+        cost_tracking.record_embedding_usage(model, getattr(response, "usage", None))
         embeddings.extend(d.embedding for d in response.data)
     return np.asarray(embeddings, dtype=np.float32)
 

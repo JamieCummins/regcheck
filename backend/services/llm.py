@@ -182,6 +182,14 @@ def _strip_deepseek_reasoning(content: str) -> str:
     closing_tag = "</think>"
     closing_index = content.find(closing_tag)
     if closing_index != -1:
+        # Inline chain-of-thought (open-weight reasoning models): capture it for
+        # the item's chain_of_thought field instead of discarding it.
+        from . import cost_tracking
+
+        reasoning = content[:closing_index]
+        if reasoning.startswith("<think>"):
+            reasoning = reasoning[len("<think>"):]
+        cost_tracking.stash_reasoning(reasoning)
         content = content[closing_index + len(closing_tag) :]
     return content.lstrip()
 
@@ -255,6 +263,9 @@ def _openai_chat_json(
                 kwargs.pop(param, None)
                 continue
             raise
+    from . import cost_tracking
+
+    cost_tracking.record_llm_usage(model, getattr(response, "usage", None))
     return _message_content_to_text(response.choices[0].message)
 
 
@@ -289,6 +300,9 @@ def _openai_chat_text(
                 kwargs.pop(param, None)
                 continue
             raise
+    from . import cost_tracking
+
+    cost_tracking.record_llm_usage(model, getattr(response, "usage", None))
     return _message_content_to_text(response.choices[0].message)
 
 
@@ -340,6 +354,9 @@ def _qwen_chat(
             if dropped is None:
                 raise
             logger.info("Qwen call rejected %s; retrying without it", dropped, exc_info=exc)
+    from . import cost_tracking
+
+    cost_tracking.record_llm_usage(kwargs["model"], getattr(response, "usage", None))
     raw = _message_content_to_text(response.choices[0].message)
     return _strip_deepseek_reasoning(raw)
 
@@ -408,6 +425,9 @@ def _gpustack_chat(
             if dropped is None:
                 raise
             logger.info("GPUStack call rejected %s; retrying without it", dropped, exc_info=exc)
+    from . import cost_tracking
+
+    cost_tracking.record_llm_usage(kwargs["model"], getattr(response, "usage", None))
     raw = _message_content_to_text(response.choices[0].message)
     return _strip_deepseek_reasoning(raw)
 
@@ -573,6 +593,9 @@ def _claude_structured(
         if _is_provider_auth_error(exc):
             _raise_provider_auth_error("Claude", "CLAUDE_API_KEY", exc)
         raise
+    from . import cost_tracking
+
+    cost_tracking.record_llm_usage(model, getattr(response, "usage", None))
     for block in getattr(response, "content", None) or []:
         if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == tool["name"]:
             try:

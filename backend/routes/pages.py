@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ..services.dimensions import discipline_sets_for_ui
+from ..services.dimensions import discipline_sets_for_ui, registration_quality_set_for_ui
 
 router = APIRouter()
 
@@ -25,6 +25,18 @@ async def compare(request: Request):
         request,
         "general_preregistration.html",
         {"discipline_sets_json": json.dumps(discipline_sets_for_ui())},
+    )
+
+
+@router.get("/evaluate_registration", response_class=HTMLResponse, name="evaluate_registration")
+async def evaluate_registration(request: Request):
+    templates = request.app.state.templates
+    # Same wizard machinery as /compare, parametrized for the single-document
+    # quality flow; the only "discipline" is the registration-quality criteria set.
+    return templates.TemplateResponse(
+        request,
+        "registration_quality.html",
+        {"discipline_sets_json": json.dumps(registration_quality_set_for_ui())},
     )
 
 
@@ -60,10 +72,6 @@ _COMING_SOON = {
     "code-paper": {
         "title": "Code–Paper Comparison",
         "blurb": "Compare a study's analysis code against what its paper reports, to check that the published results match the code that produced them.",
-    },
-    "evaluate-registration": {
-        "title": "Evaluate Registration Quality",
-        "blurb": "Assess how complete and specific a preregistration is, so you can strengthen it before a study runs — or review it more efficiently.",
     },
 }
 
