@@ -3,11 +3,11 @@
 <head>
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
+    <meta name="description" content="{{ brand_name }} is an AI tool to compare preregistrations with papers instantly."/>
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RegCheck Report</title>
+    <title>{{ brand_name }} Report</title>
     <link rel="stylesheet" href="{{ url_for('static', path='css/report.css') }}?v={{ static_version }}">
     <style>
       /* Inline title editing (click pencil -> edit in place -> save) */
@@ -139,7 +139,7 @@
         {% if multi_study_isolation == "failed" %}
         <div role="alert" style="margin:0 auto 1.1rem; max-width:1100px; padding:.85rem 1.1rem; border:1px solid rgba(214,158,46,.5); border-left:4px solid #d69e2e; border-radius:.5rem; background:rgba(214,158,46,.12); font-size:.92rem; line-height:1.5;">
             <strong>Multi-study isolation didn't run.</strong>
-            RegCheck couldn't isolate study {{ multi_study_label or "the selected study" }} from the paper, so this comparison ran on the <strong>full paper</strong> rather than just that study.{% if multi_study_isolation_error %} Reason: {{ multi_study_isolation_error }}.{% endif %}
+            {{ brand_name }} couldn't isolate study {{ multi_study_label or "the selected study" }} from the paper, so this comparison ran on the <strong>full paper</strong> rather than just that study.{% if multi_study_isolation_error %} Reason: {{ multi_study_isolation_error }}.{% endif %}
             Re-running, or choosing a different model, may help.
         </div>
         {% endif %}
@@ -280,7 +280,7 @@
             .then((data) => {
               const saved = data.title || next;
               titleEl.textContent = saved;
-              document.title = saved + " · RegCheck";
+              document.title = saved + " · {{ brand_name }}";
               flash("Report renamed");
             })
             .catch(() => { titleEl.textContent = renameOriginal; flash("Could not rename report"); })

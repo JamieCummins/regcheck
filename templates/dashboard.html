@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta name="robots" content="noindex,nofollow">
-    <title>My reports · RegCheck</title>
+    <title>My reports · {{ brand_name }}</title>
     <style>
       .reports-main { flex: 1; width: min(960px, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; text-align: left; }
       .reports-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.4rem; }
@@ -36,13 +36,13 @@
     <main class="reports-main">
       <div class="reports-head">
         <h1>My reports</h1>
-        <a class="reports-cta" href="{{ url_for('compare') }}">New comparison</a>
+        <a class="reports-cta" href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'New evaluation' if app_mode == 'precheck' else 'New comparison' }}</a>
       </div>
 
       {% if not reports %}
       <div class="reports-empty">
         <p>You haven't generated any reports yet.</p>
-        <p><a href="{{ url_for('compare') }}">Run your first comparison &rsaquo;</a></p>
+        <p><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'Evaluate your first registration' if app_mode == 'precheck' else 'Run your first comparison' }} &rsaquo;</a></p>
       </div>
       {% else %}
       <div id="reports-list">

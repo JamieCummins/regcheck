@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="description" content="RegCheck evaluates how completely and unambiguously a study registration specifies the planned study."/>
+    <meta name="description" content="{{ brand_name }} evaluates how completely and unambiguously a study registration specifies the planned study."/>
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
-    <title>RegCheck Evaluate Registration</title>
+    <title>{{ brand_name }} Evaluate Registration</title>
     <link rel="stylesheet" href="{{ url_for('static', path='css/wizard.css') }}?v={{ static_version }}">
 </head>
 {% set nav_active = 'evaluate' %}
@@ -28,7 +28,7 @@
               <div class="wizard-panel">
                   <section class="form-step active" data-step="1">
                       <h1 class="step-heading">Evaluate registration quality</h1>
-                      <p class="step-sub">RegCheck assesses how completely and unambiguously a registration specifies the planned study — before the study runs, or when reviewing someone else&rsquo;s plan.</p>
+                      <p class="step-sub">{{ brand_name }} assesses how completely and unambiguously a registration specifies the planned study — before the study runs, or when reviewing someone else&rsquo;s plan.</p>
                       <div class="mode-choice">
                           <button type="button" class="mode-card" id="default-mode">
                               <span class="mode-card__title">Use default settings</span>
@@ -46,7 +46,7 @@
                   <section class="form-step choice-step" data-step="2">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Choose a parser</h2>
-                          <p class="step-sub">This determines how RegCheck reads your registration. PyMuPDF (recommended) runs entirely on our server and keeps all selectable text. GROBID is tuned for typeset PDFs but can fail on non-standard layouts. DPT-2 handles less standard academic documents.</p>
+                          <p class="step-sub">This determines how {{ brand_name }} reads your registration. PyMuPDF (recommended) runs entirely on our server and keeps all selectable text. GROBID is tuned for typeset PDFs but can fail on non-standard layouts. DPT-2 handles less standard academic documents.</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
@@ -90,8 +90,8 @@
                   <section class="form-step dimensions-step" data-step="4">
                       <div class="dim-head">
                           <h2 class="step-heading">Quality criteria</h2>
-                          <p class="step-sub">RegCheck assesses the registration against each of these criteria in the order you specify.</p>
-                          <p class="dim-warning" id="dim-empty-warning" hidden>Add at least one criterion to continue — RegCheck needs at least one thing to assess.</p>
+                          <p class="step-sub">{{ brand_name }} assesses the registration against each of these criteria in the order you specify.</p>
+                          <p class="dim-warning" id="dim-empty-warning" hidden>Add at least one criterion to continue — {{ brand_name }} needs at least one thing to assess.</p>
                       </div>
                       <div class="tp2">
                           <div class="tp2-left">
@@ -117,7 +117,7 @@
                   <section class="form-step choice-step" data-step="5">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Append previous outputs?</h2>
-                          <p class="step-sub">Should RegCheck include earlier criterion assessments when prompting for later criteria? &ldquo;Yes&rdquo; can improve coherence but introduces dependence between decisions; &ldquo;No&rdquo; keeps outputs independent.</p>
+                          <p class="step-sub">Should {{ brand_name }} include earlier criterion assessments when prompting for later criteria? &ldquo;Yes&rdquo; can improve coherence but introduces dependence between decisions; &ldquo;No&rdquo; keeps outputs independent.</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">

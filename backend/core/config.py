@@ -31,6 +31,18 @@ class Settings:
     external_parser_url: str
     external_parser_api_key: str
     is_production: bool
+    # Deployment mode: one codebase, two sites. "regcheck" (default) serves the
+    # full comparison suite; "precheck" serves ONLY the registration-quality
+    # tool under its own brand (separate app/domain/data at deploy time).
+    app_mode: str = "regcheck"
+
+    @property
+    def is_precheck(self) -> bool:
+        return self.app_mode == "precheck"
+
+    @property
+    def brand_name(self) -> str:
+        return "PreCheck" if self.is_precheck else "RegCheck"
 
     def ensure_directories(self) -> None:
         """Ensure that directories required by the application exist."""
@@ -160,7 +172,12 @@ def get_settings() -> Settings:
             "or heroku config:set DATABASE_URL=…)."
         )
 
+    app_mode = (os.environ.get("APP_MODE") or "regcheck").strip().lower()
+    if app_mode not in {"regcheck", "precheck"}:
+        app_mode = "regcheck"
+
     settings = Settings(
+        app_mode=app_mode,
         redis_url=redis_url,
         database_url=database_url,
         session_secret=session_secret,
