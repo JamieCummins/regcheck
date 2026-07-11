@@ -1,0 +1,110 @@
+{
+  "version": "1.0.0",
+  "probes": [
+    {
+      "name": "exact-value-deviation",
+      "rule": "Rule 1",
+      "dimension": "Sample size",
+      "dimension_definition": "Sample size: the number of participants the study committed to recruiting (including any target N, stopping rule, or exclusion-and-replacement provisions) compared with the number actually recruited and analysed in the published paper.",
+      "expected": "yes"
+    },
+    {
+      "name": "bound-satisfied",
+      "rule": "Rule 2",
+      "dimension": "Sample size",
+      "dimension_definition": "Sample size: the number of participants the study planned to recruit and analyse, including any registered target or minimum N, its power-analysis justification, and whether the achieved sample reported in the paper satisfies that registered commitment.",
+      "expected": "no"
+    },
+    {
+      "name": "bound-violated",
+      "rule": "Rule 2",
+      "dimension": "Sample size",
+      "dimension_definition": "Sample size: the number of participants the study committed to recruiting and the number actually recruited and analysed, including any minimum targets, stopping rules, or power-analysis-based justifications.",
+      "expected": "yes"
+    },
+    {
+      "name": "rewording-same-referent",
+      "rule": "Rule 7",
+      "dimension": "Measured variables",
+      "dimension_definition": "Measured variables: the specific instruments, tasks, scales, and items used to operationalise the study's constructs, including their identity, version, administration parameters, and scoring.",
+      "expected": "no"
+    },
+    {
+      "name": "variant-differs",
+      "rule": "Rule 7",
+      "dimension": "Measured variables",
+      "dimension_definition": "Measured variables: the constructs assessed in the study and the specific instruments used to operationalize them, including the exact scale, version or variant, number of items, and response format specified for each measure.",
+      "expected": "yes"
+    },
+    {
+      "name": "added-analysis",
+      "rule": "Rule 4",
+      "dimension": "Statistical models",
+      "dimension_definition": "Statistical models: the statistical analyses specified or reported to test the study's hypotheses, including the type of model, the dependent and independent variables and covariates entered, and any additional or secondary analyses conducted.",
+      "expected": "yes"
+    },
+    {
+      "name": "elaboration-not-deviation",
+      "rule": "Rule 4",
+      "dimension": "Statistical models",
+      "dimension_definition": "Statistical models: the statistical analyses specified to test the study's hypotheses, including the type of model or test, the variables entered (dependent variables, factors, covariates), and the inferential criteria, compared for whether the analyses reported in the paper match those committed to in the registration.",
+      "expected": "no"
+    },
+    {
+      "name": "licensed-exploratory",
+      "rule": "Rule 5",
+      "dimension": "Statistical models",
+      "dimension_definition": "Statistical models: the statistical analyses and model specifications planned in the registration (tests, variables, estimators, and inference criteria) compared against those reported in the published paper, including any analyses added, omitted, or altered.",
+      "expected": "no"
+    },
+    {
+      "name": "licensed-overrun-new-hypothesis",
+      "rule": "Rule 5",
+      "dimension": "Hypotheses",
+      "dimension_definition": "Hypotheses: the specific predictions the study commits to testing, including their number, content, direction, and confirmatory versus exploratory status.",
+      "expected": "yes"
+    },
+    {
+      "name": "disclosed-deviation-still-yes",
+      "rule": "Rule 6",
+      "dimension": "Inclusion and exclusion criteria",
+      "dimension_definition": "Inclusion and exclusion criteria: the rules determining which participants and data are eligible for, retained in, or removed from the analyses, including eligibility requirements and any performance- or quality-based exclusion thresholds.",
+      "expected": "yes"
+    },
+    {
+      "name": "registered-element-unverifiable",
+      "rule": "Rule 8",
+      "dimension": "Ethics approval",
+      "dimension_definition": "Ethics approval — Ethics approval: whether the ethical approval recorded in the registration is consistent with the paper.",
+      "expected": "missing"
+    },
+    {
+      "name": "mutual-silence",
+      "rule": "Rule 3",
+      "dimension": "Missing data",
+      "dimension_definition": "Missing data — Missing data: how missing or incomplete responses are defined and handled in the analysis, including any imputation methods, deletion rules (e.g., listwise or pairwise), or thresholds for retaining cases with partial data.",
+      "expected": "missing"
+    },
+    {
+      "name": "granularity-specified",
+      "rule": "Rule 4",
+      "dimension": "Sample size",
+      "dimension_definition": "Sample size — Sample size: the number of participants the study committed to recruit or analyse, including any total or per-condition targets, minimums, or stopping rules, compared against the sample sizes actually reported in the paper.",
+      "expected": "yes"
+    },
+    {
+      "name": "epistemic-demotion",
+      "rule": "Rule 7",
+      "dimension": "Hypotheses",
+      "dimension_definition": "Hypotheses: the study's stated predictions or research questions, including the variables involved, the predicted direction of effects, and the epistemic status assigned to each prediction (confirmatory versus exploratory).",
+      "expected": "yes"
+    },
+    {
+      "name": "categorical-inference",
+      "rule": "Rule 9",
+      "dimension": "Study type (confirmatory vs exploratory)",
+      "dimension_definition": "Study type (confirmatory vs exploratory) — Study type: whether the study type (e.g. confirmatory/exploratory) registered in the registration matches the study type of the study reported in the paper.",
+      "expected": "no"
+    }
+  ]
+}

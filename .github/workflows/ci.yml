@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install runtime dependencies (hash-locked)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.lock
+
+      - name: Install CI tooling
+        run: pip install ruff==0.15.21 pip-audit==2.10.1
+
+      - name: Lint (correctness gate — see ruff.toml)
+        run: ruff check backend/ tests/ app.py conftest.py
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Migrations apply cleanly from scratch (SQLite)
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-migrations.db
+        run: alembic upgrade head
+
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt --no-deps

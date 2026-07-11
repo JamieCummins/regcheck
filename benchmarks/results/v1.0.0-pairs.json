@@ -1,0 +1,56 @@
+{
+  "version": "1.0.0",
+  "client": "openai",
+  "comparison_model": "gpt-5.5 (code default)",
+  "note": "Per-dimension verdicts snapshot; re-run per benchmarks/README.md and adjudicate any flips.",
+  "pairs": {
+    "meijer": {
+      "registration": "test_materials/preregistration_meijer_etal.docx",
+      "paper": "test_materials/paper_meijer_etal.pdf",
+      "cli": "--dimension-set psychology",
+      "verdicts": {
+        "Hypotheses": "yes",
+        "Data source": "missing",
+        "Inclusion and exclusion criteria": "yes",
+        "Sample size": "yes",
+        "Manipulated variables": "yes",
+        "Measured variables": "yes",
+        "Statistical models": "yes",
+        "Transformations": "yes",
+        "Missing data": "yes"
+      }
+    },
+    "nevejans-exp2": {
+      "registration": "test_materials/preregistration_nevejans_experiment2.docx",
+      "paper": "test_materials/paper_nevejans.pdf",
+      "cli": "--dimension-set psychology --multiple-experiments --experiment-number 2",
+      "verdicts": {
+        "Hypotheses": "yes",
+        "Data source": "missing",
+        "Inclusion and exclusion criteria": "yes",
+        "Sample size": "yes",
+        "Manipulated variables": "yes",
+        "Measured variables": "yes",
+        "Statistical models": "missing",
+        "Transformations": "yes",
+        "Missing data": "yes"
+      }
+    },
+    "cummins-study2": {
+      "registration": "test_materials/registration_cummins_etal_study2.docx",
+      "paper": "test_materials/paper_cummins_etal.pdf",
+      "cli": "--dimension-set psychology --multiple-experiments --experiment-number 2",
+      "verdicts": {
+        "Hypotheses": "yes",
+        "Data source": "missing",
+        "Inclusion and exclusion criteria": "yes",
+        "Sample size": "yes",
+        "Manipulated variables": "no",
+        "Measured variables": "yes",
+        "Statistical models": "yes",
+        "Transformations": "yes",
+        "Missing data": "no"
+      }
+    }
+  }
+}

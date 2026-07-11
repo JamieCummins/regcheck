@@ -1,0 +1,7 @@
+Study title: Effects of a One-Week Social Media Abstinence on Loneliness in Young Adults.
+
+Design and sample: We will conduct a two-arm randomized experiment. We will recruit 200 undergraduate students aged 18 to 30 through the university participant pool. Individuals who report having no active social media account will be excluded before randomization. Participants will be randomly assigned (1:1, computer-generated allocation sequence) either to abstain from all social media platforms for seven days or to continue their usual level of use.
+
+Measures: The primary outcome is loneliness, measured with the 20-item UCLA Loneliness Scale Version 3 (Russell, 1996). Items are rated on a 4-point scale (1 = never, 4 = often); total scores range from 20 to 80, with higher scores indicating greater loneliness. As a secondary outcome, we will administer the 5-item Satisfaction With Life Scale (SWLS; Diener et al., 1985). Both measures will be completed at baseline (Day 0) and at post-test (Day 8).
+
+Analysis plan: The primary analysis will be an analysis of covariance (ANCOVA) on post-test loneliness scores, with condition (abstinence vs. usual use) as the between-subjects factor and baseline loneliness as a covariate; alpha = .05, two-tailed. The secondary outcome (SWLS) will be analyzed with the same model. No interim analyses are planned, and no participants will be excluded after randomization.

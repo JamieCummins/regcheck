@@ -9,6 +9,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.api_auth import require_api_key
@@ -19,7 +20,17 @@ from ..services import reports as reports_service
 from ..services.dimensions import discipline_keys, get_discipline_dimensions
 from . import comparisons as comparisons_routes
 
-router = APIRouter(prefix="/api/v1")
+# OpenAPI-only security declaration: documents the Bearer requirement on every
+# /api/v1 endpoint and powers the Swagger "Authorize" button. auto_error=False so
+# enforcement stays with require_api_key (which also accepts X-API-Key and returns
+# a precise 401 message).
+_bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="RegCheckApiKey",
+    description="RegCheck API key issued from your profile page: `Authorization: Bearer rc_live_…`",
+)
+
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(_bearer_scheme)])
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +71,7 @@ async def _owned_report_or_404(db: AsyncSession, user: models.User, task_id: str
     return report
 
 
-@router.post("/compare", dependencies=[Depends(comparison_rate_limit)])
+@router.post("/compare", status_code=202, dependencies=[Depends(comparison_rate_limit)])
 async def api_compare(
     request: Request,
     user: models.User = Depends(require_api_key),
