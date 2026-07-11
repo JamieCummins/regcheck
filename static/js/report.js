@@ -1636,7 +1636,16 @@
         const rows = [["Comparison", SETTINGS_TYPE_LABELS[s.comparison_type] || titleCase(s.comparison_type) || "Preregistration"]];
         rows.push(["Model", SETTINGS_MODEL_LABELS[s.client] || s.client || "—"]);
         if (s.client === "openai" && s.reasoning_effort) rows.push(["Reasoning effort", titleCase(s.reasoning_effort)]);
-        rows.push(["Document parser", SETTINGS_PARSER_LABELS[s.parser_choice] || s.parser_choice || "—"]);
+        const parserLabel = (v) => SETTINGS_PARSER_LABELS[String(v || "").replace(/_fallback$/, "")] || v;
+        let parserValue = SETTINGS_PARSER_LABELS[s.parser_choice] || s.parser_choice || "—";
+        // Disclose when a scanned-PDF fallback ran a different parser than requested.
+        if (s.parser_used && String(s.parser_used).replace(/_fallback$/, "") !== s.parser_choice) {
+            parserValue += ` (fallback used: ${parserLabel(s.parser_used)})`;
+        }
+        rows.push(["Document parser", parserValue]);
+        if (s.prereg_parser_used && String(s.prereg_parser_used).replace(/_fallback$/, "") !== s.parser_choice) {
+            rows.push(["Registration parser", `${parserLabel(s.prereg_parser_used)} (fallback)`]);
+        }
         if (s.multiple_experiments) rows.push(["Multi-study", s.experiment_number ? `Study ${s.experiment_number}` : "Yes"]);
         rows.push(["Append prior outputs", s.append_previous_output ? "Yes" : "No"]);
         const dims = Array.isArray(s.dimensions) ? s.dimensions : [];

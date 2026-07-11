@@ -1473,3 +1473,48 @@ def test_rr_addons_include_carried_forward_dimension():
 
     names = [d["dimension"] for d in rr_addon_dimensions()]
     assert names == ["Outcome-neutral quality checks", "Carried-forward text fidelity"]
+
+
+# ── quote cards filtered to judge-cited evidence IDs ───────────────────────────
+
+
+def _rows(prefix, n=3):
+    return [f"[{prefix}_{i:04d}, 0.9{i}] excerpt {i}" for i in range(1, n + 1)]
+
+
+def test_filter_display_quotes_keeps_only_cited_rows_in_retrieval_order():
+    rows = _rows("PAPER")
+    kept = comparisons._filter_display_quotes(rows, {"PAPER_0003", "PAPER_0001"})
+    assert kept == f"{rows[0]}\n\n{rows[2]}"  # judge's set filters; score order kept
+
+
+def test_filter_display_quotes_falls_back_when_nothing_cited():
+    rows = _rows("PAPER")
+    assert comparisons._filter_display_quotes(rows, set()) == "\n\n".join(rows)
+    # Cited IDs that match no retrieved row (e.g. hallucinated) also fall back.
+    assert comparisons._filter_display_quotes(rows, {"PAPER_9999"}) == "\n\n".join(rows)
+
+
+def test_judge_cited_ids_unions_all_output_fields():
+    item = ComparisonItem(
+        dimension="Sample size",
+        paper_content_quotes="[PAPER_0001]",
+        registration_content_quotes="[PREREG_0002]",
+        paper_content_summary="Reports n=310 [PAPER_0002].",
+        deviation_information="Registered 300 [PREREG_0001] vs 310 [PAPER_0002].",
+    )
+    assert comparisons._judge_cited_ids(item) == {
+        "PAPER_0001",
+        "PAPER_0002",
+        "PREREG_0001",
+        "PREREG_0002",
+    }
+
+
+def test_display_quote_sides_filter_independently():
+    # A rationale citing only PAPER ids must not blank the registration cards:
+    # no PREREG id is cited, so the registration side falls back to all rows.
+    paper_rows, prereg_rows = _rows("PAPER"), _rows("PREREG")
+    cited = {"PAPER_0002"}
+    assert comparisons._filter_display_quotes(paper_rows, cited) == paper_rows[1]
+    assert comparisons._filter_display_quotes(prereg_rows, cited) == "\n\n".join(prereg_rows)

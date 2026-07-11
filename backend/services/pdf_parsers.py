@@ -93,7 +93,11 @@ def _fallback_chain() -> list[str]:
     Priority:
     - If PDF_PARSER_FALLBACKS is set, use its comma-separated values.
     - Otherwise, if SCANNED_PDF_FALLBACK is set, use that legacy fallback.
-    - Otherwise, default to ["dpt2", "pymupdf"].
+    - Otherwise, default to ["pymupdf"] — LOCAL extraction only. A document is
+      never sent to an external parsing service (DPT2 OCR) unless the user picked
+      that parser or the deployment explicitly configured it as a fallback via
+      one of the two env vars above; when it runs, the status feed and the
+      report's settings disclose the parser actually used.
 
     Any configured chain that tries DPT2 also tries PyMuPDF afterward. This keeps
     legacy Heroku configs such as SCANNED_PDF_FALLBACK=dpt2 from failing the
@@ -111,7 +115,7 @@ def _fallback_chain() -> list[str]:
         if legacy == "none":
             raw_items = []
         if env_chain is None and os.environ.get("SCANNED_PDF_FALLBACK") is None:
-            raw_items = ["dpt2", "pymupdf"]
+            raw_items = ["pymupdf"]
 
     allowed = {"dpt2", "pymupdf"}
     chain: list[str] = []

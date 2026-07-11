@@ -25,7 +25,7 @@ from .routes import survey
 # Single source of truth for static-asset cache-busting. Bump this on any
 # CSS/JS change so browsers refetch; it is exposed to every template as the
 # `static_version` global (templates reference it as `?v={{ static_version }}`).
-STATIC_VERSION = "20260710-rr-standard-shape"
+STATIC_VERSION = "20260711-parser-disclosure"
 
 
 def create_app() -> FastAPI:
