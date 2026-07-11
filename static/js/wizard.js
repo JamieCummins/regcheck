@@ -287,7 +287,7 @@
             DISCIPLINES.forEach((d) => {
                 const opt = document.createElement("option");
                 opt.value = d.key;
-                opt.textContent = d.label + " (" + d.meta + ")";
+                opt.textContent = d.label;
                 defaultDisciplineSelect.appendChild(opt);
             });
         }
