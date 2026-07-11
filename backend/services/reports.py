@@ -81,6 +81,19 @@ async def get_report_row(db: AsyncSession, task_id: str) -> models.Report | None
     return await db.get(models.Report, task_id)
 
 
+async def filter_session_manageable(db: AsyncSession, task_ids: list[str]) -> list[str]:
+    """Of ``task_ids``, keep only those a browser session may still manage — i.e.
+    with no owned DB row. Used after login to drop any session handles to reports
+    now owned by an account (this user's are on the dashboard; others' are not the
+    session's to touch)."""
+    keep: list[str] = []
+    for task_id in task_ids:
+        row = await get_report_row(db, task_id)
+        if row is None or not (row.owner_id or "").strip():
+            keep.append(task_id)
+    return keep
+
+
 async def claim_anonymous_reports(
     redis_client,
     db: AsyncSession,
@@ -100,7 +113,13 @@ async def claim_anonymous_reports(
         try:
             existing = await get_report_row(db, task_id)
             if existing is not None and (existing.owner_id or "").strip():
-                continue  # already owned by someone
+                # Owned by someone. If that someone is THIS user, treat as claimed
+                # (so it's pruned from the session list); otherwise leave it alone
+                # but it will still be pruned below (a session must not retain a
+                # handle to a report owned by another account).
+                if existing.owner_id == owner_id:
+                    claimed.append(task_id)
+                continue
             meta = await redis_client.hgetall(task_id)
             if not meta:
                 continue  # expired or never existed
@@ -173,14 +192,46 @@ async def set_report_visibility(
     return vis
 
 
+# A deletion tombstone lives this long: comfortably longer than the slowest job,
+# so a worker that finishes after a delete still sees it and cleans up.
+DELETION_TOMBSTONE_TTL_SECONDS = 3 * 60 * 60
+
+
+def deletion_tombstone_key(task_id: str) -> str:
+    return f"deleted:{task_id}"
+
+
+async def mark_deleted(redis_client, task_id: str) -> None:
+    """Record a deletion tombstone so an in-flight worker won't resurrect the
+    report after it's been deleted (see worker job-completion guard)."""
+    try:
+        await redis_client.set(
+            deletion_tombstone_key(task_id), "1", ex=DELETION_TOMBSTONE_TTL_SECONDS
+        )
+    except Exception:  # pragma: no cover - best-effort
+        logger.warning("Failed to set deletion tombstone for %s", task_id, exc_info=True)
+
+
+async def is_deleted(redis_client, task_id: str) -> bool:
+    try:
+        return bool(await redis_client.exists(deletion_tombstone_key(task_id)))
+    except Exception:  # pragma: no cover - fail open on the CHECK is safe: a missed
+        # tombstone just means the worker finishes normally, and delete already
+        # removed the content; the guard is belt-and-braces.
+        return False
+
+
 async def delete_report_everywhere(
     redis_client,
     db: AsyncSession | None,
     task_id: str,
     report: models.Report | None = None,
 ) -> None:
-    """Remove a report's content (Redis hash + evidence artifacts + survey) and
-    its ownership row (if any)."""
+    """The single, complete report-deletion path (used by UI, API, and account
+    erasure): tombstone + retained uploads + evidence artifacts + Redis hash +
+    survey record + ownership row. Idempotent and best-effort per resource."""
+    await mark_deleted(redis_client, task_id)
+    await _cleanup_retained_uploads(redis_client, task_id)
     await delete_report_artifacts(redis_client, task_id)
     try:
         await redis_client.delete(task_id, f"survey:{task_id}")
@@ -189,3 +240,35 @@ async def delete_report_everywhere(
         logger.warning("Failed to delete report content from Redis", exc_info=exc)
     if db is not None and report is not None:
         await db.delete(report)
+
+
+async def _cleanup_retained_uploads(redis_client, task_id: str) -> None:
+    """Remove the source uploads kept for regeneration (Redis blobs + S3 objects).
+    Lives here (not in the route) so UI and API deletion share one implementation."""
+    import json as _json
+
+    from ..core.storage import get_s3_config, s3_delete_key
+
+    s3_keys: dict = {}
+    try:
+        raw = await redis_client.hget(task_id, "regen_job")
+        if raw:
+            payload = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+            s3_keys = (_json.loads(payload).get("s3_keys") or {})
+    except Exception:  # pragma: no cover - defensive
+        s3_keys = {}
+    for suffix in ("paper", "prereg", "csv"):
+        try:
+            await redis_client.delete(f"upload:{task_id}:{suffix}")
+        except Exception:  # pragma: no cover - best-effort
+            pass
+    cfg = get_s3_config()
+    if cfg is not None:
+        import asyncio as _asyncio
+
+        for key in s3_keys.values():
+            if key:
+                try:
+                    await _asyncio.to_thread(s3_delete_key, cfg, key=key)
+                except Exception:  # pragma: no cover - best-effort
+                    pass

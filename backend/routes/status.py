@@ -176,8 +176,9 @@ async def result(request: Request, task_id: str):
             login_url = request.url_for("login")
             return RedirectResponse(url=f"{login_url}?next=/result/{task_id}", status_code=302)
         return templates.TemplateResponse(
+            request,
             "report_no_access.html",
-            {"request": request, "task_id": task_id},
+            {"task_id": task_id},
             status_code=403,
         )
 
@@ -224,7 +225,6 @@ async def result(request: Request, task_id: str):
             ]
 
     base_context = {
-        "request": request,
         "task_id": task_id,
         "total_dimensions": total_dimensions or 0,
         "processed_dimensions": processed_dimensions or 0,
@@ -251,9 +251,9 @@ async def result(request: Request, task_id: str):
                 # frontend poll for the final payload.
                 logger.warning("Invalid result_json for task; rendering empty result", extra={"task_id": task_id})
                 parsed_result = None
-        return templates.TemplateResponse("result.html", {**base_context, "result": parsed_result})
+        return templates.TemplateResponse(request, "result.html", {**base_context, "result": parsed_result})
 
-    return templates.TemplateResponse("result.html", {**base_context, "result": []})
+    return templates.TemplateResponse(request, "result.html", {**base_context, "result": []})
 
 
 @router.post("/append_result/{task_id}")

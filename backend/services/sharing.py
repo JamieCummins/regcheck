@@ -134,13 +134,42 @@ class ViewVerdict:
     report: models.Report | None = None
 
 
+async def _viewable_from_redis_metadata(request, task_id: str) -> ViewVerdict:
+    """Access decision when there is no DB ``Report`` row, driven by the Redis task
+    hash. Anonymous reports (no ``owner_id``) are public by link. An owned report
+    with missing row is enforced from its Redis ``owner_id``/``visibility`` — it
+    must not fail open just because the row is absent."""
+    redis_client = getattr(request.app.state, "redis", None)
+    meta = {}
+    if redis_client is not None:
+        try:
+            meta = await redis_client.hgetall(task_id) or {}
+        except Exception:  # pragma: no cover - defensive; treat as no metadata
+            meta = {}
+    owner_id = (meta.get("owner_id") or "").strip()
+    if not owner_id:
+        return ViewVerdict(allowed=True, report=None)  # anonymous → public by link
+    visibility = reports_service.normalize_visibility(meta.get("visibility"))
+    if visibility != "private":
+        return ViewVerdict(allowed=True, report=None)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return ViewVerdict(allowed=False, needs_login=True, report=None)
+    # No row → no grantee list to consult; owner-id match is the available check.
+    return ViewVerdict(allowed=(str(user.id) == owner_id), report=None)
+
+
 async def ensure_viewable(request, task_id: str) -> ViewVerdict:
     """The single access gate for report-content endpoints.
 
     Opens its own short DB session so callers don't need a ``get_db`` dependency.
 
     - No accounts DB configured → allowed (degrades to pre-accounts behavior).
-    - No ``Report`` row (anonymous/legacy reports) → allowed (these are public).
+    - No ``Report`` row: consult the Redis task hash. A genuinely anonymous report
+      (no ``owner_id`` metadata) is public by link, by design. But an OWNED report
+      whose row is missing (row-creation failed, or the row was lost while Redis
+      data survived) must NOT fail open — it is enforced from its Redis
+      ``owner_id``/``visibility`` metadata instead.
     - ``public`` → allowed (open by link).
     - ``private`` → allowed only for the owner or a granted viewer; anonymous
       viewers get ``needs_login`` so the caller can redirect to sign-in.
@@ -152,7 +181,7 @@ async def ensure_viewable(request, task_id: str) -> ViewVerdict:
     async with sessionmaker() as db:
         report = await reports_service.get_report_row(db, task_id)
         if report is None:
-            return ViewVerdict(allowed=True, report=None)
+            return await _viewable_from_redis_metadata(request, task_id)
 
         visibility = reports_service.normalize_visibility(report.visibility)
         if visibility != "private":

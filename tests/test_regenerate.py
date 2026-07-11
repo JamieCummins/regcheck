@@ -30,6 +30,15 @@ class FakeRedis:
     async def exists(self, k):
         return 1 if (k in self.h or k in self.keys) else 0
 
+    async def set(self, k, value, nx=False, ex=None):
+        if nx and k in self.keys:
+            return None
+        self.keys.add(k)
+        return True
+
+    async def srem(self, *a):
+        pass
+
     async def rpush(self, k, value):
         self.queue.append(value)
 

@@ -62,6 +62,29 @@ def _upload_limit() -> int:
 
 MAX_UPLOAD_BYTES = _upload_limit()
 
+
+def _int_env(name: str, default: int, *, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int((os.getenv(name) or "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+# Aggregate caps for multi-file submissions: each side (paper / registration) may
+# combine at most this many files, and their combined bytes may not exceed 3x the
+# single-file limit — bounds worker memory and per-request disk usage.
+MAX_UPLOAD_FILES = _int_env("MAX_UPLOAD_FILES", 10, minimum=1)
+MAX_COMBINED_UPLOAD_BYTES = _int_env(
+    "MAX_COMBINED_UPLOAD_BYTES", 3 * MAX_UPLOAD_BYTES, minimum=1
+)
+
+# Bounds for the user-editable dimension payload; generous for real use, tight
+# enough that a crafted payload can't balloon prompts or Redis entries.
+MAX_DIMENSIONS = _int_env("MAX_DIMENSIONS", 40, minimum=1)
+MAX_DIMENSION_NAME_CHARS = 200
+MAX_DIMENSION_DEFINITION_CHARS = 4000
+_MAX_DIMENSIONS_PAYLOAD_CHARS = 512 * 1024
+
 # Document types the comparison pipeline can read (mirrors documents.read_file).
 _SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
 
@@ -167,11 +190,17 @@ async def _coalesce_uploads(
     real = _non_empty_uploads(files)
     if not real:
         return None
+    if len(real) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many {kind} files: at most {MAX_UPLOAD_FILES} can be combined.",
+        )
     if len(real) == 1:
         return real[0]
 
     parts: list[str] = []
     tmp_paths: list[str] = []
+    combined_bytes = 0
     try:
         for index, upload in enumerate(real, start=1):
             name = _safe_filename(upload.filename)
@@ -180,6 +209,15 @@ async def _coalesce_uploads(
                 upload_dir, upload, prefix=f"combine_{uuid.uuid4()}", max_bytes=max_bytes
             )
             tmp_paths.append(path)
+            combined_bytes += Path(path).stat().st_size
+            if combined_bytes > MAX_COMBINED_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"The combined {kind} files exceed the "
+                        f"{MAX_COMBINED_UPLOAD_BYTES // (1024 * 1024)} MB total limit."
+                    ),
+                )
             try:
                 text = await asyncio.to_thread(read_file, path, ext)
             except Exception as exc:
@@ -239,6 +277,8 @@ def _bool_from_yes(value: str | None) -> bool:
 
 
 def _parse_dimensions(dimensions_data: str) -> list[dict[str, str]]:
+    if len(dimensions_data or "") > _MAX_DIMENSIONS_PAYLOAD_CHARS:
+        raise HTTPException(status_code=400, detail="Dimension payload is too large")
     try:
         payload = json.loads(dimensions_data)
     except json.JSONDecodeError as exc:
@@ -253,11 +293,27 @@ def _parse_dimensions(dimensions_data: str) -> list[dict[str, str]]:
             continue
         name = (item.get("dimension") or item.get("name") or "").strip()
         definition = (item.get("definition") or "").strip()
-        if name:
-            selected_dimensions.append({"dimension": name, "definition": definition})
+        if not name:
+            continue
+        if len(name) > MAX_DIMENSION_NAME_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dimension names are limited to {MAX_DIMENSION_NAME_CHARS} characters.",
+            )
+        if len(definition) > MAX_DIMENSION_DEFINITION_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dimension definitions are limited to {MAX_DIMENSION_DEFINITION_CHARS} characters.",
+            )
+        selected_dimensions.append({"dimension": name, "definition": definition})
 
     if not selected_dimensions:
         raise HTTPException(status_code=400, detail="At least one dimension must be selected")
+    if len(selected_dimensions) > MAX_DIMENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_DIMENSIONS} dimensions can be compared in one report.",
+        )
 
     return selected_dimensions
 
@@ -289,6 +345,15 @@ def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> st
             effort_normalized = "medium"
         return effort_normalized
     return None
+
+
+async def _safe_delete(redis_client, task_id: str) -> None:
+    """Best-effort removal of a task hash — used to roll back a just-created Redis
+    record when the submission is then rejected (e.g. ownership row write failed)."""
+    try:
+        await redis_client.delete(task_id)
+    except Exception:  # pragma: no cover - best-effort rollback
+        logger.warning("Failed to roll back task hash %s", task_id, exc_info=True)
 
 
 async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2) -> None:
@@ -521,23 +586,34 @@ async def _queue_comparison(
         raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
 
     # Durable ownership record for signed-in users (anonymous runs are Redis-only).
+    # This is MANDATORY, not best-effort: a signed-in report with no ownership row
+    # is invisible on the dashboard, unmanageable via the account, and — because the
+    # viewer gate then has to fall back to Redis metadata — a latent access-control
+    # edge. If the row can't be written, fail the submission (cleaning up the Redis
+    # hash) rather than enqueue an orphaned owned report.
     if owner is not None:
         sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
-        if sessionmaker is not None:
-            try:
-                async with sessionmaker() as db:
-                    await reports_service.create_report_row(
-                        db,
-                        task_id=task_id,
-                        owner_id=owner.id,
-                        visibility=report_visibility,
-                        title=report_title,
-                        comparison_type=comparison_type,
-                        source=source,
-                    )
-                    await db.commit()
-            except Exception as exc:  # pragma: no cover - don't fail the run on metadata
-                logger.error("Failed to persist report ownership row", exc_info=exc, extra={"task_id": task_id})
+        if sessionmaker is None:
+            await _safe_delete(redis_client, task_id)
+            raise HTTPException(status_code=503, detail="Accounts storage is unavailable; please retry.")
+        try:
+            async with sessionmaker() as db:
+                await reports_service.create_report_row(
+                    db,
+                    task_id=task_id,
+                    owner_id=owner.id,
+                    visibility=report_visibility,
+                    title=report_title,
+                    comparison_type=comparison_type,
+                    source=source,
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.error("Failed to persist report ownership row", exc_info=exc, extra={"task_id": task_id})
+            await _safe_delete(redis_client, task_id)
+            raise HTTPException(
+                status_code=503, detail="Couldn't save the report to your account; please retry."
+            ) from exc
 
     if source == "ui":
         _session_track_report(request, task_id)

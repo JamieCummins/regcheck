@@ -75,23 +75,23 @@ def _is_remote_postgres(url: str) -> bool:
 def _connect_args(url: str) -> dict:
     """Connection args, primarily TLS for managed Postgres (e.g. Heroku).
 
-    DATABASE_SSL controls behavior: "disable" turns TLS off, "verify" enforces
-    full certificate verification; the default for remote Postgres is a relaxed
-    TLS context (encrypted, no cert verification), matching how the Redis client
-    is configured for the same managed providers.
+    DATABASE_SSL controls behavior: "disable" turns TLS off; "relaxed"/"require"
+    give an encrypted but UNVERIFIED context (needed for managed providers with
+    self-signed per-instance certs — an explicit, documented deployment choice);
+    the DEFAULT for remote Postgres is full certificate verification.
     """
     mode = (os.environ.get("DATABASE_SSL") or "").strip().lower()
     if not url.startswith("postgresql+asyncpg"):
         return {}
     if mode == "disable":
         return {}
-    if mode == "verify":
-        return {"ssl": ssl.create_default_context()}
-    if mode in {"require", "relaxed"} or _is_remote_postgres(url):
+    if mode in {"require", "relaxed"}:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         return {"ssl": ctx}
+    if mode == "verify" or _is_remote_postgres(url):
+        return {"ssl": ssl.create_default_context()}
     return {}
 
 

@@ -43,6 +43,9 @@ _API_READ_TIMEOUT = _int_env("OSF_API_TIMEOUT", 30)
 _DOWNLOAD_READ_TIMEOUT = _int_env("OSF_DOWNLOAD_TIMEOUT", 60)
 _MAX_ATTEMPTS = _int_env("OSF_MAX_ATTEMPTS", 3)
 _RETRY_STATUS = {502, 503, 504}
+# Cap the fetched file like direct uploads (MAX_UPLOAD_BYTES in the upload route)
+# so a huge OSF file can't fill the dyno's disk/memory.
+_MAX_DOWNLOAD_BYTES = _int_env("OSF_MAX_DOWNLOAD_BYTES", 20 * 1024 * 1024)
 _SUPPORTED_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
 _BARE_GUID_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
 _PATH_AFTER_HOST_RE = re.compile(r"osf\.io/(.+)", re.IGNORECASE)
@@ -128,7 +131,7 @@ def extract_osf_guid(url_or_id: str) -> str | None:
     return None
 
 
-def _get_with_retry(url: str, *, headers: dict[str, str], read_timeout: int):
+def _get_with_retry(url: str, *, headers: dict[str, str], read_timeout: int, stream: bool = False):
     """GET with a short connect + generous read timeout, retrying transient
     network errors and 5xx responses so OSF's occasional slowness doesn't fail
     the job. Raises a friendly ValueError if OSF stays unreachable."""
@@ -140,6 +143,7 @@ def _get_with_retry(url: str, *, headers: dict[str, str], read_timeout: int):
                 headers=headers,
                 timeout=(_CONNECT_TIMEOUT, read_timeout),
                 allow_redirects=True,
+                stream=stream,
             )
             if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
                 last_exc = requests.HTTPError(f"OSF returned {resp.status_code}")
@@ -226,15 +230,31 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
     links = data.get("links", {}) or {}
     name = attrs.get("name") or ""
     download_url = links.get("download") or f"https://osf.io/{guid}/download"
-    resp = _get_with_retry(download_url, headers=_download_headers(), read_timeout=_DOWNLOAD_READ_TIMEOUT)
+    resp = _get_with_retry(
+        download_url,
+        headers=_download_headers(),
+        read_timeout=_DOWNLOAD_READ_TIMEOUT,
+        stream=True,
+    )
     resp.raise_for_status()
 
     # Guard against content negotiation returning JSON metadata instead of the file.
     resp_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
     if resp_type in ("application/json", "application/vnd.api+json"):
+        resp.close()
         raise ValueError(
             "OSF returned file metadata instead of the file itself. Use the file's "
             "direct link (or its download URL) and ensure the file is public."
+        )
+
+    # Fail fast when OSF declares a size beyond the cap (streaming still enforces
+    # the cap when Content-Length is absent or wrong).
+    declared = (resp.headers.get("content-length") or "").strip()
+    if declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
+        resp.close()
+        raise ValueError(
+            f"That OSF file is larger than the {_MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB "
+            "limit. Upload a smaller version of the document directly."
         )
 
     ext = Path(name).suffix.lower()
@@ -247,6 +267,7 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
         }.get(content_type, "")
     if ext not in _SUPPORTED_EXTS:
+        resp.close()
         raise ValueError(
             f"That OSF file type ('{ext or 'unknown'}') isn't supported. "
             "Link to a PDF, DOCX, TXT, or HTML file."
@@ -254,7 +275,24 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
 
     dest = Path(dest_dir) / f"osf_{guid}_{uuid.uuid4().hex}{ext}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(resp.content)
+    written = 0
+    try:
+        with dest.open("wb") as fh:
+            for chunk in resp.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > _MAX_DOWNLOAD_BYTES:
+                    raise ValueError(
+                        f"That OSF file is larger than the {_MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB "
+                        "limit. Upload a smaller version of the document directly."
+                    )
+                fh.write(chunk)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    finally:
+        resp.close()
     return str(dest), ext
 
 

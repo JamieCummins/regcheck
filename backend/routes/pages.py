@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @router.get("/compare", response_class=HTMLResponse, name="compare")
@@ -22,8 +22,9 @@ async def compare(request: Request):
     # The discipline dimension presets are defined once in the backend and injected
     # here so the wizard, API, and CLI all resolve the same dimensions/definitions.
     return templates.TemplateResponse(
+        request,
         "general_preregistration.html",
-        {"request": request, "discipline_sets_json": json.dumps(discipline_sets_for_ui())},
+        {"discipline_sets_json": json.dumps(discipline_sets_for_ui())},
     )
 
 
@@ -44,13 +45,13 @@ async def general_preregistration_get(request: Request):
 @router.get("/contact", response_class=HTMLResponse)
 async def contact(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("contact.html", {"request": request})
+    return templates.TemplateResponse(request, "contact.html")
 
 
 @router.get("/demo", name="demo")
 async def demo(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("demo.html", {"request": request})
+    return templates.TemplateResponse(request, "demo.html")
 
 
 # Tools that are planned but not yet built. The nav links point here so a click
@@ -75,36 +76,37 @@ async def coming_soon(request: Request, feature: str):
         {"title": "This tool", "blurb": "This RegCheck tool is in development."},
     )
     return templates.TemplateResponse(
+        request,
         "coming_soon.html",
-        {"request": request, "feature_title": info["title"], "feature_blurb": info["blurb"]},
+        {"feature_title": info["title"], "feature_blurb": info["blurb"]},
     )
 
 
 @router.get("/team", name="team")
 async def team(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("team.html", {"request": request})
+    return templates.TemplateResponse(request, "team.html")
 
 
 @router.get("/jobs", name="jobs")
 async def jobs(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("jobs.html", {"request": request})
+    return templates.TemplateResponse(request, "jobs.html")
 
 
 @router.get("/privacy", response_class=HTMLResponse, name="privacy")
 async def privacy(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("privacy.html", {"request": request})
+    return templates.TemplateResponse(request, "privacy.html")
 
 
 @router.get("/faq", response_class=HTMLResponse, name="faq")
 async def faq(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("faq.html", {"request": request})
+    return templates.TemplateResponse(request, "faq.html")
 
 
 @router.get("/api", response_class=HTMLResponse, name="api_docs")
 async def api_docs(request: Request):
     templates = request.app.state.templates
-    return templates.TemplateResponse("api.html", {"request": request})
+    return templates.TemplateResponse(request, "api.html")
