@@ -2,7 +2,7 @@
 
 AI-assisted comparison tool for preregistrations/clinical trial registrations/preclinical (animals) registrations and published papers. FastAPI serves the web UI and HTTP API; a CLI entrypoint enables backend-only runs with CSV-defined dimensions. Redis is used for task state when running via the web app.
 
-Status: beta (under active development).
+Status: v1.0.0 (see [CHANGELOG.md](CHANGELOG.md)). AI judgements should be verified against the quoted sources in the report; accuracy notes live in the FAQ.
 
 ## Contents
 - `app.py` / `backend/`: FastAPI app, routes, services (comparisons, embeddings, parsing).
