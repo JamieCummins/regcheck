@@ -1518,3 +1518,76 @@ def test_display_quote_sides_filter_independently():
     cited = {"PAPER_0002"}
     assert comparisons._filter_display_quotes(paper_rows, cited) == paper_rows[1]
     assert comparisons._filter_display_quotes(prereg_rows, cited) == "\n\n".join(prereg_rows)
+
+
+# ── preclinical comparison context (animals flow) ──────────────────────────────
+
+
+def test_preclinical_context_gets_preclinical_framing(monkeypatch):
+    """The preclinical context frames the registration as a preclinical animal study
+    registration — not a clinical trial registration — and no intro line carries the
+    old 'below-specified specified' duplication."""
+    captured = []
+
+    def _dispatch(messages, **_kw):
+        captured.append(messages[-1]["content"])
+        return _verif_reply()
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    for ctx in ("preclinical", "clinical_trial", "preregistration"):
+        comparisons.run_comparison(
+            "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1,
+            comparison_context=ctx,
+        )
+    preclinical, clinical, prereg = captured
+    marker = "preclinical animal study registration"
+    assert marker in preclinical
+    assert marker not in clinical and marker not in prereg
+    assert "clinical trial registration" in clinical
+    for prompt in (preclinical, clinical, prereg):
+        assert "below-specified specified" not in prompt
+        assert "below-specified study dimension" in prompt
+
+
+def test_animals_flow_runs_dimensions_with_preclinical_context(tmp_path):
+    """End-to-end animals flow: PCT CSV registration + paper file through
+    animals_trial_comparison, with the injected runner receiving the preclinical
+    context and its items flowing into the result."""
+    csv_path = tmp_path / "pct.csv"
+    csv_path.write_text(
+        "pct_id,title,species\npct123,Effects of X on maze learning,mouse\n",
+        encoding="utf-8",
+    )
+    paper_path = tmp_path / "paper.txt"
+    paper_path.write_text("We tested 24 mice in a maze-learning task.", encoding="utf-8")
+
+    seen = []
+
+    def fake_runner(prereg_text, paper_text, client, dimension, **kwargs):
+        seen.append((prereg_text, paper_text, dimension, kwargs))
+        return ComparisonResult(
+            items=[ComparisonItem(dimension=dimension, deviation_judgement="no")]
+        )
+
+    result = _run_coro(
+        comparisons.animals_trial_comparison(
+            "pct123",
+            str(paper_path),
+            ".txt",
+            "claude",
+            registration_csv_path=str(csv_path),
+            comparison_runner=fake_runner,
+            selected_dimensions=[
+                {"dimension": "Sample size", "definition": "Planned number of animals."}
+            ],
+        )
+    )
+    assert len(seen) == 1
+    prereg_text, paper_text, dimension, kwargs = seen[0]
+    assert kwargs["comparison_context"] == "preclinical"
+    assert dimension == "Sample size"
+    assert "maze" in prereg_text.lower() or "pct123" in prereg_text.lower()
+    assert "24 mice" in paper_text
+    assert [i.dimension for i in result.items] == ["Sample size"]
