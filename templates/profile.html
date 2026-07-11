@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta name="robots" content="noindex,nofollow">
-    <title>Your profile &middot; RegCheck</title>
+    <title>Your profile &middot; {{ brand_name }}</title>
     <style>
       .profile-main { flex: 1; width: min(46rem, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; }
       .profile-main h1 { font-size: clamp(1.7rem, 3vw, 2.2rem); margin: 0 0 0.3rem; }
@@ -112,7 +112,7 @@
 
       <div class="profile-card">
         <h2>API keys</h2>
-        <p class="profile-meta">Use these to call the <a class="footer-link" href="{{ url_for('api_docs') }}">RegCheck API</a> with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
+        <p class="profile-meta">Use these to call the {% if app_mode != 'precheck' %}<a class="footer-link" href="{{ url_for('api_docs') }}">{{ brand_name }} API</a>{% else %}{{ brand_name }} API (coming soon){% endif %} with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
 
         {% if new_api_key %}
         <div class="newkey">

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta name="robots" content="noindex,nofollow">
-    <title>Sign in &middot; RegCheck</title>
+    <title>Sign in &middot; {{ brand_name }}</title>
     <style>
       .auth-main {
         flex: 1;
@@ -58,8 +58,8 @@
 
     <main class="auth-main">
       <div class="auth-card">
-        <h1>Sign in to RegCheck</h1>
-        <p class="auth-lede">Sign in to keep reports for as long as you like, choose who can see them, and create API keys. You can also use RegCheck without an account.</p>
+        <h1>Sign in to {{ brand_name }}</h1>
+        <p class="auth-lede">Sign in to keep reports for as long as you like, choose who can see them, and create API keys. You can also use {{ brand_name }} without an account.</p>
 
         {% if auth_enabled %}
           {% for p in providers %}
@@ -71,7 +71,7 @@
           <p class="auth-disabled">Sign-in is not configured on this deployment yet.</p>
         {% endif %}
 
-        <p class="auth-back"><a href="{{ url_for('compare') }}">Continue without an account &rarr;</a></p>
+        <p class="auth-back"><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">Continue without an account &rarr;</a></p>
       </div>
     </main>
 

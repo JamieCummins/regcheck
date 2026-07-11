@@ -13,6 +13,8 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     templates = request.app.state.templates
+    if request.app.state.settings.is_precheck:
+        return templates.TemplateResponse(request, "index_precheck.html")
     return templates.TemplateResponse(request, "index.html")
 
 

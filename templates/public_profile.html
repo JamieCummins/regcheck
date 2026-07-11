@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
-    <meta name="description" content="Public RegCheck reports by {{ profile_user.display_name or 'a RegCheck user' }}."/>
-    <title>{{ profile_user.display_name or 'Profile' }} · RegCheck</title>
+    <meta name="description" content="Public {{ brand_name }} reports by {{ profile_user.display_name or 'a {{ brand_name }} user' }}."/>
+    <title>{{ profile_user.display_name or 'Profile' }} · {{ brand_name }}</title>
     <style>
       .reports-main { flex: 1; width: min(960px, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; text-align: left; }
       .profile-head h1 { font-size: clamp(1.6rem, 2.6vw, 2.1rem); margin: 0 0 0.3rem; }
@@ -23,7 +23,7 @@
     <header class="mb-auto">{% include '_partials/navbar.html' %}</header>
     <main class="reports-main">
       <div class="profile-head">
-        <h1>{{ profile_user.display_name or 'RegCheck user' }}</h1>
+        <h1>{{ profile_user.display_name or '{{ brand_name }} user' }}</h1>
         <p>Public reports{% if profile_user.research_field %} · {{ profile_user.research_field }}{% endif %}</p>
       </div>
 

@@ -28,6 +28,40 @@ from .routes import survey
 # and the CHANGELOG all reference this value.
 APP_VERSION = "1.0.0"
 
+# Paths that belong to the RegCheck comparison suite only. A PreCheck deployment
+# (APP_MODE=precheck) 404s these so the site surfaces nothing but the
+# registration-quality tool + shared account/report plumbing. Prefix-matched.
+_REGCHECK_ONLY_PREFIXES = (
+    "/compare",
+    "/clinical_trials",
+    "/general_preregistration",
+    "/animals_trials",
+    "/demo",
+    "/faq",
+    "/api",          # covers the /api docs page AND the /api/v1 keyed API
+    "/docs",
+    "/openapi.json",
+    "/coming-soon",
+    "/jobs",
+)
+
+
+class _PrecheckRouteGate:
+    """Pure-ASGI 404 gate for comparison-suite paths in PreCheck mode (mirrors
+    SecurityHeadersMiddleware's style so it composes with streaming responses)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = scope.get("path") or ""
+            if any(path == p or path.startswith(p + "/") for p in _REGCHECK_ONLY_PREFIXES):
+                response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
 # Single source of truth for static-asset cache-busting. Bump this on any
 # CSS/JS change so browsers refetch; it is exposed to every template as the
 # `static_version` global (templates reference it as `?v={{ static_version }}`).
@@ -94,6 +128,10 @@ def create_app() -> FastAPI:
         same_site="lax",
         max_age=14 * 24 * 60 * 60,
     )
+    # PreCheck deployments 404 the comparison-suite routes; added BEFORE the
+    # security headers so the gate sits inside them (its 404s keep the headers).
+    if settings.is_precheck:
+        app.add_middleware(_PrecheckRouteGate)
     # CSP enforces by default; set CSP_REPORT_ONLY=1 to validate a tightened policy
     # on staging (logs violations without blocking) before enforcing.
     csp_report_only = (os.environ.get("CSP_REPORT_ONLY") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -120,6 +158,9 @@ def create_app() -> FastAPI:
         lambda request: getattr(request.state, "user", None)
     )
     app.state.templates.env.globals["static_version"] = STATIC_VERSION
+    # Brand layer: one codebase, two sites (RegCheck / PreCheck by APP_MODE).
+    app.state.templates.env.globals["app_mode"] = settings.app_mode
+    app.state.templates.env.globals["brand_name"] = settings.brand_name
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

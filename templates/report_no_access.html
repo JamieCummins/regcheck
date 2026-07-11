@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta name="robots" content="noindex,nofollow">
-    <title>No access &middot; RegCheck</title>
+    <title>No access &middot; {{ brand_name }}</title>
     <style>
       .auth-main {
         flex: 1;
@@ -43,7 +43,7 @@
           You're signed in, but the owner hasn't shared this report with your
           account. Ask them to grant access to your email address or ORCID iD.
         </p>
-        <p class="auth-back"><a href="{{ url_for('compare') }}">Run a new comparison &rarr;</a></p>
+        <p class="auth-back"><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'Evaluate a registration' if app_mode == 'precheck' else 'Run a new comparison' }} &rarr;</a></p>
       </div>
     </main>
 
