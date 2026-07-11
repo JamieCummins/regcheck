@@ -1808,7 +1808,7 @@ async def animals_trial_comparison(
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
                 previous_dimension_responses=previous_responses,
-                comparison_context="clinical_trial",
+                comparison_context="preclinical",
                 evidence_manifest=evidence_manifest,
             )
             result_obj.items.extend(comparison.items)
@@ -1969,7 +1969,7 @@ def _search_first_text_fragment(payload: Any) -> str:
     return ""
 
 
-ComparisonContext = Literal["preregistration", "clinical_trial", "registered_report"]
+ComparisonContext = Literal["preregistration", "clinical_trial", "preclinical", "registered_report"]
 
 
 # Anthropic tool schema mirroring ComparisonItem — forcing this tool gives Claude
@@ -2652,11 +2652,15 @@ def run_comparison(
         )
     elif comparison_context == "preregistration":
         intro_line = (
-            "Critically compare the following study preregistration with content from its corresponding published paper based on the below-specified specified study dimension."
+            "Critically compare the following study preregistration with content from its corresponding published paper based on the below-specified study dimension."
+        )
+    elif comparison_context == "preclinical":
+        intro_line = (
+            "Critically compare the following preclinical animal study registration with content from its corresponding published paper based on the below-specified study dimension."
         )
     else:
         intro_line = (
-            "Critically compare the following clinical trial registration with content from its corresponding published paper based on the below-specified specified study dimension."
+            "Critically compare the following clinical trial registration with content from its corresponding published paper based on the below-specified study dimension."
         )
 
     # Quotes-as-IDs (DEFAULT ON): the judge's emitted quote text is DISCARDED after
