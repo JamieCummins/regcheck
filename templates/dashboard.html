@@ -36,13 +36,13 @@
     <main class="reports-main">
       <div class="reports-head">
         <h1>My reports</h1>
-        <a class="reports-cta" href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'New evaluation' if app_mode == 'precheck' else 'New comparison' }}</a>
+        <a class="reports-cta" href="{{ url_for('compare') }}">New comparison</a>
       </div>
 
       {% if not reports %}
       <div class="reports-empty">
         <p>You haven't generated any reports yet.</p>
-        <p><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'Evaluate your first registration' if app_mode == 'precheck' else 'Run your first comparison' }} &rsaquo;</a></p>
+        <p><a href="{{ url_for('compare') }}">Run your first comparison &rsaquo;</a></p>
       </div>
       {% else %}
       <div id="reports-list">

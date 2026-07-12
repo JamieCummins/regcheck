@@ -3,6 +3,16 @@
 Notable changes to RegCheck. The application version lives in one place —
 `APP_VERSION` in `backend/main.py` — and is what `/openapi.json` reports.
 
+## Unreleased
+
+- Registration-quality evaluation (single-document completeness assessment)
+  moved to its own product, PreCheck, maintained in a separate codebase. The
+  Tools menu now links to the PreCheck site (`PRECHECK_URL`, default
+  `https://precheck.app`). Existing quality reports remain viewable.
+- Live cost tracking: per-run token/cost estimates shown on reports and in the
+  CLI; chain-of-thought capture for providers that expose it (CSV exports
+  only); `python -m backend.cli batch` for manifest-driven batch runs.
+
 ## 1.0.0 — 2026-07
 
 First stable release. Highlights relative to the public beta:

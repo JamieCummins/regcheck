@@ -71,7 +71,7 @@
           <p class="auth-disabled">Sign-in is not configured on this deployment yet.</p>
         {% endif %}
 
-        <p class="auth-back"><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">Continue without an account &rarr;</a></p>
+        <p class="auth-back"><a href="{{ url_for('compare') }}">Continue without an account &rarr;</a></p>
       </div>
     </main>
 

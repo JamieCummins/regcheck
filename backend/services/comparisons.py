@@ -2090,8 +2090,8 @@ def _dispatch_judgement(
     (expected to be a single JSON object). Provider-specific extraction only; parsing,
     retrying, and validation are handled by the caller. ``response_model`` /
     ``claude_tool`` override the schema-constrained decoding shape (defaults:
-    ComparisonItem / the comparison tool) so other flows — e.g. the registration
-    quality assessment — can reuse the provider plumbing with their own schema."""
+    ComparisonItem / the comparison tool) so other flows can reuse the provider
+    plumbing with their own schema."""
     if client_choice in _OPENAI_CLIENTS:
         openai_client = get_openai_client()
         model = _openai_family_model(client_choice)

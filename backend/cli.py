@@ -164,30 +164,6 @@ async def _run_general(args) -> dict:
     return payload
 
 
-async def _run_quality(args) -> dict:
-    """Evaluate Registration Quality: single-document completeness assessment
-    (defaults to the registration-quality criteria set when no CSV is given)."""
-    from backend.services.registration_quality import registration_quality_assessment
-
-    dimensions = _resolve_dimensions_arg(args, require=False)
-    prereg_path, prereg_ext = _resolve_general_prereg(args)
-    logger.info(
-        "Running registration quality assessment (dimensions=%s)",
-        "custom" if dimensions else "default",
-    )
-    result = await registration_quality_assessment(
-        prereg_path,
-        prereg_ext,
-        args.client,
-        args.parser_choice,
-        selected_dimensions=dimensions,
-        append_previous_output=args.append_previous_output,
-        reasoning_effort=args.reasoning_effort,
-    )
-    logger.info("Completed registration quality assessment.")
-    return result.model_dump()
-
-
 async def _run_clinical(args) -> dict:
     dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
@@ -254,7 +230,7 @@ def _print_cost_summary(payload: dict, *, label: str = "") -> None:
     )
 
 
-_BATCH_TYPES = {"quality", "general", "clinical"}
+_BATCH_TYPES = {"general", "clinical"}
 
 
 def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
@@ -288,7 +264,7 @@ def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
 
 async def _run_batch(args) -> dict:
     """Batch processing: one manifest CSV row per run. Columns: ``type``
-    (quality|general|clinical), ``preregistration``/``osf_url``, ``paper``,
+    (general|clinical), ``preregistration``/``osf_url``, ``paper``,
     ``registration_id``, optional ``dimensions_csv``/``dimension_set`` and
     ``label``. Per-row results are written to --output-dir; failures are
     recorded and the batch continues (use --stop-on-error to abort instead)."""
@@ -303,10 +279,10 @@ async def _run_batch(args) -> dict:
     if not rows:
         raise ValueError("Manifest contains no rows.")
 
-    runners = {"quality": _run_quality, "general": _run_general, "clinical": _run_clinical}
+    runners = {"general": _run_general, "clinical": _run_clinical}
     summary: list[dict] = []
     for index, row in enumerate(rows, start=1):
-        run_type = (row.get("type") or "quality").strip().lower()
+        run_type = (row.get("type") or "general").strip().lower()
         label = (row.get("label") or "").strip() or f"row{index:03d}"
         entry: dict = {"row": index, "label": label, "type": run_type}
         logger.info("Batch %d/%d (%s, %s)", index, len(rows), label, run_type)
@@ -597,7 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     batch = subparsers.add_parser(
         "batch",
-        help="Run many comparisons/assessments from a manifest CSV (columns: type, preregistration, osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
+        help="Run many comparisons from a manifest CSV (columns: type, preregistration, osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
     )
     batch.add_argument("--manifest", required=True, help="CSV manifest, one run per row.")
     batch.add_argument("--output-dir", required=True, help="Directory for per-row outputs + batch_summary.json.")
@@ -625,62 +601,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Abort the batch on the first failing row (default: record the failure and continue).",
     )
 
-    quality = subparsers.add_parser(
-        "quality",
-        help="Evaluate the completeness/specificity of a registration on its own (no paper).",
-    )
-    quality.add_argument(
-        "--preregistration",
-        help="Path to the registration file (.pdf/.docx/.txt/.html). Or use --osf-url.",
-    )
-    quality.add_argument(
-        "--osf-url",
-        help="OSF link to a registration or file to assess (alternative to --preregistration).",
-    )
-    quality.add_argument(
-        "--dimensions-csv",
-        help="Optional CSV with 'dimension' and 'definition' columns to override the registration-quality defaults.",
-    )
-    quality.add_argument(
-        "--client",
-        default="openai",
-        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
-        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
-    )
-    quality.add_argument(
-        "--embedding-model",
-        help=(
-            "Embeddings model for retrieval (default: text-embedding-3-large; "
-            "use qwen3-embedding-0.6b with --client gpustack)."
-        ),
-    )
-    quality.add_argument(
-        "--parser-choice",
-        default="pymupdf",
-        choices=["grobid", "dpt2", "pymupdf", "external"],
-        help="PDF parser to extract registration text (default pymupdf).",
-    )
-    quality.add_argument(
-        "--append-previous-output",
-        action="store_true",
-        help="Append previous dimension assessments into later prompts.",
-    )
-    quality.add_argument(
-        "--reasoning-effort",
-        default="medium",
-        choices=["low", "medium", "high"],
-        help="Reasoning setting for OpenAI models (ignored by other providers).",
-    )
-    quality.add_argument(
-        "--output",
-        help="Optional path to write results. Defaults to stdout.",
-    )
-    quality.add_argument(
-        "--output-format",
-        default="csv",
-        choices=["csv", "json"],
-        help="Output format (csv or json). Defaults to csv.",
-    )
     clinical.add_argument(
         "--registration-id",
         required=True,
@@ -860,8 +780,6 @@ def main(argv: Iterable[str] | None = None) -> None:
     try:
         if args.command == "general":
             payload = asyncio.run(_run_general(args))
-        elif args.command == "quality":
-            payload = asyncio.run(_run_quality(args))
         elif args.command == "clinical":
             payload = asyncio.run(_run_clinical(args))
         elif args.command == "animals":

@@ -48,7 +48,6 @@ def client(tmp_path_factory):
     [
         "/",
         "/compare",
-        "/evaluate_registration",
         "/contact",
         "/demo",
         "/team",

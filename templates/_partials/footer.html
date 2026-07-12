@@ -12,17 +12,13 @@
     <span>Funded by the Swiss National Science Foundation (SNSF)</span>
   </div>
   <p class="mb-0 footer-links">
-    {% if (app_mode | default('regcheck')) != 'precheck' %}
     <a class="footer-link" href="{{ url_for('faq') }}">FAQ</a>
     <span class="footer-sep" aria-hidden="true">·</span>
-    {% endif %}
     <a class="footer-link" href="{{ url_for('contact') }}">Contact</a>
     <span class="footer-sep" aria-hidden="true">·</span>
     <a class="footer-link" href="{{ url_for('privacy') }}">Privacy Policy</a>
-    {% if (app_mode | default('regcheck')) != 'precheck' %}
     <span class="footer-sep" aria-hidden="true">·</span>
     <a class="footer-link" href="{{ url_for('api_docs') }}">API</a>
-    {% endif %}
     <span class="footer-sep" aria-hidden="true">·</span>
     <a class="footer-link" href="https://github.com/JamieCummins/regcheck" target="_blank" rel="noopener noreferrer">GitHub</a>
   </p>
