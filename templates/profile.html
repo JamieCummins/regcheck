@@ -112,7 +112,7 @@
 
       <div class="profile-card">
         <h2>API keys</h2>
-        <p class="profile-meta">Use these to call the {% if app_mode != 'precheck' %}<a class="footer-link" href="{{ url_for('api_docs') }}">{{ brand_name }} API</a>{% else %}{{ brand_name }} API (coming soon){% endif %} with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
+        <p class="profile-meta">Use these to call the <a class="footer-link" href="{{ url_for('api_docs') }}">{{ brand_name }} API</a> with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
 
         {% if new_api_key %}
         <div class="newkey">

@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ..services.dimensions import discipline_sets_for_ui, registration_quality_set_for_ui
+from ..services.dimensions import discipline_sets_for_ui
 
 router = APIRouter()
 
@@ -13,8 +13,6 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     templates = request.app.state.templates
-    if request.app.state.settings.is_precheck:
-        return templates.TemplateResponse(request, "index_precheck.html")
     return templates.TemplateResponse(request, "index.html")
 
 
@@ -27,18 +25,6 @@ async def compare(request: Request):
         request,
         "general_preregistration.html",
         {"discipline_sets_json": json.dumps(discipline_sets_for_ui())},
-    )
-
-
-@router.get("/evaluate_registration", response_class=HTMLResponse, name="evaluate_registration")
-async def evaluate_registration(request: Request):
-    templates = request.app.state.templates
-    # Same wizard machinery as /compare, parametrized for the single-document
-    # quality flow; the only "discipline" is the registration-quality criteria set.
-    return templates.TemplateResponse(
-        request,
-        "registration_quality.html",
-        {"discipline_sets_json": json.dumps(registration_quality_set_for_ui())},
     )
 
 

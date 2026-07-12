@@ -123,25 +123,25 @@ def test_openai_response_schema_excludes_chain_of_thought():
 # ── orchestrator cost attachment ───────────────────────────────────────────────
 
 
-def test_quality_orchestrator_attaches_cost(tmp_path):
-    from backend.services import registration_quality as rq
-
+def test_general_orchestrator_attaches_cost(tmp_path):
     reg = tmp_path / "r.txt"
     reg.write_text("We will recruit 300 participants.", encoding="utf-8")
+    paper = tmp_path / "p.txt"
+    paper.write_text("We recruited 310 participants.", encoding="utf-8")
 
-    def fake_runner(text, client, dimension, **kwargs):
+    def fake_runner(*args, **kwargs):
         tracker = ct.current()
         assert tracker is not None  # runner executes inside the run's context
         tracker.record_llm("gpt-5.5", 1000, 200)
         return comparisons.ComparisonResult(
-            items=[comparisons.ComparisonItem(dimension=dimension, deviation_judgement="partial")]
+            items=[comparisons.ComparisonItem(dimension="Sample size", deviation_judgement="no")]
         )
 
     result = _run(
-        rq.registration_quality_assessment(
-            str(reg), ".txt", "openai", "pymupdf",
+        comparisons.general_preregistration_comparison(
+            str(reg), ".txt", str(paper), ".txt", "openai", "pymupdf",
             selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
-            assessment_runner=fake_runner,
+            comparison_runner=fake_runner,
         )
     )
     assert result.cost is not None
@@ -157,17 +157,17 @@ def test_batch_runs_rows_and_writes_summary(tmp_path, monkeypatch):
 
     manifest = tmp_path / "jobs.csv"
     with manifest.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["type", "preregistration", "paper", "label"])
+        writer = csv.DictWriter(fh, fieldnames=["type", "preregistration", "paper", "registration_id", "label"])
         writer.writeheader()
-        writer.writerow({"type": "quality", "preregistration": "a.docx", "label": "regA"})
+        writer.writerow({"type": "clinical", "registration_id": "NCT001", "paper": "a_paper.pdf", "label": "regA"})
         writer.writerow({"type": "general", "preregistration": "b.docx", "paper": "b_paper.pdf", "label": "pairB"})
-        writer.writerow({"type": "quality", "preregistration": "broken.docx", "label": "regC"})
+        writer.writerow({"type": "clinical", "registration_id": "broken", "paper": "c_paper.pdf", "label": "regC"})
 
     seen = []
 
-    async def fake_quality(ns):
-        seen.append(("quality", ns.preregistration))
-        if "broken" in (ns.preregistration or ""):
+    async def fake_clinical(ns):
+        seen.append(("clinical", ns.registration_id))
+        if "broken" in (ns.registration_id or ""):
             raise ValueError("boom")
         return {"items": [{"dimension": "d"}], "cost": {"total_usd": 0.02}}
 
@@ -175,7 +175,7 @@ def test_batch_runs_rows_and_writes_summary(tmp_path, monkeypatch):
         seen.append(("general", ns.paper))
         return {"items": [{"dimension": "d"}], "cost": {"total_usd": 0.10}}
 
-    monkeypatch.setattr(cli, "_run_quality", fake_quality)
+    monkeypatch.setattr(cli, "_run_clinical", fake_clinical)
     monkeypatch.setattr(cli, "_run_general", fake_general)
 
     out_dir = tmp_path / "out"
@@ -201,19 +201,19 @@ def test_batch_runs_rows_and_writes_summary(tmp_path, monkeypatch):
     assert not (out_dir / "regC.json").exists()
     written = json.loads((out_dir / "batch_summary.json").read_text())
     assert written["failed"] == ["regC"]
-    assert [s[0] for s in seen] == ["quality", "general", "quality"]
+    assert [s[0] for s in seen] == ["clinical", "general", "clinical"]
 
 
 def test_batch_stop_on_error(tmp_path, monkeypatch):
     from backend import cli
 
     manifest = tmp_path / "jobs.csv"
-    manifest.write_text("type,preregistration,label\nquality,x.docx,one\nquality,y.docx,two\n", encoding="utf-8")
+    manifest.write_text("type,preregistration,paper,label\ngeneral,x.docx,x.pdf,one\ngeneral,y.docx,y.pdf,two\n", encoding="utf-8")
 
-    async def fake_quality(ns):
+    async def fake_general(ns):
         raise ValueError("nope")
 
-    monkeypatch.setattr(cli, "_run_quality", fake_quality)
+    monkeypatch.setattr(cli, "_run_general", fake_general)
     args = argparse.Namespace(
         manifest=str(manifest),
         output_dir=str(tmp_path / "out"),

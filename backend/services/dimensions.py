@@ -348,30 +348,6 @@ def append_rr_addons(dimensions: list[dict[str, str]]) -> list[dict[str, str]]:
     return list(dimensions) + extra
 
 
-def registration_quality_dimensions() -> list[dict[str, str]]:
-    """Default criteria for the Evaluate Registration Quality tool (a single-document
-    completeness assessment, NOT a discipline preset — it never appears in the
-    comparison wizard's discipline picker)."""
-    entry = _discipline_data().get("registration_quality") or {}
-    return [dict(d) for d in entry.get("dimensions", [])]
-
-
-def registration_quality_set_for_ui() -> list[dict]:
-    """The quality criteria shaped like discipline_sets_for_ui() output, so the
-    quality wizard reuses the same dimension editor."""
-    entry = _discipline_data().get("registration_quality") or {}
-    return [
-        {
-            "key": "registration_quality",
-            "label": entry.get("label", "Registration quality"),
-            "dims": [
-                {"name": d.get("dimension", ""), "definition": d.get("definition", "")}
-                for d in entry.get("dimensions", [])
-            ],
-        }
-    ]
-
-
 def _norm_dim_name(name: str) -> str:
     return re.sub(r"\s+", " ", (name or "").replace("–", "-").replace("—", "-").strip().lower())
 

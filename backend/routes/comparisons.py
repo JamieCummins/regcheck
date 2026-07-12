@@ -92,7 +92,6 @@ ComparisonType = Literal[
     "clinical_trials",
     "general_preregistration",
     "registered_report",
-    "registration_quality",
     "animals_trials",
 ]
 
@@ -424,8 +423,7 @@ async def _queue_comparison(
         extra={"client": client, "reasoning_effort": effort_normalized, "comparison_type": comparison_type},
     )
 
-    # Registration-quality reports assess the registration alone — no paper.
-    requires_paper = comparison_type != "registration_quality"
+    requires_paper = True
     # An empty file input arrives as an UploadFile with a blank filename (not
     # None), so guard on the filename rather than identity.
     if requires_paper and (paper is None or not (getattr(paper, "filename", "") or "").strip()):
@@ -472,7 +470,7 @@ async def _queue_comparison(
             raise HTTPException(
                 status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
             )
-    elif comparison_type in ("general_preregistration", "registered_report", "registration_quality"):
+    elif comparison_type in ("general_preregistration", "registered_report"):
         if osf_url and osf_url.strip():
             # Preregistration comes from an OSF link; validate it here and fetch
             # it in the worker (no file to store).
@@ -543,12 +541,7 @@ async def _queue_comparison(
     owner = getattr(request.state, "user", None) if owner_override is _UNSET else owner_override
     report_title = reports_service.generate_default_title(
         comparison_type=comparison_type,
-        # Quality reports have no paper; name them after the registration instead.
-        paper_filename=(
-            getattr(preregistration, "filename", None)
-            if comparison_type == "registration_quality"
-            else getattr(paper, "filename", None)
-        ),
+        paper_filename=getattr(paper, "filename", None),
         registration_id=registration_id,
     )
     if owner is not None:
@@ -648,14 +641,6 @@ async def _queue_comparison(
                 "registration_id": registration_id,
                 "paper_path": paper_path,
                 "paper_ext": paper_ext,
-            }
-        )
-    elif comparison_type == "registration_quality":
-        job_payload.update(
-            {
-                "prereg_path": stored_prereg_path,
-                "prereg_ext": prereg_ext or "",
-                "osf_url": (osf_url or "").strip() or None,
             }
         )
     elif comparison_type in ("general_preregistration", "registered_report"):
@@ -832,39 +817,6 @@ async def compare_post(
         preregistration=prereg_file,
         osf_url=osf_url,
         paper=paper_file,
-        dimensions_data=dimensions_data,
-        visibility=visibility,
-    )
-
-
-@router.post("/evaluate_registration", name="evaluate_registration_post", dependencies=[Depends(comparison_rate_limit)])
-async def evaluate_registration_post(
-    request: Request,
-    parser_choice: str = Form(...),
-    client: str = Form(...),
-    reasoning_effort: str | None = Form(None),
-    append_previous_output: str = Form("yes"),
-    prereg_source: str = Form("upload"),
-    preregistration: list[UploadFile] = File([]),
-    osf_url: str | None = Form(None),
-    dimensions_data: str = Form(...),
-    visibility: str | None = Form(None),
-):
-    """Evaluate Registration Quality: the registration is assessed on its own
-    against completeness criteria — there is no paper in this flow."""
-    upload_dir = Path(request.app.state.settings.upload_dir)
-    prereg_file = await _coalesce_uploads(
-        preregistration, upload_dir=upload_dir, kind="registration", max_bytes=MAX_UPLOAD_BYTES
-    )
-    return await _compare_and_redirect(
-        request,
-        comparison_type="registration_quality",
-        parser_choice=parser_choice,
-        client=client,
-        reasoning_effort=reasoning_effort,
-        append_previous_output=append_previous_output,
-        preregistration=prereg_file,
-        osf_url=osf_url,
         dimensions_data=dimensions_data,
         visibility=visibility,
     )

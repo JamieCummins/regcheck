@@ -43,7 +43,7 @@
           You're signed in, but the owner hasn't shared this report with your
           account. Ask them to grant access to your email address or ORCID iD.
         </p>
-        <p class="auth-back"><a href="{{ url_for('evaluate_registration') if app_mode == 'precheck' else url_for('compare') }}">{{ 'Evaluate a registration' if app_mode == 'precheck' else 'Run a new comparison' }} &rarr;</a></p>
+        <p class="auth-back"><a href="{{ url_for('compare') }}">Run a new comparison &rarr;</a></p>
       </div>
     </main>
 

@@ -22,7 +22,6 @@ from backend.services.comparisons import (
     run_with_concurrency_limit,
 )
 from backend.services.osf import fetch_osf_preregistration
-from backend.services.registration_quality import registration_quality_assessment
 from backend.services import reports as reports_service
 from backend.services.report_artifacts import cleanup_expired_s3_artifacts
 
@@ -309,36 +308,6 @@ async def _dispatch_job(job: dict[str, Any], redis_client) -> None:
                 experiment_number=job.get("experiment_number"),
                 experiment_text=job.get("experiment_text"),
                 comparison_context=("registered_report" if comparison_type == "registered_report" else "preregistration"),
-            )
-        elif comparison_type == "registration_quality":
-            prereg_path_q = job.get("prereg_path", "") or ""
-            prereg_ext_q = job.get("prereg_ext", "") or ""
-            osf_url_q = job.get("osf_url")
-            if osf_url_q:
-                # Resolve the OSF link to a local registration file (registration →
-                # text, or hosted file → download). Sync requests, off the event loop.
-                prereg_path_q, prereg_ext_q = await asyncio.to_thread(
-                    fetch_osf_preregistration, osf_url_q, dest_dir=settings.upload_dir
-                )
-            logger.info(
-                "registration_quality inputs resolved",
-                extra={
-                    "task_id": task_id,
-                    "osf_url": osf_url_q,
-                    "prereg_ext": prereg_ext_q,
-                    "prereg_exists": bool(prereg_path_q) and Path(prereg_path_q).exists(),
-                },
-            )
-            await registration_quality_assessment(
-                prereg_path_q,
-                prereg_ext_q,
-                job.get("client", "openai"),
-                job.get("parser_choice", "pymupdf"),
-                task_id=task_id,
-                redis_client=redis_client,
-                selected_dimensions=job.get("selected_dimensions"),
-                append_previous_output=job.get("append_previous_output", False),
-                reasoning_effort=job.get("reasoning_effort"),
             )
         elif comparison_type == "animals_trials":
             await animals_trial_comparison(
