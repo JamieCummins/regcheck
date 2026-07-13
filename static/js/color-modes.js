@@ -1,80 +1,48 @@
 /*!
- * Color mode toggler for Bootstrap's docs (https://getbootstrap.com/)
- * Copyright 2011-2024 The Bootstrap Authors
- * Licensed under the Creative Commons Attribution 3.0 Unported License.
+ * RegCheck theme toggler.
+ * Dark is the default (RegCheck is dark-first); light is opt-in and persisted.
+ * Runs in <head> so the chosen theme is applied before first paint.
  */
-
 (() => {
   'use strict'
 
-  const getStoredTheme = () => localStorage.getItem('theme')
-  const setStoredTheme = theme => localStorage.setItem('theme', theme)
-
-  const getPreferredTheme = () => {
-    const storedTheme = getStoredTheme()
-    if (storedTheme) {
-      return storedTheme
-    }
-
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  const STORAGE_KEY = 'theme'
+  const getStoredTheme = () => {
+    try { return localStorage.getItem(STORAGE_KEY) } catch (_e) { return null }
+  }
+  const setStoredTheme = (theme) => {
+    try { localStorage.setItem(STORAGE_KEY, theme) } catch (_e) { /* ignore */ }
   }
 
-  const setTheme = theme => {
-    if (theme === 'auto') {
-      document.documentElement.setAttribute('data-bs-theme', (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-    } else {
-      document.documentElement.setAttribute('data-bs-theme', theme)
-    }
+  // Default to dark when nothing is stored (we intentionally do NOT follow the
+  // OS prefers-color-scheme — dark is RegCheck's default).
+  const getPreferredTheme = () => (getStoredTheme() === 'light' ? 'light' : 'dark')
+
+  const applyTheme = (theme) => {
+    document.documentElement.setAttribute('data-bs-theme', theme === 'light' ? 'light' : 'dark')
   }
 
-  setTheme(getPreferredTheme())
+  // Apply immediately (this script is in <head>, before the body paints).
+  applyTheme(getPreferredTheme())
 
-  const showActiveTheme = (theme, focus = false) => {
-    const themeSwitcher = document.querySelector('#bd-theme')
-
-    if (!themeSwitcher) {
-      return
-    }
-
-    const themeSwitcherText = document.querySelector('#bd-theme-text')
-    const activeThemeIcon = document.querySelector('.theme-icon-active use')
-    const btnToActive = document.querySelector(`[data-bs-theme-value="${theme}"]`)
-    const svgOfActiveBtn = btnToActive.querySelector('svg use').getAttribute('href')
-
-    document.querySelectorAll('[data-bs-theme-value]').forEach(element => {
-      element.classList.remove('active')
-      element.setAttribute('aria-pressed', 'false')
+  const syncToggles = () => {
+    const isLight = getPreferredTheme() === 'light'
+    document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+      btn.setAttribute('aria-pressed', String(isLight))
+      btn.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme')
+      btn.setAttribute('title', isLight ? 'Switch to dark theme' : 'Switch to light theme')
     })
-
-    btnToActive.classList.add('active')
-    btnToActive.setAttribute('aria-pressed', 'true')
-    activeThemeIcon.setAttribute('href', svgOfActiveBtn)
-    const themeSwitcherLabel = `${themeSwitcherText.textContent} (${btnToActive.dataset.bsThemeValue})`
-    themeSwitcher.setAttribute('aria-label', themeSwitcherLabel)
-
-    if (focus) {
-      themeSwitcher.focus()
-    }
   }
-
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    const storedTheme = getStoredTheme()
-    if (storedTheme !== 'light' && storedTheme !== 'dark') {
-      setTheme(getPreferredTheme())
-    }
-  })
 
   window.addEventListener('DOMContentLoaded', () => {
-    showActiveTheme(getPreferredTheme())
-
-    document.querySelectorAll('[data-bs-theme-value]')
-      .forEach(toggle => {
-        toggle.addEventListener('click', () => {
-          const theme = toggle.getAttribute('data-bs-theme-value')
-          setStoredTheme(theme)
-          setTheme(theme)
-          showActiveTheme(theme, true)
-        })
+    syncToggles()
+    document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const next = getPreferredTheme() === 'dark' ? 'light' : 'dark'
+        setStoredTheme(next)
+        applyTheme(next)
+        syncToggles()
       })
+    })
   })
 })()

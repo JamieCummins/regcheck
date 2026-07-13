@@ -1,372 +1,223 @@
+"""Keyed public API (/api/v1). All endpoints require a RegCheck API key
+(`Authorization: Bearer rc_live_…`) issued by a signed-in user. Reports created
+or queried here are owner-scoped to the key's user.
+"""
 from __future__ import annotations
 
-from io import BytesIO
 import json
-import secrets
-from typing import Any
+import logging
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ValidationError
-from starlette.datastructures import Headers
+from fastapi.security import HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..services.dimensions import default_dimensions_for
-from ..services.trials import extract_nct_id
-from .comparisons import ComparisonType, _enqueue_comparison, _parse_dimensions
-from .status import get_task_status_payload
+from ..core.api_auth import require_api_key
+from ..core.rate_limit import comparison_rate_limit
+from ..db import models
+from ..db.session import get_db
+from ..services import reports as reports_service
+from ..services.dimensions import discipline_keys, get_discipline_dimensions
+from . import comparisons as comparisons_routes
 
-router = APIRouter(prefix="/api/v1")
+# OpenAPI-only security declaration: documents the Bearer requirement on every
+# /api/v1 endpoint and powers the Swagger "Authorize" button. auto_error=False so
+# enforcement stays with require_api_key (which also accepts X-API-Key and returns
+# a precise 401 message).
+_bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="RegCheckApiKey",
+    description="RegCheck API key issued from your profile page: `Authorization: Bearer rc_live_…`",
+)
 
-
-class TextComparisonRequest(BaseModel):
-    paper_text: str
-    registration_text: str | None = None
-    registration_id: str | None = None
-    dimensions: Any | None = None
-    parser_choice: str = "grobid"
-    client: str = "openai"
-    reasoning_effort: str | None = "medium"
-    append_previous_output: Any | None = True
-    multiple_experiments: Any | None = False
-    experiment_number: str | None = None
-
-
-def _api_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": {"code": code, "message": message}},
-    )
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(_bearer_scheme)])
+logger = logging.getLogger(__name__)
 
 
-def _extract_bearer_token(authorization: str | None) -> str | None:
-    if not authorization:
-        return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        return None
-    return token.strip()
-
-
-def _auth_error(request: Request) -> JSONResponse | None:
-    configured_token = getattr(request.app.state.settings, "api_token", None)
-    if not configured_token:
-        return _api_error(
-            503,
-            "API_AUTH_NOT_CONFIGURED",
-            "REGCHECK_API_TOKEN is not configured.",
-        )
-
-    supplied_token = (
-        _extract_bearer_token(request.headers.get("authorization"))
-        or (request.headers.get("x-api-key") or "").strip()
-    )
-    if not supplied_token:
-        return _api_error(401, "MISSING_API_AUTH", "Provide an API token.")
-    if not secrets.compare_digest(supplied_token, configured_token):
-        return _api_error(401, "INVALID_API_AUTH", "Invalid API token.")
-    return None
-
-
-def _detail_message(detail: Any) -> str:
-    if isinstance(detail, str):
-        return detail
-    try:
-        return json.dumps(detail)
-    except TypeError:
-        return str(detail)
-
-
-def _yes_no(value: str | None, *, default: str) -> str:
-    normalized = (value or "").strip().lower()
-    if normalized in {"yes", "true", "1", "on"}:
-        return "yes"
-    if normalized in {"no", "false", "0", "off"}:
-        return "no"
-    return default
-
-
-def _yes_no_from_any(value: Any, *, default: str) -> str:
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if value is None:
-        return default
-    return _yes_no(str(value), default=default)
-
-
-def _normalize_task_state(state: str | None) -> str:
-    state_map = {
-        "PENDING": "queued",
-        "IN_PROGRESS": "in_progress",
-        "SUCCESS": "success",
-        "FAILURE": "failure",
+def _report_links(request: Request, task_id: str) -> dict[str, str]:
+    base = str(request.base_url).rstrip("/")
+    return {
+        "status_url": f"{base}/api/v1/status/{task_id}",
+        "report_url": f"{base}/api/v1/reports/{task_id}",
+        "view_url": f"{base}/result/{task_id}",
     }
-    raw_state = (state or "").strip()
-    return state_map.get(raw_state.upper(), raw_state.lower() or "unknown")
 
 
-def _normalize_result(result: Any) -> dict[str, Any]:
-    if isinstance(result, dict):
-        return result
-    if isinstance(result, list):
-        return {"items": result}
-    return {"items": []}
-
-
-def _dimensions_for_request(
-    comparison_type: ComparisonType,
-    dimensions: str | None,
-) -> list[dict[str, str]]:
-    if dimensions and dimensions.strip():
-        return _parse_dimensions(dimensions)
-    if comparison_type == "clinical_trials":
-        return default_dimensions_for("clinical_trials")
-    return default_dimensions_for("general_preregistration")
-
-
-def _dimensions_from_payload(
-    comparison_type: ComparisonType,
-    dimensions: Any | None,
-) -> list[dict[str, str]]:
-    if dimensions is None or dimensions == "":
-        return _dimensions_for_request(comparison_type, None)
-    if isinstance(dimensions, str):
-        return _dimensions_for_request(comparison_type, dimensions)
-    return _parse_dimensions(json.dumps(dimensions))
-
-
-def _text_upload(filename: str, text: str) -> UploadFile:
-    payload = text.encode("utf-8")
-    return UploadFile(
-        BytesIO(payload),
-        size=len(payload),
-        filename=filename,
-        headers=Headers({"content-type": "text/plain; charset=utf-8"}),
-    )
-
-
-def _json_request(request: Request) -> bool:
-    content_type = request.headers.get("content-type", "").split(";", 1)[0]
-    return content_type.strip().lower() == "application/json"
-
-
-def _validate_text_payload(payload: Any) -> TextComparisonRequest | JSONResponse:
-    try:
-        return TextComparisonRequest.model_validate(payload)
-    except ValidationError as exc:
-        return _api_error(400, "INVALID_JSON", exc.json())
-
-
-async def _create_text_comparison(
-    request: Request,
-    payload: TextComparisonRequest,
-) -> JSONResponse:
-    if not payload.paper_text or not payload.paper_text.strip():
-        return _api_error(400, "MISSING_PAPER_TEXT", "paper_text is required.")
-
-    registration_id_value = (payload.registration_id or "").strip()
-    registration_text_value = payload.registration_text or ""
-    has_registration_id = bool(registration_id_value)
-    has_registration_text = bool(registration_text_value.strip())
-    if not has_registration_id and not has_registration_text:
-        return _api_error(
-            400,
-            "MISSING_REGISTRATION_INPUT",
-            "Provide either registration_id or registration_text.",
-        )
-    if has_registration_id and has_registration_text:
-        return _api_error(
-            400,
-            "AMBIGUOUS_REGISTRATION_INPUT",
-            "Provide either registration_id or registration_text.",
-        )
-
-    comparison_type: ComparisonType = (
-        "clinical_trials" if has_registration_id else "general_preregistration"
-    )
-    normalized_registration_id: str | None = None
-    if has_registration_id:
-        try:
-            normalized_registration_id = extract_nct_id(registration_id_value)
-        except ValueError:
-            return _api_error(
-                400,
-                "INVALID_REGISTRATION_ID",
-                "registration_id must contain a valid NCT identifier.",
+def _resolve_api_dimensions(dimension_set: str | None, dimensions_data: str | None) -> str:
+    """Resolve the dimensions for an API request into a dimensions_data JSON string.
+    Callers may pass either ``dimension_set`` (a built-in discipline preset, same as
+    the web app / CLI) or ``dimensions_data`` (a custom JSON list) — exactly one."""
+    set_key = (dimension_set or "").strip()
+    raw = (dimensions_data or "").strip()
+    if set_key and raw:
+        raise HTTPException(status_code=400, detail="Provide only one of 'dimension_set' or 'dimensions_data'.")
+    if set_key:
+        dims = get_discipline_dimensions(set_key)
+        if not dims:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown dimension_set '{dimension_set}'. Choose one of: {', '.join(discipline_keys())}.",
             )
-
-    try:
-        selected_dimensions = _dimensions_from_payload(comparison_type, payload.dimensions)
-    except HTTPException as exc:
-        return _api_error(exc.status_code, "INVALID_DIMENSIONS", _detail_message(exc.detail))
-
-    try:
-        queued = await _enqueue_comparison(
-            request,
-            comparison_type=comparison_type,
-            parser_choice=(payload.parser_choice or "grobid").strip() or "grobid",
-            client=(payload.client or "openai").strip() or "openai",
-            reasoning_effort=(payload.reasoning_effort or "medium").strip() or "medium",
-            append_previous_output=_yes_no_from_any(
-                payload.append_previous_output,
-                default="yes",
-            ),
-            selected_dimensions=selected_dimensions,
-            registration_id=normalized_registration_id,
-            preregistration=(
-                None
-                if has_registration_id
-                else _text_upload("registration.txt", registration_text_value)
-            ),
-            paper=_text_upload("paper.txt", payload.paper_text),
-            multiple_experiments=_yes_no_from_any(
-                payload.multiple_experiments,
-                default="no",
-            ),
-            experiment_number=payload.experiment_number,
-        )
-    except HTTPException as exc:
-        return _api_error(exc.status_code, "REQUEST_FAILED", _detail_message(exc.detail))
-
-    status_url = f"/api/v1/comparisons/{queued.task_id}"
-    return JSONResponse(
-        status_code=202,
-        content={
-            "task_id": queued.task_id,
-            "state": queued.state,
-            "status": queued.status,
-            "status_url": status_url,
-        },
-    )
+        return json.dumps(dims)
+    if raw:
+        return raw
+    raise HTTPException(status_code=400, detail="Provide dimensions via 'dimension_set' or 'dimensions_data'.")
 
 
-@router.post("/comparisons")
-async def create_comparison(
+async def _owned_report_or_404(db: AsyncSession, user: models.User, task_id: str) -> models.Report:
+    report = await reports_service.get_report_row(db, task_id)
+    if report is None or report.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return report
+
+
+@router.post("/compare", status_code=202, dependencies=[Depends(comparison_rate_limit)])
+async def api_compare(
     request: Request,
-    paper: UploadFile | None = File(None),
-    registration_id: str | None = Form(None),
-    registration_file: UploadFile | None = File(None),
-    dimensions: str | None = Form(None),
-    parser_choice: str = Form("grobid"),
+    user: models.User = Depends(require_api_key),
+    parser_choice: str = Form("pymupdf"),
     client: str = Form("openai"),
-    reasoning_effort: str | None = Form("medium"),
-    append_previous_output: str | None = Form("yes"),
-    multiple_experiments: str | None = Form("no"),
+    reasoning_effort: str | None = Form(None),
+    append_previous_output: str = Form("no"),
+    multiple_experiments: str = Form("no"),
     experiment_number: str | None = Form(None),
-) -> JSONResponse:
-    auth_error = _auth_error(request)
-    if auth_error is not None:
-        return auth_error
-
-    if paper is None and _json_request(request):
-        try:
-            raw_payload = await request.json()
-        except json.JSONDecodeError:
-            return _api_error(400, "INVALID_JSON", "Request body must be valid JSON.")
-        payload = _validate_text_payload(raw_payload)
-        if isinstance(payload, JSONResponse):
-            return payload
-        return await _create_text_comparison(request, payload)
-
-    if paper is None:
-        return _api_error(400, "MISSING_PAPER", "Paper upload is required.")
-
-    registration_id_value = (registration_id or "").strip()
-    has_registration_id = bool(registration_id_value)
-    has_registration_file = registration_file is not None
-    if not has_registration_id and not has_registration_file:
-        return _api_error(
-            400,
-            "MISSING_REGISTRATION_INPUT",
-            "Provide either registration_id or registration_file.",
-        )
-    if has_registration_id and has_registration_file:
-        return _api_error(
-            400,
-            "AMBIGUOUS_REGISTRATION_INPUT",
-            "Provide either registration_id or registration_file.",
-        )
-
-    comparison_type: ComparisonType = (
-        "clinical_trials" if has_registration_id else "general_preregistration"
+    experiment_text: str | None = Form(None),
+    clinical_registration: str = Form("no"),
+    registration_id: str | None = Form(None),
+    preregistration: UploadFile | None = File(None),
+    osf_url: str | None = Form(None),
+    paper: UploadFile | None = File(None),
+    dimensions_data: str | None = Form(None),
+    dimension_set: str | None = Form(None),
+    visibility: str | None = Form(None),
+):
+    comparison_type = (
+        "clinical_trials"
+        if comparisons_routes._bool_from_yes(clinical_registration)
+        else "general_preregistration"
     )
-    normalized_registration_id: str | None = None
-    if has_registration_id:
-        try:
-            normalized_registration_id = extract_nct_id(registration_id_value)
-        except ValueError:
-            return _api_error(
-                400,
-                "INVALID_REGISTRATION_ID",
-                "registration_id must contain a valid NCT identifier.",
-            )
-
-    try:
-        selected_dimensions = _dimensions_for_request(comparison_type, dimensions)
-    except HTTPException as exc:
-        return _api_error(exc.status_code, "INVALID_DIMENSIONS", _detail_message(exc.detail))
-
-    try:
-        queued = await _enqueue_comparison(
-            request,
-            comparison_type=comparison_type,
-            parser_choice=(parser_choice or "grobid").strip() or "grobid",
-            client=(client or "openai").strip() or "openai",
-            reasoning_effort=(reasoning_effort or "medium").strip() or "medium",
-            append_previous_output=_yes_no(append_previous_output, default="yes"),
-            selected_dimensions=selected_dimensions,
-            registration_id=normalized_registration_id,
-            preregistration=registration_file,
-            paper=paper,
-            multiple_experiments=_yes_no(multiple_experiments, default="no"),
-            experiment_number=experiment_number,
-        )
-    except HTTPException as exc:
-        return _api_error(exc.status_code, "REQUEST_FAILED", _detail_message(exc.detail))
-
-    status_url = f"/api/v1/comparisons/{queued.task_id}"
+    dimensions_data = _resolve_api_dimensions(dimension_set, dimensions_data)
+    task_id = await comparisons_routes._queue_comparison(
+        request,
+        comparison_type=comparison_type,
+        parser_choice=parser_choice,
+        client=client,
+        reasoning_effort=reasoning_effort,
+        append_previous_output=append_previous_output,
+        multiple_experiments=multiple_experiments,
+        experiment_number=experiment_number,
+        experiment_text=experiment_text,
+        registration_id=registration_id,
+        preregistration=preregistration,
+        osf_url=osf_url,
+        paper=paper,
+        dimensions_data=dimensions_data,
+        visibility=visibility,
+        owner_override=user,
+        source="api",
+    )
     return JSONResponse(
+        {"task_id": task_id, "state": "PENDING", **_report_links(request, task_id)},
         status_code=202,
-        content={
-            "task_id": queued.task_id,
-            "state": queued.state,
-            "status": queued.status,
-            "status_url": status_url,
-        },
     )
 
 
-@router.post("/comparisons/text")
-async def create_text_comparison(
+def _decode_hash(data: dict) -> dict:
+    out = {}
+    for k, v in (data or {}).items():
+        out[k.decode() if isinstance(k, bytes) else k] = v.decode() if isinstance(v, bytes) else v
+    return out
+
+
+@router.get("/status/{task_id}")
+async def api_status(
     request: Request,
-    payload_data: dict[str, Any] = Body(...),
-) -> JSONResponse:
-    auth_error = _auth_error(request)
-    if auth_error is not None:
-        return auth_error
+    task_id: str,
+    user: models.User = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    await _owned_report_or_404(db, user, task_id)
+    data = _decode_hash(await request.app.state.redis.hgetall(task_id))
+    if not data:
+        raise HTTPException(status_code=404, detail="Report content not found (it may have expired)")
 
-    payload = _validate_text_payload(payload_data)
-    if isinstance(payload, JSONResponse):
-        return payload
-    return await _create_text_comparison(request, payload)
+    def _as_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "task_id": task_id,
+        "state": data.get("state"),
+        "status": data.get("status"),
+        "processed_dimensions": _as_int(data.get("processed_dimensions")),
+        "total_dimensions": _as_int(data.get("total_dimensions")),
+        "title": data.get("title"),
+        "visibility": data.get("visibility"),
+        **_report_links(request, task_id),
+    }
 
 
-@router.get("/comparisons/{task_id}")
-async def get_comparison(request: Request, task_id: str) -> JSONResponse:
-    auth_error = _auth_error(request)
-    if auth_error is not None:
-        return auth_error
+@router.get("/reports")
+async def api_list_reports(
+    request: Request,
+    user: models.User = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await reports_service.list_reports_for_owner(db, user.id)
+    return {
+        "reports": [
+            {
+                "task_id": r.task_id,
+                "title": r.title,
+                "visibility": r.visibility,
+                "comparison_type": r.comparison_type,
+                "source": r.source,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                **_report_links(request, r.task_id),
+            }
+            for r in rows
+        ]
+    }
 
-    payload = await get_task_status_payload(request.app.state.redis, task_id)
-    if payload is None:
-        return _api_error(404, "TASK_NOT_FOUND", "Task not found.")
 
-    return JSONResponse(
-        {
-            "task_id": task_id,
-            "state": _normalize_task_state(payload.get("state")),
-            "status": payload.get("status") or "Pending...",
-            "processed_dimensions": payload.get("processed_dimensions") or 0,
-            "total_dimensions": payload.get("total_dimensions") or 0,
-            "result": _normalize_result(payload.get("result")),
-        }
-    )
+@router.get("/reports/{task_id}")
+async def api_get_report(
+    request: Request,
+    task_id: str,
+    user: models.User = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    report = await _owned_report_or_404(db, user, task_id)
+    data = _decode_hash(await request.app.state.redis.hgetall(task_id))
+    if not data:
+        raise HTTPException(status_code=404, detail="Report content not found (it may have expired)")
+    result = None
+    if data.get("result_json"):
+        try:
+            result = json.loads(data["result_json"])
+        except json.JSONDecodeError:
+            result = None
+    return {
+        "task_id": task_id,
+        "title": report.title,
+        "visibility": report.visibility,
+        "comparison_type": report.comparison_type,
+        "state": data.get("state"),
+        "result": result,
+        **_report_links(request, task_id),
+    }
+
+
+@router.delete("/reports/{task_id}")
+async def api_delete_report(
+    request: Request,
+    task_id: str,
+    user: models.User = Depends(require_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    report = await _owned_report_or_404(db, user, task_id)
+    await reports_service.delete_report_everywhere(request.app.state.redis, db, task_id, report)
+    await db.commit()
+    return {"ok": True}

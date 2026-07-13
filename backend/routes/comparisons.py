@@ -1,21 +1,51 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from ..core.rate_limit import comparison_rate_limit
 from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
+from ..services import reports as reports_service
+from ..services.documents import read_file
+from ..services.llm import HOSTED_CLIENTS
+from ..services.osf import extract_osf_guid, fetch_osf_preregistration
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Sentinel: distinguishes "owner not supplied (use the session user)" from an
+# explicit owner of None (anonymous).
+_UNSET = object()
+
+
+async def _compare_and_redirect(*args, **kwargs) -> RedirectResponse:
+    """UI wrapper: queue a comparison and redirect to the post-run survey."""
+    task_id = await _queue_comparison(*args, **kwargs)
+    return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
+
+
+def _session_track_report(request: Request, task_id: str) -> None:
+    """Record a report created in this browser session so the anonymous (or
+    signed-in) creator can manage it from the same browser. Capped to avoid
+    unbounded session-cookie growth."""
+    try:
+        owned = request.session.get("owned_reports")
+        if not isinstance(owned, list):
+            owned = []
+        if task_id not in owned:
+            owned.append(task_id)
+        request.session["owned_reports"] = owned[-50:]
+    except Exception:  # pragma: no cover - session is best-effort
+        pass
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
@@ -32,18 +62,38 @@ def _upload_limit() -> int:
 
 MAX_UPLOAD_BYTES = _upload_limit()
 
+
+def _int_env(name: str, default: int, *, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int((os.getenv(name) or "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+# Aggregate caps for multi-file submissions: each side (paper / registration) may
+# combine at most this many files, and their combined bytes may not exceed 3x the
+# single-file limit — bounds worker memory and per-request disk usage.
+MAX_UPLOAD_FILES = _int_env("MAX_UPLOAD_FILES", 10, minimum=1)
+MAX_COMBINED_UPLOAD_BYTES = _int_env(
+    "MAX_COMBINED_UPLOAD_BYTES", 3 * MAX_UPLOAD_BYTES, minimum=1
+)
+
+# Bounds for the user-editable dimension payload; generous for real use, tight
+# enough that a crafted payload can't balloon prompts or Redis entries.
+MAX_DIMENSIONS = _int_env("MAX_DIMENSIONS", 40, minimum=1)
+MAX_DIMENSION_NAME_CHARS = 200
+MAX_DIMENSION_DEFINITION_CHARS = 4000
+_MAX_DIMENSIONS_PAYLOAD_CHARS = 512 * 1024
+
+# Document types the comparison pipeline can read (mirrors documents.read_file).
+_SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
+
 ComparisonType = Literal[
     "clinical_trials",
     "general_preregistration",
+    "registered_report",
     "animals_trials",
 ]
-
-
-@dataclass(slots=True)
-class QueuedComparison:
-    task_id: str
-    state: str
-    status: str
 
 
 async def _store_upload(
@@ -88,6 +138,19 @@ def _file_ext(filename: str | None) -> str:
     return Path(_safe_filename(filename)).suffix.lower()
 
 
+def _validate_doc_ext(ext: str, *, kind: str) -> None:
+    """Reject documents the comparison pipeline can't read, with a clear message.
+
+    Without this, an unsupported (or extension-less) upload passes submit and only
+    fails deep in the worker as a cryptic ``Worker error: Unsupported file type``.
+    """
+    if (ext or "").lower() not in _SUPPORTED_DOC_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported {kind} file type ('{ext or 'unknown'}'). Upload a PDF, DOCX, TXT, or HTML file.",
+        )
+
+
 async def _save_upload(
     upload_dir: Path,
     upload: UploadFile,
@@ -99,6 +162,77 @@ async def _save_upload(
     destination = upload_dir / f"{prefix}_{filename}"
     stored = await _store_upload(destination, upload, max_bytes=max_bytes)
     return stored, _file_ext(filename)
+
+
+def _non_empty_uploads(files: list[UploadFile] | UploadFile | None) -> list[UploadFile]:
+    """Form fields arrive as a single value, a list, or an empty-filename placeholder;
+    normalise to the list of uploads that actually carry a file."""
+    if files is None:
+        return []
+    items = files if isinstance(files, list) else [files]
+    return [f for f in items if f is not None and (getattr(f, "filename", "") or "").strip()]
+
+
+async def _coalesce_uploads(
+    files: list[UploadFile],
+    *,
+    upload_dir: Path,
+    kind: str,
+    max_bytes: int | None = None,
+) -> UploadFile | None:
+    """Combine multiple uploaded documents into ONE for the comparison.
+
+    A single file is returned untouched (keeps its native parser + PDF rendering).
+    Two or more are each extracted to text and concatenated, with labelled separators,
+    into one plain-text upload — so "upload several files as the paper/registration"
+    becomes one registration vs one paper without touching the worker or comparison.
+    (Several PDFs can't share a single page view anyway, hence text.)"""
+    real = _non_empty_uploads(files)
+    if not real:
+        return None
+    if len(real) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many {kind} files: at most {MAX_UPLOAD_FILES} can be combined.",
+        )
+    if len(real) == 1:
+        return real[0]
+
+    parts: list[str] = []
+    tmp_paths: list[str] = []
+    combined_bytes = 0
+    try:
+        for index, upload in enumerate(real, start=1):
+            name = _safe_filename(upload.filename)
+            _validate_doc_ext(_file_ext(name), kind=kind)
+            path, ext = await _save_upload(
+                upload_dir, upload, prefix=f"combine_{uuid.uuid4()}", max_bytes=max_bytes
+            )
+            tmp_paths.append(path)
+            combined_bytes += Path(path).stat().st_size
+            if combined_bytes > MAX_COMBINED_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"The combined {kind} files exceed the "
+                        f"{MAX_COMBINED_UPLOAD_BYTES // (1024 * 1024)} MB total limit."
+                    ),
+                )
+            try:
+                text = await asyncio.to_thread(read_file, path, ext)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Could not read {kind} file '{name}'."
+                ) from exc
+            parts.append(f"===== Document {index}: {name} =====\n\n{(text or '').strip()}")
+        combined = ("\n\n\n".join(parts)).encode("utf-8")
+        return UploadFile(file=io.BytesIO(combined), filename=f"{kind}-combined.txt", size=len(combined))
+    finally:
+        for stale in tmp_paths:
+            try:
+                Path(stale).unlink(missing_ok=True)
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
 
 
 async def _store_upload_to_redis(redis_client, redis_key: str, file_path: str, ttl_seconds: int = 86400) -> None:
@@ -143,6 +277,8 @@ def _bool_from_yes(value: str | None) -> bool:
 
 
 def _parse_dimensions(dimensions_data: str) -> list[dict[str, str]]:
+    if len(dimensions_data or "") > _MAX_DIMENSIONS_PAYLOAD_CHARS:
+        raise HTTPException(status_code=400, detail="Dimension payload is too large")
     try:
         payload = json.loads(dimensions_data)
     except json.JSONDecodeError as exc:
@@ -157,29 +293,67 @@ def _parse_dimensions(dimensions_data: str) -> list[dict[str, str]]:
             continue
         name = (item.get("dimension") or item.get("name") or "").strip()
         definition = (item.get("definition") or "").strip()
-        if name:
-            selected_dimensions.append({"dimension": name, "definition": definition})
+        if not name:
+            continue
+        if len(name) > MAX_DIMENSION_NAME_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dimension names are limited to {MAX_DIMENSION_NAME_CHARS} characters.",
+            )
+        if len(definition) > MAX_DIMENSION_DEFINITION_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dimension definitions are limited to {MAX_DIMENSION_DEFINITION_CHARS} characters.",
+            )
+        selected_dimensions.append({"dimension": name, "definition": definition})
 
     if not selected_dimensions:
         raise HTTPException(status_code=400, detail="At least one dimension must be selected")
+    if len(selected_dimensions) > MAX_DIMENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_DIMENSIONS} dimensions can be compared in one report.",
+        )
 
     return selected_dimensions
 
 
 def _normalize_parser_choice(parser_choice: str) -> str:
     normalized = (parser_choice or "").strip().lower()
-    if normalized not in {"grobid", "dpt2", "pymupdf"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf", "external"}:
         raise HTTPException(status_code=400, detail="Unsupported parser choice")
+    return normalized
+
+
+def _normalize_client(client: str) -> str:
+    """Validate the model provider for the hosted app/API. gpustack is rejected here
+    because the Heroku worker can't reach the Uni Bern network — it's CLI-only."""
+    normalized = (client or "").strip().lower()
+    if normalized not in HOSTED_CLIENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported model provider '{client}'.",
+        )
     return normalized
 
 
 def _normalize_reasoning_effort(client: str, reasoning_effort: str | None) -> str | None:
     effort_normalized = (reasoning_effort or "").strip().lower()
+    # ChatGPT (gpt-5.5) is the only reasoning-effort model exposed to users.
     if client == "openai":
         if effort_normalized not in {"low", "medium", "high"}:
             effort_normalized = "medium"
         return effort_normalized
     return None
+
+
+async def _safe_delete(redis_client, task_id: str) -> None:
+    """Best-effort removal of a task hash — used to roll back a just-created Redis
+    record when the submission is then rejected (e.g. ownership row write failed)."""
+    try:
+        await redis_client.delete(task_id)
+    except Exception:  # pragma: no cover - best-effort rollback
+        logger.warning("Failed to roll back task hash %s", task_id, exc_info=True)
 
 
 async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2) -> None:
@@ -196,7 +370,7 @@ async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2
         raise last_error
 
 
-async def _enqueue_comparison(
+async def _queue_comparison(
     request: Request,
     *,
     comparison_type: ComparisonType,
@@ -204,19 +378,27 @@ async def _enqueue_comparison(
     client: str,
     reasoning_effort: str | None,
     append_previous_output: str | None,
-    selected_dimensions: list[dict[str, str]],
+    dimensions_data: str,
     registration_id: str | None = None,
     preregistration: UploadFile | None = None,
+    osf_url: str | None = None,
     paper: UploadFile | None = None,
     registration_csv: UploadFile | None = None,
     multiple_experiments: str | None = None,
     experiment_number: str | None = None,
     experiment_text: str | None = None,
-) -> QueuedComparison:
+    visibility: str | None = None,
+    owner_override: object = _UNSET,
+    source: str = "ui",
+) -> str:
     settings = request.app.state.settings
     upload_dir = Path(settings.upload_dir)
     redis_client = request.app.state.redis
-    upload_ttl = max(86400, getattr(settings, "task_ttl_seconds", 86400))
+    # Keep the stored uploads alive for the report's lifetime (capped at the anon
+    # window) so a report can be REGENERATED from its original files without a
+    # re-upload. They still expire, so storage stays bounded.
+    _regen_window = int(getattr(settings, "anonymous_task_ttl_seconds", 7 * 24 * 60 * 60))
+    upload_ttl = max(86400, _regen_window)
 
     # Basic backpressure: refuse new jobs if queue + in-flight exceeds configured limit.
     try:
@@ -229,9 +411,11 @@ async def _enqueue_comparison(
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning("Failed to compute queue depth; proceeding without backpressure", exc_info=exc)
 
+    selected_dimensions = _parse_dimensions(dimensions_data)
     dimension_names = [item["dimension"] for item in selected_dimensions]
 
     append_previous = _bool_from_yes(append_previous_output)
+    client = _normalize_client(client)
     parser_choice_normalized = _normalize_parser_choice(parser_choice)
     effort_normalized = _normalize_reasoning_effort(client, reasoning_effort)
     logger.info(
@@ -239,31 +423,43 @@ async def _enqueue_comparison(
         extra={"client": client, "reasoning_effort": effort_normalized, "comparison_type": comparison_type},
     )
 
-    if paper is None:
+    requires_paper = True
+    # An empty file input arrives as an UploadFile with a blank filename (not
+    # None), so guard on the filename rather than identity.
+    if requires_paper and (paper is None or not (getattr(paper, "filename", "") or "").strip()):
         raise HTTPException(status_code=400, detail="Paper upload is required")
     task_id = str(uuid.uuid4())
-    paper_path, paper_ext = await _save_upload(
-        upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
-    )
-    paper_redis_key = f"upload:{task_id}:paper"
+    paper_path: str | None = None
+    paper_ext: str | None = None
+    paper_redis_key: str | None = None
     prereg_redis_key: str | None = None
     csv_redis_key: str | None = None
 
     # Prefer durable object storage (S3) so worker dynos can always access uploads.
     # Fall back to storing compressed blobs in Redis when S3 isn't configured.
     s3_keys: dict[str, str | None] = {"paper": None, "prereg": None, "csv": None}
-    if get_s3_config() is not None:
-        s3_keys["paper"] = await _store_upload_to_s3(task_id, paper_path, label="paper")
-        try:
+    if requires_paper:
+        paper_path, paper_ext = await _save_upload(
+            upload_dir, paper, prefix=f"{task_id}_paper", max_bytes=MAX_UPLOAD_BYTES
+        )
+        # Validate the paper type at submit (the prereg is validated below). Otherwise
+        # an unsupported paper only fails later in the worker with a cryptic error.
+        if (paper_ext or "").lower() not in _SUPPORTED_DOC_EXTS:
             Path(paper_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-    else:
-        await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
-        try:
-            Path(paper_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+            _validate_doc_ext(paper_ext, kind="paper")
+        paper_redis_key = f"upload:{task_id}:paper"
+        if get_s3_config() is not None:
+            s3_keys["paper"] = await _store_upload_to_s3(task_id, paper_path, label="paper")
+            try:
+                Path(paper_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            await _store_upload_to_redis(redis_client, paper_redis_key, paper_path, ttl_seconds=upload_ttl)
+            try:
+                Path(paper_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     stored_prereg_path: str | None = None
     prereg_ext: str | None = None
@@ -274,27 +470,44 @@ async def _enqueue_comparison(
             raise HTTPException(
                 status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
             )
-    elif comparison_type == "general_preregistration":
-        if preregistration is None:
+    elif comparison_type in ("general_preregistration", "registered_report"):
+        if osf_url and osf_url.strip():
+            # Preregistration comes from an OSF link; validate it here and fetch
+            # it in the worker (no file to store).
+            if extract_osf_guid(osf_url) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enter a valid OSF link, e.g. https://osf.io/abc12/.",
+                )
+        elif preregistration is None or not (getattr(preregistration, "filename", "") or "").strip():
+            # An empty file input (e.g. the OSF source was active but its link
+            # field was disabled/not submitted) arrives as an UploadFile with a
+            # blank filename — not None — so guard on the filename, not identity.
             raise HTTPException(
-                status_code=400, detail="Preregistration upload is required for this option"
+                status_code=400, detail="Provide a preregistration file or an OSF link."
             )
-        stored_prereg_path, prereg_ext = await _save_upload(
-            upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
-        )
-        prereg_redis_key = f"upload:{task_id}:prereg"
-        if get_s3_config() is not None:
-            s3_keys["prereg"] = await _store_upload_to_s3(task_id, stored_prereg_path, label="prereg")
-            try:
-                Path(stored_prereg_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+        elif _file_ext(preregistration.filename) not in _SUPPORTED_DOC_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported preregistration file type. Upload a PDF, DOCX, TXT, or HTML file, or paste an OSF link.",
+            )
         else:
-            await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
-            try:
-                Path(stored_prereg_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            stored_prereg_path, prereg_ext = await _save_upload(
+                upload_dir, preregistration, prefix=f"{task_id}_prereg", max_bytes=MAX_UPLOAD_BYTES
+            )
+            prereg_redis_key = f"upload:{task_id}:prereg"
+            if get_s3_config() is not None:
+                s3_keys["prereg"] = await _store_upload_to_s3(task_id, stored_prereg_path, label="prereg")
+                try:
+                    Path(stored_prereg_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            else:
+                await _store_upload_to_redis(redis_client, prereg_redis_key, stored_prereg_path, ttl_seconds=upload_ttl)
+                try:
+                    Path(stored_prereg_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
     elif comparison_type == "animals_trials":
         if not registration_id or not registration_id.strip():
             raise HTTPException(status_code=400, detail="Registration ID is required for this option")
@@ -322,6 +535,24 @@ async def _enqueue_comparison(
     else:
         raise HTTPException(status_code=400, detail="Unsupported comparison type")
 
+    # Ownership + retention: signed-in users own a persistent report (their
+    # chosen visibility); anonymous runs are public and auto-delete on a short
+    # TTL. Title is auto-generated and renamable later.
+    owner = getattr(request.state, "user", None) if owner_override is _UNSET else owner_override
+    report_title = reports_service.generate_default_title(
+        comparison_type=comparison_type,
+        paper_filename=getattr(paper, "filename", None),
+        registration_id=registration_id,
+    )
+    if owner is not None:
+        report_visibility = reports_service.normalize_visibility(visibility)
+        retention = "persist"
+        anon_ttl = None
+    else:
+        report_visibility = "public"
+        anon_ttl = int(getattr(settings, "anonymous_task_ttl_seconds", 7 * 24 * 60 * 60))
+        retention = str(anon_ttl)
+
     initial_payload = {
         "state": "PENDING",
         "status": "Task queued",
@@ -330,13 +561,67 @@ async def _enqueue_comparison(
         "processed_dimensions": 0,
         "dimensions": json.dumps(dimension_names),
         "comparison_type": comparison_type,
+        "evidence_status": "pending",
+        "evidence_error": "",
+        "title": report_title,
+        "visibility": report_visibility,
+        "owner_id": owner.id if owner is not None else "",
+        "retention": retention,
+        # Settings used for this report, surfaced read-only in the viewer ("View settings").
+        "settings_json": json.dumps({
+            "comparison_type": comparison_type,
+            "client": client,
+            "parser_choice": parser_choice_normalized,
+            "reasoning_effort": effort_normalized,
+            "append_previous_output": bool(append_previous),
+            "multiple_experiments": _bool_from_yes(multiple_experiments),
+            "experiment_number": (experiment_number or "").strip() or None,
+            "dimensions": dimension_names,
+        }),
     }
     try:
         await _safe_hset(redis_client, task_id, initial_payload)
-        await redis_client.expire(task_id, settings.task_ttl_seconds)
+        if anon_ttl is not None:
+            await redis_client.expire(task_id, anon_ttl)
+        else:
+            # Signed-in reports persist until the owner deletes them.
+            await redis_client.persist(task_id)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Redis failed to set initial state", exc_info=exc)
         raise HTTPException(status_code=503, detail="Failed to queue task; please retry.") from exc
+
+    # Durable ownership record for signed-in users (anonymous runs are Redis-only).
+    # This is MANDATORY, not best-effort: a signed-in report with no ownership row
+    # is invisible on the dashboard, unmanageable via the account, and — because the
+    # viewer gate then has to fall back to Redis metadata — a latent access-control
+    # edge. If the row can't be written, fail the submission (cleaning up the Redis
+    # hash) rather than enqueue an orphaned owned report.
+    if owner is not None:
+        sessionmaker = getattr(request.app.state, "db_sessionmaker", None)
+        if sessionmaker is None:
+            await _safe_delete(redis_client, task_id)
+            raise HTTPException(status_code=503, detail="Accounts storage is unavailable; please retry.")
+        try:
+            async with sessionmaker() as db:
+                await reports_service.create_report_row(
+                    db,
+                    task_id=task_id,
+                    owner_id=owner.id,
+                    visibility=report_visibility,
+                    title=report_title,
+                    comparison_type=comparison_type,
+                    source=source,
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.error("Failed to persist report ownership row", exc_info=exc, extra={"task_id": task_id})
+            await _safe_delete(redis_client, task_id)
+            raise HTTPException(
+                status_code=503, detail="Couldn't save the report to your account; please retry."
+            ) from exc
+
+    if source == "ui":
+        _session_track_report(request, task_id)
 
     job_payload = {
         "comparison_type": comparison_type,
@@ -358,12 +643,13 @@ async def _enqueue_comparison(
                 "paper_ext": paper_ext,
             }
         )
-    elif comparison_type == "general_preregistration":
+    elif comparison_type in ("general_preregistration", "registered_report"):
         multiple_experiments_flag = _bool_from_yes(multiple_experiments)
         job_payload.update(
             {
                 "prereg_path": stored_prereg_path,
                 "prereg_ext": prereg_ext or "",
+                "osf_url": (osf_url or "").strip() or None,
                 "paper_path": paper_path,
                 "paper_ext": paper_ext,
                 "multiple_experiments": multiple_experiments_flag,
@@ -381,6 +667,13 @@ async def _enqueue_comparison(
             }
         )
 
+    # Persist the job so the report can be re-queued verbatim by "Regenerate"
+    # (the stored uploads it references are kept for the same window).
+    try:
+        await _safe_hset(redis_client, task_id, {"regen_job": json.dumps(job_payload)})
+    except Exception as exc:  # pragma: no cover - non-fatal: regenerate just won't be offered
+        logger.warning("Failed to persist regen job payload", exc_info=exc, extra={"task_id": task_id})
+
     try:
         await redis_client.rpush("comparison:queue", json.dumps(job_payload))
     except Exception as exc:  # pragma: no cover - defensive logging
@@ -394,47 +687,86 @@ async def _enqueue_comparison(
         )
         raise HTTPException(status_code=503, detail="Failed to queue comparison. Please retry.") from exc
 
-    return QueuedComparison(task_id=task_id, state="queued", status="Task queued")
+    return task_id
 
 
-async def _queue_comparison(
+def _preflight_min_chars() -> int:
+    """Below this many extractable characters, a registration is treated as
+    "thin" and the wizard warns (but never blocks). Env-tunable so it can be
+    calibrated against real OSF stubs in production without a redeploy."""
+    raw = (os.getenv("PREFLIGHT_MIN_REGISTRATION_CHARS") or "").strip()
+    if not raw:
+        return 400
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 400
+
+
+@router.post("/preflight/registration")
+async def preflight_registration(
     request: Request,
-    *,
-    comparison_type: ComparisonType,
-    parser_choice: str,
-    client: str,
-    reasoning_effort: str | None,
-    append_previous_output: str | None,
-    dimensions_data: str,
-    registration_id: str | None = None,
-    preregistration: UploadFile | None = None,
-    paper: UploadFile | None = None,
-    registration_csv: UploadFile | None = None,
-    multiple_experiments: str | None = None,
-    experiment_number: str | None = None,
-    experiment_text: str | None = None,
-) -> RedirectResponse:
-    selected_dimensions = _parse_dimensions(dimensions_data)
-    queued = await _enqueue_comparison(
-        request,
-        comparison_type=comparison_type,
-        parser_choice=parser_choice,
-        client=client,
-        reasoning_effort=reasoning_effort,
-        append_previous_output=append_previous_output,
-        selected_dimensions=selected_dimensions,
-        registration_id=registration_id,
-        preregistration=preregistration,
-        paper=paper,
-        registration_csv=registration_csv,
-        multiple_experiments=multiple_experiments,
-        experiment_number=experiment_number,
-        experiment_text=experiment_text,
-    )
-    return RedirectResponse(url=f"/survey/{queued.task_id}", status_code=302)
+    prereg_source: str = Form("upload"),
+    osf_url: str | None = Form(None),
+    preregistration: UploadFile | None = File(None),
+):
+    """Cheap pre-submit probe of how much text we can extract from the chosen
+    registration, so the wizard can WARN (not block) when it is near-empty —
+    e.g. an OSF *registry* link whose substantive content is an attached file.
+
+    Best-effort by design: on any resolution/parse problem we return
+    ``ok: false`` and the wizard proceeds to a normal submit (the worker stays
+    the source of truth). Uses the lightweight PyMuPDF/stdlib readers, never
+    GROBID, so it stays fast in the request path."""
+    settings = request.app.state.settings
+    upload_dir = Path(settings.upload_dir)
+    threshold = _preflight_min_chars()
+    source = (prereg_source or "").strip().lower()
+    osf_link = (osf_url or "").strip()
+
+    cleanup: list[str] = []
+    try:
+        if source == "osf" or osf_link:
+            if not osf_link:
+                return JSONResponse({"ok": False, "reason": "no_osf_url"})
+            try:
+                path, ext = await asyncio.to_thread(fetch_osf_preregistration, osf_link, upload_dir)
+            except Exception as exc:  # network / unresolved / unsupported file
+                logger.info("preflight OSF resolution failed", exc_info=exc)
+                return JSONResponse({"ok": False, "reason": "osf_unresolved"})
+            cleanup.append(path)
+            probe_source = "osf"
+        elif preregistration is not None and (getattr(preregistration, "filename", "") or "").strip():
+            if _file_ext(preregistration.filename) not in _SUPPORTED_DOC_EXTS:
+                return JSONResponse({"ok": False, "reason": "unsupported_type"})
+            path, ext = await _save_upload(
+                upload_dir, preregistration, prefix=f"preflight_{uuid.uuid4()}_prereg", max_bytes=MAX_UPLOAD_BYTES
+            )
+            cleanup.append(path)
+            probe_source = "upload"
+        else:
+            # Nothing probe-able here (e.g. ClinicalTrials.gov, or no input yet).
+            return JSONResponse({"ok": False, "reason": "no_input"})
+
+        try:
+            text = await asyncio.to_thread(read_file, path, ext)
+        except Exception as exc:
+            logger.info("preflight text extraction failed", exc_info=exc)
+            return JSONResponse({"ok": False, "reason": "parse_failed"})
+
+        chars = len((text or "").strip())
+        return JSONResponse(
+            {"ok": True, "chars": chars, "threshold": threshold, "thin": chars < threshold, "source": probe_source}
+        )
+    finally:
+        for stale in cleanup:
+            try:
+                Path(stale).unlink(missing_ok=True)
+            except Exception:  # pragma: no cover - best-effort cleanup
+                pass
 
 
-@router.post("/compare", name="compare_post")
+@router.post("/compare", name="compare_post", dependencies=[Depends(comparison_rate_limit)])
 async def compare_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -445,15 +777,33 @@ async def compare_post(
     experiment_number: str | None = Form(None),
     experiment_text: str | None = Form(None),
     clinical_registration: str = Form("no"),
+    comparison_mode: str = Form("standard"),
+    prereg_source: str = Form("upload"),
     registration_id: str | None = Form(None),
-    preregistration: UploadFile | None = File(None),
-    paper: UploadFile | None = File(None),
+    preregistration: list[UploadFile] = File([]),
+    osf_url: str | None = Form(None),
+    paper: list[UploadFile] = File([]),
     dimensions_data: str = Form(...),
+    visibility: str | None = Form(None),
 ):
+    # Preregistration source: a file upload, a ClinicalTrials.gov registration, or
+    # an OSF link. (clinical_registration kept for backward compatibility.)
+    source = (prereg_source or "upload").strip().lower()
+    is_clinical = source == "clinical" or _bool_from_yes(clinical_registration)
+    is_rr = (comparison_mode or "").strip().lower() == "registered_report"
     comparison_type: ComparisonType = (
-        "clinical_trials" if _bool_from_yes(clinical_registration) else "general_preregistration"
+        "clinical_trials"
+        if is_clinical
+        else ("registered_report" if is_rr else "general_preregistration")
     )
-    return await _queue_comparison(
+    # Multiple uploaded files per side are concatenated into one paper / one
+    # registration before the (unchanged) single-document pipeline runs.
+    upload_dir = Path(request.app.state.settings.upload_dir)
+    paper_file = await _coalesce_uploads(paper, upload_dir=upload_dir, kind="paper", max_bytes=MAX_UPLOAD_BYTES)
+    prereg_file = await _coalesce_uploads(
+        preregistration, upload_dir=upload_dir, kind="registration", max_bytes=MAX_UPLOAD_BYTES
+    )
+    return await _compare_and_redirect(
         request,
         comparison_type=comparison_type,
         parser_choice=parser_choice,
@@ -464,13 +814,15 @@ async def compare_post(
         experiment_number=experiment_number,
         experiment_text=experiment_text,
         registration_id=registration_id,
-        preregistration=preregistration,
-        paper=paper,
+        preregistration=prereg_file,
+        osf_url=osf_url,
+        paper=paper_file,
         dimensions_data=dimensions_data,
+        visibility=visibility,
     )
 
 
-@router.post("/clinical_trials")
+@router.post("/clinical_trials", dependencies=[Depends(comparison_rate_limit)])
 async def clinical_trials_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -481,7 +833,7 @@ async def clinical_trials_post(
     paper: UploadFile = File(...),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="clinical_trials",
         parser_choice=parser_choice,
@@ -494,7 +846,7 @@ async def clinical_trials_post(
     )
 
 
-@router.post("/general_preregistration")
+@router.post("/general_preregistration", dependencies=[Depends(comparison_rate_limit)])
 async def general_preregistration_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -508,7 +860,7 @@ async def general_preregistration_post(
     paper: UploadFile = File(...),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="general_preregistration",
         parser_choice=parser_choice,
@@ -524,7 +876,7 @@ async def general_preregistration_post(
     )
 
 
-@router.post("/animals_trials")
+@router.post("/animals_trials", dependencies=[Depends(comparison_rate_limit)])
 async def animals_trials_post(
     request: Request,
     parser_choice: str = Form(...),
@@ -536,7 +888,7 @@ async def animals_trials_post(
     registration_csv: UploadFile | None = File(None),
     dimensions_data: str = Form(...),
 ):
-    return await _queue_comparison(
+    return await _compare_and_redirect(
         request,
         comparison_type="animals_trials",
         parser_choice=parser_choice,

@@ -1,437 +1,208 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
+import tempfile
+from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from backend.core.config import Settings
-from backend.routes import api
-from backend.services.dimensions import default_dimensions_for
+from backend.core import security
+from backend.db import models
+from backend.db.session import create_engine_from_url, create_sessionmaker, init_models
+from backend.services import users as users_service
+from backend.services import reports as reports_service
 
 
 class FakeRedis:
-    def __init__(self) -> None:
-        self.hashes: dict[str, dict] = {}
-        self.lists: dict[str, list[str]] = {}
-        self.values: dict[str, str] = {}
-        self.expirations: dict[str, int] = {}
-
-    async def llen(self, key: str) -> int:
-        return len(self.lists.get(key, []))
-
-    async def hset(self, key: str, mapping: dict | None = None, **kwargs) -> None:
-        self.hashes.setdefault(key, {})
-        if mapping:
-            self.hashes[key].update(mapping)
-        if kwargs:
-            self.hashes[key].update(kwargs)
-
-    async def expire(self, key: str, seconds: int) -> None:
-        self.expirations[key] = seconds
-
-    async def rpush(self, key: str, *values: str) -> None:
-        self.lists.setdefault(key, []).extend(values)
-
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
-        self.values[key] = value
-        if ex is not None:
-            self.expirations[key] = ex
-
-    async def hgetall(self, key: str) -> dict:
-        return self.hashes.get(key, {})
-
-
-def _make_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, api_token: str | None = "secret"):
-    monkeypatch.delenv("S3_BUCKET", raising=False)
-    redis = FakeRedis()
-    app = FastAPI()
-    app.state.redis = redis
-    app.state.settings = Settings(
-        redis_url="redis://test/0",
-        session_secret="test-session",
-        api_token=api_token,
-        task_ttl_seconds=86400,
-        max_queue_length=200,
-        static_dir=str(tmp_path / "static"),
-        templates_dir=str(tmp_path / "templates"),
-        upload_dir=str(tmp_path / "uploads"),
-    )
-    app.include_router(api.router)
-    return TestClient(app), redis
-
-
-def _auth_headers(token: str = "secret") -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def _paper_file():
-    return ("paper.pdf", b"%PDF-1.4\npaper", "application/pdf")
-
-
-def _paper_txt_file():
-    return ("paper.txt", b"paper text", "text/plain")
-
-
-def _registration_file():
-    return ("registration.pdf", b"%PDF-1.4\nregistration", "application/pdf")
-
-
-def _queued_job(redis: FakeRedis) -> dict:
-    return json.loads(redis.lists["comparison:queue"][0])
-
-
-def test_create_comparison_requires_configured_api_token(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch, api_token=None)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "API_AUTH_NOT_CONFIGURED"
-
-
-def test_create_comparison_requires_auth(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        files={"paper": _paper_file()},
-    )
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "MISSING_API_AUTH"
-
-
-def test_create_comparison_rejects_invalid_auth(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        files={"paper": _paper_file()},
-        headers=_auth_headers("wrong"),
-    )
-
-    assert response.status_code == 401
-    assert response.json()["error"]["code"] == "INVALID_API_AUTH"
-
-
-def test_create_comparison_accepts_x_api_key(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        files={"paper": _paper_file()},
-        headers={"X-API-Key": "secret"},
-    )
-
-    assert response.status_code == 202
-    payload = response.json()
-    assert payload["state"] == "queued"
-    assert payload["status_url"] == f"/api/v1/comparisons/{payload['task_id']}"
-
-
-def test_create_comparison_requires_paper(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "MISSING_PAPER"
-
-
-def test_create_comparison_requires_one_registration_input(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "MISSING_REGISTRATION_INPUT"
-
-
-def test_create_comparison_rejects_ambiguous_registration_input(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567"},
-        files=[
-            ("paper", _paper_file()),
-            ("registration_file", _registration_file()),
-        ],
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "AMBIGUOUS_REGISTRATION_INPUT"
-
-
-def test_create_comparison_rejects_invalid_registration_id(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "not-a-trial-id"},
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_REGISTRATION_ID"
-
-
-def test_create_clinical_comparison_queues_default_dimensions(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "https://clinicaltrials.gov/study/NCT01234567"},
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    task_id = response.json()["task_id"]
-    expected_dimensions = default_dimensions_for("clinical_trials")
-    expected_names = [item["dimension"] for item in expected_dimensions]
-    assert json.loads(redis.hashes[task_id]["dimensions"]) == expected_names
-    assert redis.hashes[task_id]["total_dimensions"] == len(expected_dimensions)
-
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "clinical_trials"
-    assert job["registration_id"] == "NCT01234567"
-    assert job["parser_choice"] == "grobid"
-    assert job["client"] == "openai"
-    assert job["reasoning_effort"] == "medium"
-    assert job["append_previous_output"] is True
-    assert job["selected_dimensions"] == expected_dimensions
-
-
-def test_create_file_comparison_queues_general_defaults(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        files=[
-            ("paper", _paper_file()),
-            ("registration_file", _registration_file()),
-        ],
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    task_id = response.json()["task_id"]
-    expected_dimensions = default_dimensions_for("general_preregistration")
-    expected_names = [item["dimension"] for item in expected_dimensions]
-    assert json.loads(redis.hashes[task_id]["dimensions"]) == expected_names
-
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "general_preregistration"
-    assert job["selected_dimensions"] == expected_dimensions
-    assert job["append_previous_output"] is True
-
-
-def test_create_file_comparison_accepts_txt_paper(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        files=[
-            ("paper", _paper_txt_file()),
-            ("registration_file", _registration_file()),
-        ],
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "general_preregistration"
-    assert job["paper_ext"] == ".txt"
-
-
-def test_create_comparison_uses_supplied_dimensions(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-    dimensions = [
-        {"dimension": "Primary Outcome(s)", "definition": "Primary endpoint definition."},
-        {"dimension": "Sample Size", "definition": "Total and per-arm sample size."},
-    ]
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={
-            "registration_id": "NCT01234567",
-            "dimensions": json.dumps(dimensions),
-            "append_previous_output": "no",
-        },
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    job = _queued_job(redis)
-    assert job["selected_dimensions"] == dimensions
-    assert job["append_previous_output"] is False
-
-
-def test_create_comparison_accepts_pymupdf_parser_and_ethics_dimensions(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-    dimensions = [
-        {"dimension": "Ethical approval: Committee", "definition": "Ethics body name."},
-        {"dimension": "Ethical approval: Number", "definition": "Ethics approval identifier."},
-        {"dimension": "Ethics approval: Date", "definition": "Ethics approval date."},
-    ]
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={
-            "registration_id": "NCT01234567",
-            "dimensions": json.dumps(dimensions),
-            "parser_choice": "pymupdf",
-        },
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "clinical_trials"
-    assert job["parser_choice"] == "pymupdf"
-    assert job["selected_dimensions"] == dimensions
-
-
-def test_create_comparison_accepts_json_text_inputs(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-    dimensions = [
-        {"dimension": "Primary Outcome(s)", "definition": "Primary endpoint definition."},
-    ]
-
-    response = client.post(
-        "/api/v1/comparisons",
-        json={
-            "registration_text": "registered plan",
-            "paper_text": "paper text",
-            "dimensions": dimensions,
-            "append_previous_output": False,
-        },
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    payload = response.json()
-    assert payload["status_url"] == f"/api/v1/comparisons/{payload['task_id']}"
-
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "general_preregistration"
-    assert job["paper_ext"] == ".txt"
-    assert job["prereg_ext"] == ".txt"
-    assert job["selected_dimensions"] == dimensions
-    assert job["append_previous_output"] is False
-
-
-def test_create_text_comparison_accepts_clinical_registration_id(tmp_path, monkeypatch):
-    client, redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons/text",
-        json={
-            "registration_id": "https://clinicaltrials.gov/study/NCT01234567",
-            "paper_text": "paper text",
-        },
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 202
-    job = _queued_job(redis)
-    assert job["comparison_type"] == "clinical_trials"
-    assert job["registration_id"] == "NCT01234567"
-    assert job["paper_ext"] == ".txt"
-    assert job["selected_dimensions"] == default_dimensions_for("clinical_trials")
-
-
-def test_create_text_comparison_rejects_ambiguous_registration_input(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons/text",
-        json={
-            "registration_id": "NCT01234567",
-            "registration_text": "registered plan",
-            "paper_text": "paper text",
-        },
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "AMBIGUOUS_REGISTRATION_INPUT"
-
-
-def test_create_comparison_rejects_invalid_dimensions(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.post(
-        "/api/v1/comparisons",
-        data={"registration_id": "NCT01234567", "dimensions": "not-json"},
-        files={"paper": _paper_file()},
-        headers=_auth_headers(),
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_DIMENSIONS"
-
-
-@pytest.mark.parametrize(
-    ("internal_state", "api_state"),
-    [
-        ("PENDING", "queued"),
-        ("IN_PROGRESS", "in_progress"),
-        ("SUCCESS", "success"),
-        ("FAILURE", "failure"),
-    ],
-)
-def test_get_comparison_normalizes_task_state(tmp_path, monkeypatch, internal_state, api_state):
-    client, redis = _make_client(tmp_path, monkeypatch)
-    redis.hashes["abc-123"] = {
-        "state": internal_state,
-        "status": "Processed 3/8: Primary Outcome(s)",
-        "processed_dimensions": "3",
-        "total_dimensions": "8",
-        "result_json": json.dumps({"items": []}),
-    }
-
-    response = client.get("/api/v1/comparisons/abc-123", headers=_auth_headers())
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "task_id": "abc-123",
-        "state": api_state,
-        "status": "Processed 3/8: Primary Outcome(s)",
-        "processed_dimensions": 3,
-        "total_dimensions": 8,
-        "result": {"items": []},
-    }
-
-
-def test_get_comparison_returns_404_for_unknown_task(tmp_path, monkeypatch):
-    client, _redis = _make_client(tmp_path, monkeypatch)
-
-    response = client.get("/api/v1/comparisons/missing-task", headers=_auth_headers())
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "TASK_NOT_FOUND"
+    def __init__(self):
+        self.h = {}
+        self.v = {}
+
+    async def ping(self):
+        return True
+
+    async def hgetall(self, k):
+        return self.h.get(k, {})
+
+    async def hset(self, k, mapping=None):
+        self.h.setdefault(k, {}).update(mapping or {})
+
+    async def get(self, k):
+        return self.v.get(k)
+
+    async def delete(self, *ks):
+        for k in ks:
+            self.h.pop(k, None)
+            self.v.pop(k, None)
+
+    async def srem(self, k, *m):
+        pass
+
+    async def exists(self, k):
+        return 0
+
+
+# ── service layer ────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_api_key_service_create_list_revoke(tmp_path):
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{tmp_path / 'k.db'}")
+    try:
+        await init_models(engine)
+        Session = create_sessionmaker(engine)
+        async with Session() as s:
+            user = models.User(email="k@uni.edu")
+            s.add(user)
+            await s.flush()
+            key, raw = await users_service.create_api_key(s, user, "laptop")
+            await s.commit()
+            assert raw.startswith("rc_live_")
+            assert key.key_hash == security.hash_api_key(raw)
+            assert key.prefix == security.api_key_display_prefix(raw)
+
+            keys = await users_service.list_api_keys(s, user.id)
+            assert len(keys) == 1 and keys[0].is_active
+
+            assert await users_service.revoke_api_key(s, user.id, key.id) is True
+            await s.commit()
+            assert (await users_service.list_api_keys(s, user.id))[0].is_active is False
+            # Revoking again / a foreign key id is a no-op.
+            assert await users_service.revoke_api_key(s, user.id, key.id) is False
+            assert await users_service.revoke_api_key(s, "someone-else", key.id) is False
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_require_api_key_valid_invalid_revoked(tmp_path):
+    from backend.core.api_auth import require_api_key
+    from fastapi import HTTPException
+
+    engine = create_engine_from_url(f"sqlite+aiosqlite:///{tmp_path / 'a.db'}")
+    try:
+        await init_models(engine)
+        Session = create_sessionmaker(engine)
+        async with Session() as s:
+            user = models.User(email="a@uni.edu")
+            s.add(user)
+            await s.flush()
+            key, raw = await users_service.create_api_key(s, user, "k")
+            await s.commit()
+            key_id = key.id
+
+        def req(token):
+            return SimpleNamespace(
+                headers={"Authorization": f"Bearer {token}"} if token else {},
+                state=SimpleNamespace(),
+            )
+
+        # Valid key → returns user + increments usage.
+        async with Session() as s:
+            resolved = await require_api_key(req(raw), s)
+            assert resolved.id == user.id
+        async with Session() as s:
+            k = await s.get(models.ApiKey, key_id)
+            assert k.request_count == 1 and k.last_used_at is not None
+
+        # Missing / malformed.
+        async with Session() as s:
+            with pytest.raises(HTTPException) as e1:
+                await require_api_key(req(None), s)
+            assert e1.value.status_code == 401
+            with pytest.raises(HTTPException):
+                await require_api_key(req("not-a-key"), s)
+
+        # Revoked key → 401.
+        async with Session() as s:
+            await users_service.revoke_api_key(s, user.id, key_id)
+            await s.commit()
+        async with Session() as s:
+            with pytest.raises(HTTPException) as e2:
+                await require_api_key(req(raw), s)
+            assert e2.value.status_code == 401
+    finally:
+        await engine.dispose()
+
+
+# ── route layer ──────────────────────────────────────────────────────────────
+def _build_app(tmp):
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp}/api.db"
+    os.environ["SESSION_SECRET"] = "t"
+    for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "ORCID_CLIENT_ID", "ORCID_CLIENT_SECRET"):
+        os.environ.pop(k, None)
+    import backend.core.config as cfg
+    cfg.get_settings.cache_clear()
+    from backend import create_app
+    app = create_app()
+    app.state.redis = FakeRedis()
+    return app
+
+
+def test_api_v1_owner_scoping_and_auth():
+    import asyncio
+    from starlette.testclient import TestClient
+
+    tmp = tempfile.mkdtemp()
+    app = _build_app(tmp)
+    with TestClient(app) as client:
+        async def seed():
+            Session = app.state.db_sessionmaker
+            async with Session() as s:
+                a = models.User(email="a@uni.edu", display_name="A")
+                b = models.User(email="b@uni.edu", display_name="B")
+                s.add_all([a, b])
+                await s.flush()
+                _ka, raw_a = await users_service.create_api_key(s, a, "a-key")
+                await reports_service.create_report_row(
+                    s, task_id="ra", owner_id=a.id, visibility="private", title="A report", comparison_type=None
+                )
+                await reports_service.create_report_row(
+                    s, task_id="rb", owner_id=b.id, visibility="private", title="B report", comparison_type=None
+                )
+                await s.commit()
+                return raw_a
+        raw_a = asyncio.get_event_loop().run_until_complete(seed())
+        app.state.redis.h["ra"] = {"state": "SUCCESS", "result_json": json.dumps({"items": [{"dimension": "X"}]}), "title": "A report"}
+
+        # No key → 401.
+        assert client.get("/api/v1/reports").status_code == 401
+
+        h = {"Authorization": f"Bearer {raw_a}"}
+        # List returns only A's report.
+        listed = client.get("/api/v1/reports", headers=h).json()["reports"]
+        assert [r["task_id"] for r in listed] == ["ra"]
+
+        # Owned report → result; other's report → 404.
+        got = client.get("/api/v1/reports/ra", headers=h)
+        assert got.status_code == 200 and got.json()["result"]["items"][0]["dimension"] == "X"
+        assert client.get("/api/v1/reports/rb", headers=h).status_code == 404
+
+        # Status owned.
+        assert client.get("/api/v1/status/ra", headers=h).json()["state"] == "SUCCESS"
+
+        # Delete owned → gone.
+        assert client.delete("/api/v1/reports/ra", headers=h).status_code == 200
+        assert client.get("/api/v1/reports/ra", headers=h).status_code == 404
+
+
+def test_api_resolve_dimensions_set_or_data():
+    """The API accepts a built-in dimension_set preset OR a custom dimensions_data
+    JSON (exactly one)."""
+    from fastapi import HTTPException
+
+    from backend.routes import api
+
+    # Preset → JSON of the backend's dimensions for that discipline.
+    out = api._resolve_api_dimensions("psychology", None)
+    dims = json.loads(out)
+    assert len(dims) == 9 and dims[0]["dimension"] == "Hypotheses"
+
+    # Custom JSON passes through unchanged.
+    raw = '[{"dimension":"X","definition":""}]'
+    assert api._resolve_api_dimensions(None, raw) == raw
+    assert api._resolve_api_dimensions("", raw) == raw  # blank set ignored
+
+    # Both / neither / unknown → 400.
+    for bad_args in [("psychology", raw), (None, None), ("bogus", None)]:
+        with pytest.raises(HTTPException):
+            api._resolve_api_dimensions(*bad_args)

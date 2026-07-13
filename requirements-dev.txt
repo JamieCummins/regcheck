@@ -1,0 +1,9 @@
+# Development/CI tooling. Runtime dependencies live in requirements.txt
+# (deployed by Heroku); CI installs runtime deps from the hash-locked
+# requirements.lock instead (regenerate it after ANY requirements.txt change:
+#   pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
+# ).
+-r requirements.txt
+ruff==0.15.21
+pip-audit==2.10.1
+pip-tools==7.5.3

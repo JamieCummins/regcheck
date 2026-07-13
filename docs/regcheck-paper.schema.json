@@ -1,0 +1,209 @@
+{
+  "$id": "XXX [ I guess scienceverse URL? ]",
+  "title": "RegCheck Paper Schema",
+  "description": "RegCheck schema for an ingested document (paper, preregistration, or registry record). Aligned with the bibr/scienceverse paper schema (https://www.scienceverse.org/schema/paper.json) and extended with the parts RegCheck depends on, specifcaly: a canonical `full_text`, stable character offsets on every section, and optional page/box coordinates for rendering and highlight overlays. Object ids are integers in line with bibr; RegCheck's retrieval ids (PREREG_xxxx / PAPER_xxxx) and relevance scores are one level above.",
+  "type": "object",
+  "required": ["paper_id", "info", "section", "text"],
+  "properties": {
+    "paper_id": {
+      "type": ["string", "null"],
+      "description": "Stable id for document."
+    },
+    "info": { "$ref": "#/$defs/info" },
+    "author": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/author" }
+    },
+    "section": {
+      "type": "array",
+      "description": "High-level section structure for headers.",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "text": {
+      "type": "array",
+      "description": "Ordered text segments (sentence- or paragraph-level).",
+      "items": { "$ref": "#/$defs/text" }
+    },
+    "bib": {
+      "type": "array",
+      "description": "Bibliography / references.",
+      "items": { "$ref": "#/$defs/bib" }
+    },
+    "page": {
+      "type": "array",
+      "description": "Page geometry + character ranges. PDF-derived documents only; empty for non-PDFs.",
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "box": {
+      "type": "array",
+      "description": "Per-segment bounding boxes for rendering and highlight overlays in PDF-derived documents only.",
+      "items": { "$ref": "#/$defs/box" }
+    }
+  },
+  "$defs": {
+    "info": {
+      "type": "object",
+      "description": "Document-level metadata and original text.",
+      "required": ["input_format", "source_kind"],
+      "properties": {
+        "title": { "type": ["string", "null"] },
+        "abstract": { "type": ["string", "null"] },
+        "doi": { "type": ["string", "null"] },
+        "journal": { "type": ["string", "null"] },
+        "year": { "type": ["integer", "null"] },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "file_name": { "type": ["string", "null"], "description": "Original filename as uploaded." },
+        "file_hash": { "type": ["string", "null"], "description": "Hash of the original file bytes." },
+        "input_format": {
+          "type": "string",
+          "description": "Format of the ingested original.",
+          "enum": ["pdf", "docx", "xml", "html", "txt", "ctgov_json", "osf_json"]
+        },
+        "source_kind": {
+          "type": "string",
+          "description": "What kind of document this is.",
+          "enum": ["paper", "preregistration", "registry_record"]
+        },
+        "parser": {
+          "type": ["string", "null"],
+          "description": "Tool that produced the parse (e.g. bibr, grobid, pymupdf, dpt2, ctgov_api)."
+        },
+        "parser_version": { "type": ["string", "null"] },
+        "parsed_at": { "type": ["string", "null"], "format": "date-time" },
+        "n_pages": {
+          "type": ["integer", "null"],
+          "description": "Page count for PDF-derived documents only."
+        },
+        "full_text": {
+          "type": ["string", "null"],
+          "description": "Verbatim extracted text."
+        },
+        "raw_file_uri": {
+          "type": ["string", "null"],
+          "description": "Pointer to the stored original file bytes."
+        }
+      }
+    },
+    "author": {
+      "type": "object",
+      "required": ["author_id"],
+      "properties": {
+        "author_id": { "type": "integer" },
+        "given": { "type": ["string", "null"] },
+        "family": { "type": ["string", "null"] },
+        "corresponding": { "type": ["boolean", "null"] },
+        "affiliation": { "type": ["string", "null"] },
+        "email": { "type": ["string", "null"] },
+        "orcid": { "type": ["string", "null"] },
+        "role": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["section_id", "header", "parent_section_id", "section_type"],
+      "properties": {
+        "section_id": { "type": "integer" },
+        "parent_section_id": {
+          "type": ["integer", "null"],
+          "description": "Self-reference for nesting."
+        },
+        "position": { "type": ["integer", "null"], "description": "Order among siblings." },
+        "level": { "type": ["integer", "null"], "description": "Heading depth." },
+        "header": {
+          "type": ["string", "null"],
+          "description": "The heading text. For registry records this holds the API field name (e.g. 'Eligibility Criteria')."
+        },
+        "section_type": {
+          "type": ["string", "null"],
+          "enum": ["abstract", "intro", "method", "results", "discussion", "conclusion", "references", "appendix", "other", null],
+          "description": "Use 'other' for registry fields and anything unmapped."
+        },
+        "char_start": {
+          "type": ["integer", "null"],
+          "description": "Section span start."
+        },
+        "char_end": {
+          "type": ["integer", "null"],
+          "description": "Section span end."
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "required": ["text_id", "paragraph_id", "section_id", "text"],
+      "properties": {
+        "text_id": { "type": "integer", "description": "Stable per-segment id." },
+        "paragraph_id": { "type": ["integer", "null"] },
+        "section_id": { "type": ["integer", "null"], "description": "Mapping to section.section_id." },
+        "type": {
+          "type": ["string", "null"],
+          "enum": ["sentence", "paragraph", "heading", "caption", "table_cell", "footnote", null],
+          "description": "Granularity of segment"
+        },
+        "header": {
+          "type": ["string", "null"],
+          "description": "Denormalised cache of the parent section's header."
+        },
+        "text": {
+          "type": "string",
+          "description": "Parsed segment text."
+        },
+        "text_raw": {
+          "type": ["string", "null"],
+          "description": "verbatim original text before cleaning."
+        },
+        "char_start": {
+          "type": ["integer", "null"],
+          "description": "Segment span start"
+        },
+        "char_end": {
+          "type": ["integer", "null"],
+          "description": "Segment span end."
+        }
+      }
+    },
+    "bib": {
+      "type": "object",
+      "required": ["bib_id"],
+      "properties": {
+        "bib_id": { "type": "integer" },
+        "text_id": { "type": ["integer", "null"], "description": "Segment where this reference is cited, if known." },
+        "bib_type": { "type": ["string", "null"] },
+        "doi": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "authors": { "type": ["string", "null"] },
+        "year": { "type": ["integer", "null"] },
+        "container": { "type": ["string", "null"] },
+        "volume": { "type": ["string", "null"] },
+        "issue": { "type": ["string", "null"] },
+        "pages": { "type": ["string", "null"] },
+        "raw_text": { "type": ["string", "null"], "description": "Verbatim reference string." }
+      }
+    },
+    "page": {
+      "type": "object",
+      "description": "One row per rendered page.",
+      "required": ["page_number", "width", "height"],
+      "properties": {
+        "page_number": { "type": "integer", "description": "Page number." },
+        "width": { "type": "number", "description": "Page width in PDF points." },
+        "height": { "type": "number", "description": "Page height in PDF points." },
+        "char_start": { "type": ["integer", "null"], "description": "Start offset of this page's text in info.full_text." },
+        "char_end": { "type": ["integer", "null"], "description": "End offset of this page's text in info.full_text." }
+      }
+    },
+    "box": {
+      "type": "object",
+      "description": "A bounding box for a text segment on a page.",
+      "required": ["text_id", "page_number", "x0", "y0", "x1", "y1"],
+      "properties": {
+        "text_id": { "type": "integer", "description": "Maps to text.text_id." },
+        "page_number": { "type": "integer", "description": "Maps to page.page_number." },
+        "x0": { "type": "number" },
+        "y0": { "type": "number" },
+        "x1": { "type": "number" },
+        "y1": { "type": "number" }
+      }
+    }
+  }
+}

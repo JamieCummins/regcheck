@@ -1,4 +1,4 @@
-<footer class="mt-auto text-white-50 custom-footer-padding">
+<footer class="mt-auto custom-footer-padding">
   <p class="mb-2">
     Powered by the Parity Engine<br>
     Psychology of Digitalisation, University of Bern, 2026
@@ -11,9 +11,15 @@
     >
     <span>Funded by the Swiss National Science Foundation (SNSF)</span>
   </div>
-  <p class="mb-0">
+  <p class="mb-0 footer-links">
     <a class="footer-link" href="{{ url_for('faq') }}">FAQ</a>
-    <span aria-hidden="true"> · </span>
+    <span class="footer-sep" aria-hidden="true">·</span>
+    <a class="footer-link" href="{{ url_for('contact') }}">Contact</a>
+    <span class="footer-sep" aria-hidden="true">·</span>
     <a class="footer-link" href="{{ url_for('privacy') }}">Privacy Policy</a>
+    <span class="footer-sep" aria-hidden="true">·</span>
+    <a class="footer-link" href="{{ url_for('api_docs') }}">API</a>
+    <span class="footer-sep" aria-hidden="true">·</span>
+    <a class="footer-link" href="https://github.com/JamieCummins/regcheck" target="_blank" rel="noopener noreferrer">GitHub</a>
   </p>
 </footer>

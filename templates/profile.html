@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta name="robots" content="noindex,nofollow">
+    <title>Your profile &middot; {{ brand_name }}</title>
+    <style>
+      .profile-main { flex: 1; width: min(46rem, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; }
+      .profile-main h1 { font-size: clamp(1.7rem, 3vw, 2.2rem); margin: 0 0 0.3rem; }
+      .profile-sub { color: var(--rc-muted); margin: 0 0 1.6rem; }
+      .profile-saved {
+        background: var(--rc-ok-bg); border: 1px solid var(--rc-ok-border); color: var(--rc-ok);
+        border-radius: var(--rc-radius-sm); padding: 0.6rem 0.9rem; margin: 0 0 1.2rem; font-size: 0.9rem; font-weight: 600;
+      }
+      .profile-card {
+        background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: var(--rc-radius);
+        padding: clamp(1.1rem, 3vw, 1.6rem); margin: 0 0 1.2rem;
+      }
+      .profile-card h2 { font-size: 1.05rem; margin: 0 0 1rem; }
+      .field { margin: 0 0 1rem; }
+      .field:last-child { margin-bottom: 0; }
+      .field label { display: block; font-size: 0.82rem; color: var(--rc-muted); margin: 0 0 0.35rem; font-weight: 600; }
+      .field .hint { color: var(--rc-faint); font-size: 0.78rem; margin: 0.3rem 0 0; }
+      .field input[type="text"], .field select {
+        width: 100%; background: var(--rc-surface-2); border: 1px solid var(--rc-border-strong);
+        color: var(--rc-text); border-radius: var(--rc-radius-sm); padding: 0.55rem 0.7rem; font-size: 0.92rem;
+      }
+      .field-check { display: flex; align-items: center; gap: 0.55rem; }
+      .field-check input { width: 1.1rem; height: 1.1rem; }
+      .field-check label { margin: 0; }
+      .profile-meta { color: var(--rc-faint); font-size: 0.85rem; }
+      .profile-meta strong { color: var(--rc-text); }
+      .save-btn {
+        background: var(--rc-accent); color: #fff; border: none; border-radius: var(--rc-radius-sm);
+        padding: 0.6rem 1.3rem; font-weight: 600; font-size: 0.95rem; cursor: pointer;
+      }
+      .save-btn:hover { background: var(--rc-accent-hover); }
+      .newkey {
+        background: var(--rc-accent-soft); border: 1px solid var(--rc-accent); border-radius: var(--rc-radius-sm);
+        padding: 0.8rem 0.95rem; margin: 0 0 1rem;
+      }
+      .newkey p { margin: 0 0 0.5rem; color: var(--rc-text); font-size: 0.85rem; }
+      .newkey code {
+        display: block; font-family: var(--rc-font-mono); font-size: 0.82rem; color: var(--rc-text);
+        background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: 6px;
+        padding: 0.5rem 0.6rem; word-break: break-all;
+      }
+      .key-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; border-top: 1px solid var(--rc-border); padding: 0.7rem 0; }
+      .key-row:first-of-type { border-top: none; }
+      .key-row__main { flex: 1 1 16rem; min-width: 0; }
+      .key-row__name { color: var(--rc-text); font-weight: 600; font-size: 0.92rem; }
+      .key-row__name.revoked { color: var(--rc-faint); text-decoration: line-through; }
+      .key-row__meta { color: var(--rc-faint); font-size: 0.76rem; margin-top: 0.2rem; }
+      .key-row__meta code { font-family: var(--rc-font-mono); }
+      .key-create { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+      .key-create input { flex: 1 1 14rem; background: var(--rc-surface-2); border: 1px solid var(--rc-border-strong); color: var(--rc-text); border-radius: var(--rc-radius-sm); padding: 0.5rem 0.7rem; font-size: 0.9rem; }
+      .key-revoke { background: none; border: 1px solid var(--rc-border-strong); color: var(--rc-flag); border-radius: var(--rc-radius-sm); padding: 0.35rem 0.7rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+      .key-revoke:hover { background: var(--rc-flag); color: #fff; border-color: var(--rc-flag); }
+    </style>
+</head>
+{% set nav_active = 'account' %}
+<body class="text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+    <header class="mb-auto">
+      {% include '_partials/navbar.html' %}
+    </header>
+
+    <main class="profile-main">
+      <h1>Your profile</h1>
+      <p class="profile-sub">These details replace the per-run survey for your account.</p>
+      {% if saved %}<div class="profile-saved">Profile saved.</div>{% endif %}
+
+      <form method="post" action="{{ url_for('profile') }}">
+        <div class="profile-card">
+          <h2>Account</h2>
+          <p class="profile-meta">Signed in as <strong>{{ user.email or user.display_name or 'your account' }}</strong>.</p>
+          <div class="field" style="margin-top:1rem">
+            <label for="display_name">Display name</label>
+            <input type="text" id="display_name" name="display_name" value="{{ user.display_name or '' }}" maxlength="200">
+          </div>
+          <div class="field">
+            <label for="handle">Public handle</label>
+            <input type="text" id="handle" name="handle" value="{{ user.handle or '' }}" maxlength="64">
+            <p class="hint">Used for your public profile page (lowercase letters, numbers and hyphens).</p>
+          </div>
+          <div class="field field-check">
+            <input type="checkbox" id="is_public_profile" name="is_public_profile" value="on" {{ 'checked' if user.is_public_profile else '' }}>
+            <label for="is_public_profile">Allow a public profile page listing my public reports</label>
+          </div>
+        </div>
+
+        <div class="profile-card">
+          <h2>About you</h2>
+          {% for q in questions %}
+          <div class="field">
+            <label for="{{ q.name }}">{{ q.label }}</label>
+            {% set current = user | attr(q.name) %}
+            <select id="{{ q.name }}" name="{{ q.name }}">
+              <option value="">Prefer not to say</option>
+              {% for opt in q.options %}
+              <option value="{{ opt }}" {{ 'selected' if current == opt else '' }}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endfor %}
+        </div>
+
+        <button type="submit" class="save-btn">Save profile</button>
+      </form>
+
+      <div class="profile-card">
+        <h2>API keys</h2>
+        <p class="profile-meta">Use these to call the <a class="footer-link" href="{{ url_for('api_docs') }}">{{ brand_name }} API</a> with <code>Authorization: Bearer &lt;key&gt;</code>. A key is shown once at creation — store it securely.</p>
+
+        {% if new_api_key %}
+        <div class="newkey">
+          <p><strong>New key created.</strong> Copy it now — you won't be able to see it again.</p>
+          <code>{{ new_api_key }}</code>
+        </div>
+        {% endif %}
+
+        <div style="margin-top:1rem">
+          {% if api_keys %}
+          {% for k in api_keys %}
+          <div class="key-row">
+            <div class="key-row__main">
+              <div class="key-row__name {{ 'revoked' if not k.is_active else '' }}">{{ k.name or 'Unnamed key' }}{% if not k.is_active %} (revoked){% endif %}</div>
+              <div class="key-row__meta">
+                <code>{{ k.prefix }}…</code> · created {{ k.created_at.strftime('%d %b %Y') }} ·
+                {{ k.request_count }} request{{ '' if k.request_count == 1 else 's' }}{% if k.last_used_at %} · last used {{ k.last_used_at.strftime('%d %b %Y') }}{% endif %}
+              </div>
+            </div>
+            {% if k.is_active %}
+            <form method="post" action="{{ url_for('api_key_revoke', key_id=k.id) }}" onsubmit="return confirm('Revoke this API key? Any client using it will stop working.');">
+              <button type="submit" class="key-revoke">Revoke</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endfor %}
+          {% else %}
+          <p class="profile-meta">No API keys yet.</p>
+          {% endif %}
+        </div>
+
+        <form method="post" action="{{ url_for('api_key_create') }}" class="key-create">
+          <input type="text" name="name" placeholder="Key name (e.g. laptop, CI)" maxlength="120">
+          <button type="submit" class="save-btn">Create key</button>
+        </form>
+      </div>
+    </main>
+
+    {% include '_partials/footer.html' %}
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+</body>
+</html>

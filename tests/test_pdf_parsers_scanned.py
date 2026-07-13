@@ -110,17 +110,52 @@ async def test_extract_pdf_text_grobid_error_then_dpt_then_pymupdf(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_extract_pdf_text_pymupdf_primary(tmp_path):
-    pdf_path = tmp_path / "text-primary.pdf"
-    _make_text_pdf(str(pdf_path), "hello primary pymupdf")
+async def test_extract_pdf_text_legacy_dpt2_falls_through_to_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "legacy-text.pdf"
+    _make_text_pdf(str(pdf_path), "hello legacy fallback")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid boom")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt 403")
+
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.setenv("SCANNED_PDF_FALLBACK", "dpt2")
 
     extracted, used = await extract_pdf_text(
         str(pdf_path),
-        parser_choice="pymupdf",
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt_fail,
     )
 
-    assert "hello primary pymupdf" in extracted
-    assert used == "pymupdf"
+    assert "hello legacy fallback" in extracted
+    assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_single_dpt2_chain_falls_through_to_pymupdf(tmp_path, monkeypatch):
+    pdf_path = tmp_path / "explicit-text.pdf"
+    _make_text_pdf(str(pdf_path), "hello explicit fallback")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid boom")
+
+    async def fake_dpt_fail(_path: str):
+        raise RuntimeError("dpt 403")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "dpt2")
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path),
+        parser_choice="grobid",
+        pdf_parser=fake_grobid_fail,
+        dpt_parser=fake_dpt_fail,
+    )
+
+    assert "hello explicit fallback" in extracted
+    assert used == "pymupdf_fallback"
 
 
 @pytest.mark.asyncio
@@ -141,3 +176,123 @@ async def test_extract_pdf_text_dpt2_mode_falls_back_to_pymupdf(tmp_path, monkey
 
     assert "hello dpt mode" in extracted
     assert used == "pymupdf_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_pymupdf_primary(tmp_path):
+    """PyMuPDF is selectable as a primary, in-process parser and preserves
+    all selectable text (e.g. author notes)."""
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "Author note: corresponding author jane@example.org")
+    text, used = await extract_pdf_text(str(pdf), parser_choice="pymupdf")
+    assert used == "pymupdf"
+    assert "Author note" in text
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_rejects_unknown_parser(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "body")
+    with pytest.raises(ValueError):
+        await extract_pdf_text(str(pdf), parser_choice="nope")
+
+
+def test_extract_external_text_reconstructs_sections_and_paragraphs():
+    from backend.services.pdf_parsers import extract_external_text
+
+    payload = {
+        "section": [
+            {"section_id": 1, "header": "Method"},
+            {"section_id": 2, "header": "Results"},
+        ],
+        "text": [
+            {"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "We recruited 200 people."},
+            {"text_id": 2, "section_id": 1, "paragraph_id": 1, "text": "Data collection stopped at 200."},
+            {"text_id": 3, "section_id": 2, "paragraph_id": 2, "text": "The effect was significant."},
+        ],
+    }
+    out = extract_external_text(payload)
+    assert "Method" in out and "Results" in out
+    # sentences in the same paragraph join on one line; paragraphs/sections separate
+    assert "We recruited 200 people. Data collection stopped at 200." in out
+    assert "The effect was significant." in out
+    assert extract_external_text({}) == ""
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_external_primary(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "ignored — external parser is injected")
+
+    async def fake_external(_path: str):
+        return {
+            "section": [{"section_id": 1, "header": "Introduction"}],
+            "text": [{"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "Hello from the parser."}],
+        }
+
+    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=fake_external)
+    assert used == "external"
+    assert "Hello from the parser." in text
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_external_failure_falls_back(tmp_path, monkeypatch):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "Selectable body text for PyMuPDF fallback.")
+
+    async def broken_external(_path: str):
+        raise RuntimeError("Missing EXTERNAL_PARSER_URL")
+
+    monkeypatch.setenv("PDF_PARSER_FALLBACKS", "pymupdf")
+    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=broken_external)
+    assert used == "pymupdf_fallback"
+    assert "Selectable body text" in text
+
+
+# ── external escalation is opt-in (default chain is local-only) ────────────────
+
+
+@pytest.mark.asyncio
+async def test_default_chain_never_calls_external_parser(tmp_path, monkeypatch):
+    # No fallback env config: a grobid failure must recover via LOCAL pymupdf and
+    # the document must never be sent to the external DPT2 service.
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.delenv("SCANNED_PDF_FALLBACK", raising=False)
+    pdf_path = tmp_path / "text.pdf"
+    _make_text_pdf(str(pdf_path), "local rescue")
+
+    async def fake_grobid_fail(_path: str) -> str:
+        raise RuntimeError("grobid down")
+
+    dpt_calls = []
+
+    async def dpt_spy(_path: str):
+        dpt_calls.append(_path)
+        return {"text": "should never run"}
+
+    extracted, used = await extract_pdf_text(
+        str(pdf_path), parser_choice="grobid", pdf_parser=fake_grobid_fail, dpt_parser=dpt_spy
+    )
+    assert "local rescue" in extracted
+    assert used == "pymupdf_fallback"
+    assert dpt_calls == []
+
+
+@pytest.mark.asyncio
+async def test_default_chain_scanned_pdf_instructs_instead_of_external_ocr(tmp_path, monkeypatch):
+    # A scanned PDF with no configured fallback fails with guidance rather than
+    # silently OCRing via the external service.
+    monkeypatch.delenv("PDF_PARSER_FALLBACKS", raising=False)
+    monkeypatch.delenv("SCANNED_PDF_FALLBACK", raising=False)
+    pdf_path = tmp_path / "scan.pdf"
+    _make_scanned_pdf(str(pdf_path))
+
+    dpt_calls = []
+
+    async def dpt_spy(_path: str):
+        dpt_calls.append(_path)
+        return {"text": "should never run"}
+
+    with pytest.raises(ValueError, match="no usable text"):
+        await extract_pdf_text(str(pdf_path), parser_choice="pymupdf", dpt_parser=dpt_spy)
+    assert dpt_calls == []

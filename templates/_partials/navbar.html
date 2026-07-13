@@ -2,8 +2,8 @@
 <nav class="navbar navbar-expand-lg navbar-dark p-0">
     <div class="container-fluid px-0">
         <a class="navbar-brand d-flex align-items-center fw-semibold" href="{{ url_for('index') }}">
-            <span>RegCheck</span>
-            <img class="header-logo ms-2" src="{{ url_for('static', path='assets/logo.png') }}?v={{ static_version }}" alt="RegCheck logo">
+            <span>{{ brand_name }}</span>
+            <img class="header-logo ms-2" src="{{ url_for('static', path='assets/logo.png') }}?v={{ static_version }}" alt="{{ brand_name }} logo">
         </a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#primaryNav" aria-controls="primaryNav" aria-expanded="false" aria-label="Toggle navigation">
             <span class="navbar-toggler-icon"></span>
@@ -18,10 +18,10 @@
                         Tools
                     </a>
                     <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="appDropdown">
-                        <li><a class="dropdown-item {{ 'active' if nav_active == 'demo' else '' }}" href="{{ url_for('demo') }}">Demo</a></li>
+                        <li><a class="dropdown-item {{ 'active' if nav_active == 'demo' else '' }}" href="{{ url_for('demo') }}">Example report</a></li>
                         <li><a class="dropdown-item" href="{{ url_for('compare') }}">Registration-Paper Comparison </a></li>
-                        <li><a class="dropdown-item locked-option" href="#">Code-Paper Comparison <img class="locked-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/White_lock.svg/1024px-White_lock.svg.png" alt=""></a></li>
-                        <li><a class="dropdown-item locked-option" href="#">Evaluate Registration Quality <img class="locked-image" src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/White_lock.svg/1024px-White_lock.svg.png" alt=""></a></li>
+                        <li><a class="dropdown-item locked-option" href="{{ url_for('coming_soon', feature='code-paper') }}">Code-Paper Comparison <svg class="locked-image" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></a></li>
+                        <li><a class="dropdown-item" href="{{ precheck_url }}" target="_blank" rel="noopener noreferrer">Evaluate Registration Quality (PreCheck)</a></li>
                     </ul>
                 </li>
                 <li class="nav-item">
@@ -30,11 +30,34 @@
                 <li class="nav-item">
                     <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'research' else '' }}" href="https://arxiv.org/abs/2601.13330" target="_blank" rel="noopener noreferrer">Research</a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'contact' else '' }}" href="{{ url_for('contact') }}">Contact</a>
+
+                {% set cu = current_user(request) %}
+                {% if cu %}
+                <li class="nav-item dropdown">
+                    <a class="nav-link fw-bold py-1 px-0 dropdown-toggle {{ 'active' if nav_active == 'account' else '' }}" href="#" id="accountDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        {{ cu.display_name or 'Account' }}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end" aria-labelledby="accountDropdown">
+                        <li><a class="dropdown-item {{ 'active' if nav_active == 'reports' else '' }}" href="{{ url_for('my_reports') }}">My reports</a></li>
+                        <li><a class="dropdown-item {{ 'active' if nav_active == 'account' else '' }}" href="{{ url_for('profile') }}">Profile</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <form method="post" action="{{ url_for('logout') }}">
+                                <button type="submit" class="dropdown-item">Log out</button>
+                            </form>
+                        </li>
+                    </ul>
                 </li>
+                {% elif request.app.state.settings.auth_enabled %}
                 <li class="nav-item">
-                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'faq' else '' }}" href="{{ url_for('faq') }}">FAQ</a>
+                    <a class="nav-link fw-bold py-1 px-0 {{ 'active' if nav_active == 'account' else '' }}" href="{{ url_for('login') }}">Log in</a>
+                </li>
+                {% endif %}
+                <li class="nav-item d-flex align-items-lg-center">
+                    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light theme" title="Switch to light theme">
+                        <svg class="theme-toggle__icon theme-toggle__icon--sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                        <svg class="theme-toggle__icon theme-toggle__icon--moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    </button>
                 </li>
             </ul>
         </div>

@@ -1,0 +1,1575 @@
+/* RegCheck report viewer — two-view flow (decision → documents).
+   Relies on tokens from custom-styles.css. */
+:root {
+    --report-highlight: #fbe08a;
+    --report-highlight-soft: rgba(251, 191, 36, 0.34);
+    --report-pdf-bg: #f3f4f8;
+    --doc-reg-rgb: 123, 160, 220;
+    --doc-ppr-rgb: 220, 164, 92;
+    /* Quote colour-coding: registration = blue, paper = lemon-yellow.
+       Paper is deliberately a cooler/greener yellow than the amber "missing"
+       verdict so the two don't read as the same colour. */
+    --report-reg-ink: #aecbf2;
+    --report-paper-ink: #f0d97f;
+    --report-reg-bg: rgba(123, 160, 220, 0.12);
+    --report-paper-bg: rgba(244, 222, 120, 0.11);
+    --report-reg-bg-hover: rgba(123, 160, 220, 0.18);
+    --report-paper-bg-hover: rgba(244, 222, 120, 0.17);
+}
+
+/* Light theme: the blue/gold quote + summary-header inks above are tuned for a dark
+   background; on white they fail contrast badly. Override with darker, readable
+   colours (keep the blue/gold identity), and slightly stronger tints behind quote refs. */
+[data-bs-theme="light"] {
+    --report-reg-ink: #2F4DA8;
+    --report-paper-ink: #7A5C00;
+    --report-reg-bg: rgba(47, 77, 168, 0.10);
+    --report-paper-bg: rgba(122, 92, 0, 0.12);
+    --report-reg-bg-hover: rgba(47, 77, 168, 0.16);
+    --report-paper-bg-hover: rgba(122, 92, 0, 0.18);
+}
+
+.report-page,
+.report-page * {
+    text-shadow: none !important;
+}
+
+.report-page {
+    min-height: 100dvh;
+    background:
+        radial-gradient(1100px 520px at 82% -8%, rgba(58, 91, 192, 0.10), transparent 60%),
+        var(--rc-bg) !important;
+    color: var(--rc-text);
+    text-align: left;
+    overflow: hidden;
+}
+
+.report-shell {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    width: min(94vw, 1280px);
+    margin: 0 auto;
+    padding: clamp(0.7rem, 1.1vw, 1.05rem);
+    overflow: hidden;
+}
+
+/* Full-screen / focus mode -------------------------------------------------- */
+/* Reading feedback: with the shell capped at 1280px plus the site navbar and
+   footer, the Evidence panes (PDFs + quotes) never get enough room even after
+   dragging the splitters. Focus mode drops the width cap and the site chrome so
+   the report fills the whole viewport; it is toggled from the topbar and synced
+   to the native Fullscreen API (which additionally hides the browser chrome). */
+body.report-focus .report-shell {
+    /* 100% (not 100vw) fills the body box WITHOUT counting the vertical scrollbar,
+       which otherwise pushes the centered shell ~15px past the right edge and clips
+       the rightmost controls + the Paper-summary pane (Firefox/macOS especially). */
+    width: 100%;
+    max-width: none;
+    padding: clamp(0.4rem, 0.7vw, 0.7rem) clamp(0.6rem, 1.4vw, 1.4rem);
+}
+body.report-focus .report-header .navbar { display: none; }
+body.report-focus .report-shell footer { display: none; }
+/* With the lead hidden the actions are the only flex child, so space-between
+   would drop them to the LEFT edge; pin them right so the exit button stays
+   where the enter button was. */
+body.report-focus .report-topbar { margin-top: 0.15rem; padding-bottom: 0.15rem; justify-content: flex-end; }
+/* Minimal full-screen chrome: keep only the exit-fullscreen control in the top bar
+   (the dimension dropdown lives in the docs bar) so the panes get the whole screen. */
+body.report-focus .report-topbar__lead { display: none; }
+body.report-focus .report-actions > :not(.report-focus-btn) { display: none; }
+body.report-focus .docs-bar { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+
+/* Icon swap: expand glyph by default, compress glyph while focused. */
+.report-focus-btn__compress { display: none; }
+body.report-focus .report-focus-btn__expand { display: none; }
+body.report-focus .report-focus-btn__compress { display: inline-flex; }
+body.report-focus .report-focus-btn { color: var(--rc-accent-strong); }
+
+/* Full-screen is the key Evidence-reading affordance but was easy to miss as a bare
+   icon in the button row — give it a visible label + a subtle accent outline. */
+.report-focus-btn { white-space: nowrap; }
+.report-focus-btn__label { font-weight: 600; }
+.report-focus-btn:not([aria-pressed="true"]) {
+    border-color: color-mix(in srgb, var(--rc-accent) 42%, var(--rc-border));
+    color: var(--rc-text);   /* accent-blue text was too low-contrast on the dark button */
+}
+.report-focus-btn:not([aria-pressed="true"]):hover {
+    border-color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 12%, var(--rc-surface-2));
+}
+
+/* The Fullscreen API promotes <html> to the top layer; give it the page
+   background so no default backdrop shows through behind the rounded shell. */
+:root:fullscreen { background: var(--rc-bg); }
+
+.report-header,
+.report-page footer {
+    flex: 0 0 auto;
+}
+
+.report-page footer {
+    color: var(--rc-muted);
+    font-size: 0.72rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rc-border);
+}
+
+.report-page .navbar .navbar-brand,
+.report-page .navbar .navbar-brand span,
+.report-page .nav-link {
+    color: var(--rc-text) !important;
+}
+
+.report-page .nav-link:hover,
+.report-page .nav-link:focus {
+    color: var(--rc-accent-strong) !important;
+}
+
+.report-page .px-3,
+.report-page main {
+    margin-top: 0;
+}
+
+/* Topbar -------------------------------------------------------------------- */
+.report-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin: 0.85rem 0 0.7rem;
+}
+
+.report-topbar__lead {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.report-page #results-page-tagline {
+    margin: 0;
+    color: var(--rc-text);
+    font-family: var(--rc-font-display);
+    font-size: clamp(1.35rem, 1.7vw, 1.9rem);
+    letter-spacing: -0.01em;
+    text-transform: none;
+}
+
+.report-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.28rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-muted);
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.report-status-pill__dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--rc-accent);
+}
+
+.report-status-pill.is-running .report-status-pill__dot {
+    animation: report-pulse 1.6s infinite;
+}
+
+.report-status-pill.is-done {
+    color: var(--rc-ok);
+    border-color: var(--rc-ok-border);
+    background: var(--rc-ok-bg);
+}
+
+.report-status-pill.is-done .report-status-pill__dot {
+    background: transparent;
+    width: auto;
+    height: auto;
+    animation: none;
+}
+.report-status-pill.is-done .report-status-pill__dot::before {
+    content: "✓";
+    font-size: 0.92rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--rc-ok);
+}
+
+.report-status-pill.is-error {
+    color: var(--rc-flag);
+    border-color: var(--rc-flag-border);
+    background: var(--rc-flag-bg);
+}
+
+.report-status-pill.is-error .report-status-pill__dot { background: var(--rc-flag); }
+
+@keyframes report-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0.55); }
+    70% { box-shadow: 0 0 0 7px rgba(58, 91, 192, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(58, 91, 192, 0); }
+}
+
+.report-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.report-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 1px solid var(--rc-border);
+    border-radius: 9px;
+    min-height: 2.3rem;
+    padding: 0.45rem 0.95rem;
+    font-size: 0.83rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--rc-text);
+    background: var(--rc-surface-2);
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.report-action-btn__icon { flex: 0 0 auto; }
+
+/* Icon-only action buttons (share / export / delete). */
+.report-action-btn--icon { padding: 0.45rem; min-width: 2.3rem; }
+
+/* Overview ⇄ Comparison segmented toggle (left of the report title). */
+.report-view-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    border: 1px solid var(--rc-border);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--rc-surface-2);
+}
+.report-view-btn {
+    border: none;
+    background: none;
+    color: var(--rc-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0.42rem 0.8rem;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+.report-view-btn + .report-view-btn { border-left: 1px solid var(--rc-border); }
+.report-view-btn.is-active { background: var(--rc-accent); color: #ffffff; }
+.report-view-btn:not(.is-active):hover { background: var(--rc-surface-3); color: var(--rc-text); }
+
+.report-action-btn--primary {
+    color: #ffffff;
+    background: var(--rc-accent);
+    border-color: var(--rc-accent);
+}
+
+.report-action-btn--primary:hover,
+.report-action-btn--primary:focus {
+    background: var(--rc-accent-hover);
+    border-color: var(--rc-accent-hover);
+    transform: translateY(-1px);
+}
+
+.report-action-btn--primary.is-copied {
+    background: var(--rc-ok);
+    border-color: var(--rc-ok);
+}
+
+.report-action-btn--ghost:hover,
+.report-action-btn--ghost:focus {
+    background: var(--rc-surface-3);
+    border-color: var(--rc-border-strong);
+}
+
+.report-action-btn--danger {
+    color: var(--rc-flag);
+}
+
+.report-action-btn:disabled,
+.report-action-btn.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Soft-disabled: looks inactive but keeps hover events so the title tooltip
+   (e.g. "Report still in progress…" on Download) can show; the click is
+   guarded in JS. */
+.report-action-btn[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.docs-quotes-hint {
+    margin: 0 0 0.5rem;
+    padding: 0 0.7rem;
+    font-size: 0.78rem;
+    color: var(--rc-faint);
+}
+
+.report-action-btn--danger:hover,
+.report-action-btn--danger:focus {
+    color: #fff;
+    background: var(--rc-flag);
+    border-color: var(--rc-flag);
+}
+
+/* Owner controls: rename pencil + visibility */
+.report-title-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-muted);
+    border-radius: 8px;
+    width: 1.9rem;
+    height: 1.9rem;
+    cursor: pointer;
+    transition: color 0.14s ease, border-color 0.14s ease;
+}
+
+.report-title-edit:hover {
+    color: var(--rc-text);
+    border-color: var(--rc-accent);
+}
+
+.report-visibility select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    border-radius: 999px;
+    padding: 0.22rem 1.4rem 0.22rem 0.7rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23828A9C' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+}
+
+.report-visibility-badge {
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    color: var(--rc-muted);
+    border-radius: 999px;
+    padding: 0.22rem 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* Activity log (during generation) ------------------------------------------ */
+.report-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0 0 0.7rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--rc-surface);
+    border: 1px solid var(--rc-border);
+    border-radius: var(--rc-radius-sm);
+    box-shadow: var(--rc-shadow-sm);
+}
+
+.report-log__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    color: var(--rc-muted);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.report-log__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+    color: var(--rc-text);
+}
+
+.report-log__spinner {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    border: 2px solid var(--rc-border-strong);
+    border-top-color: var(--rc-accent);
+    animation: report-spin 0.8s linear infinite;
+}
+
+.report-log__progress {
+    color: var(--rc-accent-strong);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.report-log__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.report-log__list li {
+    display: flex;
+    gap: 0.6rem;
+    color: var(--rc-text);
+    padding: 0.04rem 0;
+}
+
+.report-log__list li time {
+    flex: 0 0 auto;
+    color: var(--rc-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+@keyframes report-spin { to { transform: rotate(360deg); } }
+
+/* Workspace / views --------------------------------------------------------- */
+.report-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    overflow: hidden;
+}
+
+.report-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+}
+
+.report-view--decision {
+    display: flex;
+    gap: 0;
+    overflow: hidden;
+}
+
+.report-dimension-rail,
+.report-detail,
+.report-quotes {
+    min-height: 0;
+    min-width: 0;
+    background: var(--rc-surface);
+    border: 1px solid var(--rc-border);
+    border-radius: var(--rc-radius);
+    box-shadow: var(--rc-shadow-md);
+}
+
+/* Drag-to-resize handles between panels. */
+.report-splitter {
+    flex: 0 0 0.85rem;
+    align-self: stretch;
+    position: relative;
+    cursor: col-resize;
+    touch-action: none;
+    border-radius: 999px;
+    transition: background 0.14s ease;
+}
+
+.report-splitter::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 2.4rem;
+    border-radius: 999px;
+    background: var(--rc-border-strong);
+    transition: background 0.14s ease, height 0.14s ease;
+}
+
+.report-splitter:hover,
+.report-splitter.is-active,
+.report-splitter:focus-visible {
+    background: var(--rc-accent-soft);
+    outline: none;
+}
+
+.report-splitter:hover::before,
+.report-splitter.is-active::before,
+.report-splitter:focus-visible::before {
+    background: var(--rc-accent-strong);
+    height: 3.2rem;
+}
+
+body.is-col-resizing,
+body.is-col-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+/* Dimensions rail ----------------------------------------------------------- */
+.report-dimension-rail {
+    padding: 0.7rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.rail-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--rc-muted);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.6rem;
+}
+
+.rail-count {
+    color: var(--rc-text);
+    background: var(--rc-surface-3);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    font-size: 0.7rem;
+}
+
+.verdict-dot {
+    flex: 0 0 auto;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.verdict-dot--flag { background: var(--rc-flag); }
+.verdict-dot--ok { background: var(--rc-ok); }
+.verdict-dot--warn { background: var(--rc-warn); }
+
+.dimension-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.42rem;
+    overflow: auto;
+    padding-right: 0.15rem;
+}
+
+.dimension-card {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    border-radius: 10px;
+    padding: 0.6rem 0.65rem;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.dimension-card:hover {
+    border-color: var(--rc-border-strong);
+    background: var(--rc-surface-3);
+}
+
+.dimension-card.is-active {
+    border-color: var(--rc-accent);
+    background: var(--rc-accent-soft);
+}
+
+.dimension-card__title {
+    color: var(--rc-text);
+    font-size: 0.84rem;
+    font-weight: 500;
+    line-height: 1.3;
+}
+
+.dimension-card__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+
+.dimension-card__count {
+    color: var(--rc-faint);
+    font-size: 0.68rem;
+}
+
+.judgement-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.18rem 0.5rem;
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    box-shadow: none !important;
+}
+
+.judgement-chip--flag { color: var(--rc-flag); background: var(--rc-flag-bg); }
+.judgement-chip--ok { color: var(--rc-ok); background: var(--rc-ok-bg); }
+.judgement-chip--warn { color: var(--rc-warn); background: var(--rc-warn-bg); }
+
+/* Detail (decision + rationale + summaries) --------------------------------- */
+.report-detail {
+    padding: 1.1rem 1.15rem;
+    overflow: auto;
+}
+
+.report-empty-state {
+    color: var(--rc-muted);
+    min-height: 12rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.report-empty-state__spinner {
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 50%;
+    border: 3px solid var(--rc-border-strong);
+    border-top-color: var(--rc-accent);
+    animation: report-spin 0.8s linear infinite;
+}
+
+.dimension-detail { min-height: 100%; }
+
+.dimension-detail h2 {
+    margin: 0;
+    color: var(--rc-text);
+    font-family: var(--rc-font-sans);
+    font-size: clamp(1.2rem, 1.6vw, 1.55rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.verdict-banner {
+    margin-top: 0.95rem;
+    border: 1px solid var(--rc-border);
+    border-left-width: 4px;
+    border-radius: 10px;
+    padding: 0.8rem 0.95rem;
+    background: var(--rc-surface-2);
+}
+
+.verdict-banner--flag { border-left-color: var(--rc-flag); background: var(--rc-flag-bg); }
+.verdict-banner--ok { border-left-color: var(--rc-ok); background: var(--rc-ok-bg); }
+.verdict-banner--warn { border-left-color: var(--rc-warn); background: var(--rc-warn-bg); }
+
+.verdict-banner__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.verdict-banner__label {
+    font-weight: 700;
+    font-size: 0.82rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.verdict-banner--flag .verdict-banner__label { color: var(--rc-flag); }
+.verdict-banner--ok .verdict-banner__label { color: var(--rc-ok); }
+.verdict-banner--warn .verdict-banner__label { color: var(--rc-warn); }
+
+.verdict-banner__body {
+    margin: 0;
+    color: var(--rc-text);
+    line-height: 1.6;
+    font-size: 0.9rem;
+}
+
+.verdict-banner__body p { margin: 0 0 0.7rem; }
+.verdict-banner__body p:last-child { margin-bottom: 0; }
+
+.section-title {
+    margin: 0 0 0.45rem;
+    color: var(--rc-muted);
+    font-size: 0.71rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.7rem;
+    margin-top: 1.1rem;
+}
+
+/* In the Overview right pane the summaries stack vertically so each gets the full
+   pane width — side-by-side made them cramped, narrow columns (now ~50-word each). */
+.summary-grid--pane {
+    margin-top: 0;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+}
+
+.summary-box {
+    background: var(--rc-surface-2);
+    border: 1px solid var(--rc-border);
+    border-radius: 10px;
+    padding: 0.8rem;
+}
+
+.summary-box__text p {
+    margin: 0 0 0.6rem;
+    color: var(--rc-text);
+    line-height: 1.55;
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;   /* long tokens wrap inside the box rather than overflowing (B7) */
+}
+.summary-box__text p:last-child { margin-bottom: 0; }
+
+/* Quotes pane (decision view, right column) --------------------------------- */
+.report-quotes {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.quotes-pane {
+    min-height: 0;
+    overflow: auto;
+    padding: 1rem 1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.quotes-pane__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+}
+
+.quotes-pane__header .section-title { margin: 0; }
+.docs-panel--quotes .docs-panel__head .section-title { margin: 0; }
+
+.evidence-limit-note {
+    margin: -0.2rem 0 0;
+    color: var(--rc-faint);
+    font-size: 0.73rem;
+    line-height: 1.4;
+    max-width: 34ch;
+}
+
+.evidence-limit-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 0 0 auto;
+}
+.evidence-limit-control__label {
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--rc-muted);
+    white-space: nowrap;
+}
+.evidence-limit-select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    font-size: 0.78rem;
+    font-weight: 600;
+    border-radius: 7px;
+    padding: 0.26rem 1.5rem 0.26rem 0.55rem;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23aeb6c8' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+}
+.evidence-limit-select:hover { border-color: var(--rc-accent); }
+.evidence-limit-select:focus { outline: none; border-color: var(--rc-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent); }
+.evidence-limit-select option { background: var(--rc-surface-2); color: var(--rc-text); }
+
+.quotes-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.9rem;
+    align-items: start;
+}
+
+.evidence-column__title {
+    margin: 0 0 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.evidence-column__title--reg { color: var(--report-reg-ink); }
+.evidence-column__title--paper { color: var(--report-paper-ink); }
+
+.evidence-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.evidence-empty {
+    color: var(--rc-faint);
+    font-size: 0.82rem;
+    padding: 0.4rem 0.2rem;
+}
+
+.evidence-card {
+    width: 100%;
+    border: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    border-radius: 10px;
+    padding: 0.7rem 0.75rem;
+    color: var(--rc-text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+
+.evidence-card:hover {
+    border-color: var(--rc-border-strong);
+    background: var(--rc-surface-3);
+    transform: translateY(-1px);
+}
+
+/* Active quote card — the one the current document highlight maps to. Persistent
+   accent so it's clear which card a clicked passage refers to (reverse tracing),
+   plus a brief flash so it visibly "lights up" on arrival. */
+/* Active card echoes its doc colour: preregistration = blue, paper = amber. */
+.evidence-card { --card-accent: var(--rc-accent); }
+.evidence-card--ppr { --card-accent: #e0a400; }
+.evidence-card.is-active {
+    border-color: var(--card-accent);
+    background: color-mix(in srgb, var(--card-accent) 14%, var(--rc-surface-2));
+}
+@keyframes evidence-card-flash {
+    0%   { box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 70%, transparent); }
+    100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 0%, transparent); }
+}
+.evidence-card.is-flash { animation: evidence-card-flash 0.9s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+    .evidence-card.is-flash { animation: none; }
+}
+
+.evidence-card.is-disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.evidence-card.is-disabled:hover {
+    transform: none;
+    background: var(--rc-surface-2);
+    border-color: var(--rc-border);
+}
+
+.evidence-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.evidence-card__id {
+    color: var(--rc-faint);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.evidence-card__score {
+    flex: 0 0 auto;
+    font-family: var(--rc-font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--rc-accent-strong);
+    font-variant-numeric: tabular-nums;
+}
+
+.evidence-card__text {
+    display: block;
+    color: var(--rc-text);
+    font-size: 0.84rem;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 5;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.evidence-card__cue {
+    display: block;
+    margin-top: 0.5rem;
+    color: var(--rc-accent-strong);
+    font-size: 0.72rem;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.14s ease;
+}
+
+.evidence-card:hover .evidence-card__cue {
+    opacity: 1;
+}
+
+/* Quote cards tinted by role: registration light blue, paper light yellow. */
+.evidence-card--reg { background: var(--report-reg-bg); border-color: rgba(123, 160, 220, 0.30); }
+.evidence-card--ppr { background: var(--report-paper-bg); border-color: rgba(244, 222, 120, 0.32); }
+.evidence-card--reg:hover { background: var(--report-reg-bg-hover); border-color: rgba(123, 160, 220, 0.55); }
+.evidence-card--ppr:hover { background: var(--report-paper-bg-hover); border-color: rgba(244, 222, 120, 0.55); }
+
+/* Clickable quote references inside the deviation text (PREREG_/PAPER_). */
+.quote-ref {
+    border: 1px solid transparent;
+    background: var(--report-reg-bg);
+    color: var(--report-reg-ink);
+    font-family: var(--rc-font-mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    padding: 0.02em 0.32em;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.14s ease, background 0.14s ease;
+}
+.quote-ref[data-quote-ref^="PAPER"] { background: var(--report-paper-bg); color: var(--report-paper-ink); }
+.quote-ref:hover,
+.quote-ref:focus-visible { border-color: currentColor; outline: none; }
+
+/* Inline quote callout (clicking a reference shows the quote in place). */
+.quote-callout {
+    position: fixed;
+    z-index: 1080;
+    max-width: 360px;
+    max-height: 50vh;
+    overflow: hidden;   /* the inner __text is the scroll region (head/footer stay put) */
+    background: var(--rc-panel);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: 10px;
+    box-shadow: var(--rc-shadow-lg);
+    padding: 0.7rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.quote-callout--reg { border-top: 3px solid var(--report-reg-ink); }
+.quote-callout--ppr { border-top: 3px solid var(--report-paper-ink); }
+.quote-callout__head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.quote-callout__id {
+    font-family: var(--rc-font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+.quote-callout__id--reg { color: var(--report-reg-ink); }
+.quote-callout__id--ppr { color: var(--report-paper-ink); }
+.quote-callout__close {
+    border: none;
+    background: transparent;
+    color: var(--rc-muted);
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.15rem;
+}
+.quote-callout__close:hover { color: var(--rc-text); }
+.quote-callout__text {
+    color: var(--rc-text);
+    font-size: 0.86rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    flex: 1 1 auto;
+    min-height: 0;          /* allow the flex child to shrink so it can scroll */
+    overflow-y: auto;
+    overscroll-behavior: contain;   /* don't chain scroll to the page underneath */
+}
+.quote-callout__open {
+    align-self: flex-start;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    border-radius: 7px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: border-color 0.14s ease, color 0.14s ease;
+}
+.quote-callout__open:hover { border-color: var(--rc-accent); color: var(--rc-accent); }
+
+/* Read-only "View settings" popover (anchored under the top-bar gear button). */
+.report-settings-popover {
+    position: fixed;
+    z-index: 1080;
+    width: 380px;
+    max-width: calc(100vw - 16px);
+    max-height: 70vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--rc-panel);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: 10px;
+    box-shadow: var(--rc-shadow-lg);
+    padding: 0.7rem 0.85rem 0.8rem;
+}
+.report-settings-popover__head {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--rc-muted);
+    margin-bottom: 0.55rem;
+}
+.report-settings-popover__list { margin: 0; }
+.report-settings-popover__row {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 0.4rem 0.7rem;
+    padding: 0.32rem 0;
+    align-items: baseline;
+}
+.report-settings-popover__row + .report-settings-popover__row { border-top: 1px solid var(--rc-border); }
+.report-settings-popover__row dt {
+    font-size: 0.78rem;
+    color: var(--rc-muted);
+}
+.report-settings-popover__row dd {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--rc-text);
+    overflow-wrap: anywhere;
+}
+
+/* Documents view (step 2) --------------------------------------------------- */
+.report-view--documents {
+    display: flex;
+    flex-direction: column;
+    background: var(--rc-surface);
+    border: 1px solid var(--rc-border);
+    border-radius: var(--rc-radius);
+    box-shadow: var(--rc-shadow-md);
+    overflow: hidden;
+}
+
+.docs-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.7rem 0.95rem;
+    border-bottom: 1px solid var(--rc-border);
+}
+
+.docs-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    color: var(--rc-text);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.32rem 0.75rem 0.32rem 0.55rem;
+    cursor: pointer;
+    transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.docs-back:hover {
+    border-color: var(--rc-accent);
+    background: var(--rc-surface-3);
+}
+
+/* Dimension switcher (a styled <select>) — jump between dimensions in the Evidence view. */
+.docs-bar__dim {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--rc-text);
+    min-width: 0;
+    max-width: min(42vw, 26rem);
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--rc-border-strong);
+    background: var(--rc-surface-2);
+    border-radius: 8px;
+    padding: 0.34rem 1.9rem 0.34rem 0.7rem;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23aeb6c8' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.65rem center;
+    transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+.docs-bar__dim:hover { border-color: var(--rc-accent); }
+.docs-bar__dim:focus { outline: none; border-color: var(--rc-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent); }
+.docs-bar__dim option { background: var(--rc-surface-2); color: var(--rc-text); }
+
+.docs-bar .judgement-chip { margin-left: auto; }
+
+/* Three-panel body: registration | quotes | paper. */
+.docs-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    overflow: hidden;
+}
+
+.docs-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.docs-panel__head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.6rem 0.8rem;
+    border-bottom: 1px solid var(--rc-border);
+}
+
+.docs-tag {
+    font-family: var(--rc-font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.docs-tag--reg { color: var(--report-reg-ink); }
+.docs-tag--ppr { color: var(--report-paper-ink); }
+
+/* Per-panel viewer toolbar — a slim, inline bar like a standard PDF viewer. */
+.docs-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--rc-border);
+    background: var(--rc-surface-2);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.docs-toolbar::-webkit-scrollbar { display: none; }
+.docs-toolbar:empty { display: none; }
+.docs-tb__grp { display: inline-flex; align-items: center; gap: 0.1rem; flex: 0 0 auto; }
+.docs-tb__sep { width: 1px; align-self: stretch; margin: 0.15rem 0.15rem; background: var(--rc-border); flex: 0 0 auto; }
+.docs-tb__spacer { flex: 1 1 auto; }
+.docs-tb__btn {
+    border: none; background: none; color: var(--rc-muted);
+    border-radius: 5px; min-width: 1.5rem; height: 1.5rem; padding: 0 0.3rem;
+    font-size: 0.95rem; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.12s ease, background 0.12s ease;
+}
+.docs-tb__btn:hover { color: var(--rc-text); background: var(--rc-surface-3); }
+.docs-tb__icon { color: var(--rc-faint); flex: 0 0 auto; margin-right: 0.1rem; }
+.docs-tb__page, .docs-zoom__pct {
+    font-family: var(--rc-font-mono); font-size: 0.72rem; color: var(--rc-text);
+    min-width: 2.6rem; text-align: center; font-variant-numeric: tabular-nums;
+}
+.docs-tb__page-sep { color: var(--rc-faint); margin: 0 0.15rem; }
+.docs-tb__search {
+    flex: 1 1 auto; min-width: 0;
+    border: 1px solid var(--rc-border); border-radius: 6px;
+    background: var(--rc-surface-2); transition: border-color 0.12s, box-shadow 0.12s;
+}
+.docs-tb__search:focus-within {
+    border-color: var(--rc-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent) 30%, transparent);
+}
+.docs-search__input {
+    flex: 1 1 5rem; min-width: 0; background: transparent; border: none;
+    color: var(--rc-text); padding: 0.3rem 0.5rem; font-size: 0.78rem; height: 1.7rem; outline: none; cursor: text;
+}
+.docs-search__input::placeholder { color: var(--rc-faint); }
+.docs-search__count { font-family: var(--rc-font-mono); font-size: 0.68rem; color: var(--rc-faint); min-width: 2rem; text-align: center; }
+.docs-tb__seg-group { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--rc-border); border-radius: 6px; overflow: hidden; }
+.docs-tb__seg {
+    border: none; background: none; color: var(--rc-muted);
+    font-size: 0.72rem; font-weight: 600; padding: 0.25rem 0.55rem; cursor: pointer; line-height: 1;
+}
+.docs-tb__seg + .docs-tb__seg { border-left: 1px solid var(--rc-border); }
+.docs-tb__seg.is-active { background: var(--rc-accent); color: #fff; }
+.docs-tb__seg:not(.is-active):hover { background: var(--rc-surface-3); color: var(--rc-text); }
+
+/* Zoom scales page width / text size via --doc-zoom on the scroll container. The width
+   is anchored to a fixed base (captured once at render), NOT the live pane width, so
+   resizing panes does not rescale the document — only the zoom control does. */
+.docs-panel__scroll .pdf-stage { width: calc(var(--doc-base-width, 100%) * var(--doc-zoom, 1)); max-width: none; }
+.docs-panel__scroll .source-text { font-size: calc(0.9rem * var(--doc-zoom, 1)); }
+
+/* In-document search highlights (CSS Custom Highlight API; text mode). */
+::highlight(rc-search-reg), ::highlight(rc-search-ppr) { background-color: rgba(251, 224, 138, 0.45); }
+::highlight(rc-search-active-reg), ::highlight(rc-search-active-ppr) { background-color: #fbe08a; color: #2a2300; }
+
+/* Download menu (CSV / PDF) anchored under the Download button. */
+.report-download-menu {
+    position: fixed;
+    z-index: 1090;
+    min-width: 13rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.3rem;
+    background: var(--rc-surface);
+    border: 1px solid var(--rc-border-strong);
+    border-radius: var(--rc-radius-sm);
+    box-shadow: var(--rc-shadow-md);
+}
+.report-download-menu button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    border: none;
+    background: none;
+    color: var(--rc-text);
+    text-align: left;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.report-download-menu button:hover { background: var(--rc-surface-3); }
+.report-download-menu__hint {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 14%, transparent);
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+}
+
+/* Document fallback state (page render + text extraction both failed). */
+.source-placeholder--fallback {
+    flex-direction: column;
+    gap: 0.7rem;
+    padding: 1.5rem;
+    line-height: 1.5;
+}
+.source-placeholder--fallback p { margin: 0; max-width: 28ch; }
+.source-raw-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--rc-border-strong);
+    border-radius: var(--rc-radius-sm);
+    color: var(--rc-accent-strong);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+}
+.source-raw-link:hover { border-color: var(--rc-accent); color: var(--rc-accent); background: var(--rc-surface-2); }
+.source-rerun-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--rc-accent);
+    border-radius: var(--rc-radius-sm);
+    background: var(--rc-accent);
+    color: #ffffff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-decoration: none;
+}
+.source-rerun-btn:hover { background: var(--rc-accent-strong); border-color: var(--rc-accent-strong); color: #ffffff; }
+
+.docs-panel__scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 0.85rem;
+}
+
+.docs-panel--doc .docs-panel__scroll {
+    background: #0b0d14;
+}
+
+.docs-panel--quotes .docs-panel__scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.source-placeholder {
+    color: var(--rc-faint);
+    min-height: 8rem;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.pdf-stage {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 auto 0.7rem;
+}
+
+.pdf-stage img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+    background: var(--report-pdf-bg);
+}
+
+.pdf-highlight {
+    position: absolute;
+    background: var(--report-highlight-soft);
+    border: 1px solid rgba(251, 191, 36, 0.7);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.pdf-highlight--reg {
+    background: rgba(var(--doc-reg-rgb), 0.34);
+    border-color: rgba(var(--doc-reg-rgb), 0.85);
+}
+
+/* Active highlight echoes the doc colour: paper = amber, preregistration = blue. */
+.pdf-highlight.is-active {
+    box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.95), 0 0 16px rgba(251, 191, 36, 0.55);
+}
+.pdf-highlight--reg.is-active {
+    box-shadow: 0 0 0 1px var(--rc-accent), 0 0 16px rgba(58, 91, 192, 0.5);
+}
+
+/* Page-level fallback marker for quotes whose exact rects are unavailable. */
+.pdf-page-flag {
+    position: absolute;
+    right: 0.55rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-family: var(--rc-font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    box-shadow: var(--rc-shadow-sm);
+    z-index: 3;
+}
+
+.pdf-page-flag--reg { background: #A9C5EC; color: #0d1426; }
+.pdf-page-flag--ppr { background: var(--report-highlight); color: #2a2300; }
+
+.pdf-page-flag.is-active {
+    box-shadow: 0 0 0 1px var(--rc-accent), var(--rc-shadow-sm);
+}
+
+/* Quote cards that could not be anchored in the rendered documents. */
+.evidence-card.is-unlocated .evidence-card__id::after {
+    content: " · not located";
+    color: var(--rc-faint);
+    font-weight: 400;
+    text-transform: none;
+}
+
+.source-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;   /* long tokens (URLs, IDs) wrap instead of overflowing the box (B7) */
+    color: #1a1a1a;
+    background: #ffffff;
+    border: 1px solid #d0d0d8;
+    border-radius: 10px;
+    padding: 0.95rem;
+    line-height: 1.7;
+    font-size: 0.9rem;
+}
+
+/* Document highlights — paper amber, registration blue. Active one emphasised. */
+.source-text mark {
+    color: #2a2300;
+    background: var(--report-highlight);
+    padding: 0.05rem 0.12rem;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.source-text.is-reg mark {
+    color: #0d1426;
+    background: #A9C5EC;
+}
+
+/* Clicked quote intensifies its doc colour: paper → stronger yellow, prereg → blue. */
+.source-text mark.is-active {
+    background: #ffd24a;
+    box-shadow: 0 0 0 2px rgba(214, 145, 0, 0.95);
+}
+.source-text.is-reg mark.is-active {
+    background: #8FBAF0;
+    box-shadow: 0 0 0 2px var(--rc-accent);
+}
+
+/* Zero-width locatable anchor for a quote whose span sits entirely inside another
+   quote's highlight (overlapping chunks). Invisible, but carries id=docmark-<id>
+   so the quote reference is still clickable and scrolls to the right region. */
+.source-text .doc-anchor {
+    display: inline;
+    font-size: 0;
+    line-height: 0;
+    scroll-margin: 35vh 0;
+}
+
+/* Toast --------------------------------------------------------------------- */
+.report-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.4rem;
+    transform: translate(-50%, 1.5rem);
+    background: var(--rc-surface-3);
+    border: 1px solid var(--rc-border-strong);
+    color: var(--rc-text);
+    padding: 0.65rem 1.1rem;
+    border-radius: 999px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    box-shadow: var(--rc-shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 80;
+}
+
+.report-toast.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.d-none { display: none !important; }
+
+/* Responsive ---------------------------------------------------------------- */
+@media (max-width: 860px) {
+    .report-shell {
+        padding: 0.55rem;
+        height: auto;
+        min-height: 100dvh;
+        overflow: visible;
+    }
+    .report-page { overflow: visible; }
+    .report-workspace { overflow: visible; }
+
+    .report-topbar {
+        align-items: flex-start;
+        gap: 0.6rem;
+        margin-top: 0.6rem;
+    }
+
+    .report-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .report-action-btn { width: 100%; }
+
+    /* Stack the resizable panels (overriding the inline flex/min-width). */
+    .report-view--decision,
+    .docs-body {
+        flex-direction: column;
+        overflow: visible;
+    }
+
+    .report-view--decision > .report-dimension-rail,
+    .report-view--decision > .report-detail,
+    .report-view--decision > .report-quotes,
+    .docs-body > .docs-panel {
+        flex: 0 0 auto !important;
+        min-width: 0 !important;
+        width: 100% !important;
+    }
+
+    .report-splitter { display: none !important; }
+
+    .report-dimension-rail { max-height: 12rem; }
+
+    .dimension-list {
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 0 0 0.2rem;
+    }
+
+    .dimension-card { flex: 0 0 min(15rem, 80vw); }
+
+    .summary-grid,
+    .quotes-grid { grid-template-columns: 1fr; }
+
+    .docs-panel__scroll { max-height: 62vh; }
+    .docs-panel--quotes .docs-panel__scroll { max-height: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .report-status-pill.is-running .report-status-pill__dot,
+    .report-empty-state__spinner,
+    .report-log__spinner {
+        animation: none;
+    }
+
+    .evidence-card,
+    .dimension-card,
+    .report-action-btn,
+    .report-toast,
+    .docs-back,
+    .report-splitter {
+        transition: none;
+    }
+}
+
+/* small uppercase labels — Spline Sans Mono */
+.report-log__head,
+.rail-heading,
+.section-title,
+.evidence-column__title,
+.evidence-card__id {
+    font-family: var(--rc-font-mono);
+}
+
+
+/* Live model-cost estimate beside the status pill. */
+.report-cost-line {
+    color: var(--rc-muted);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}

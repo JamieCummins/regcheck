@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import IO, Optional
 
@@ -12,15 +13,37 @@ class S3Config:
     region: str | None
 
 
-def get_s3_config() -> S3Config | None:
-    bucket = (os.environ.get("S3_BUCKET") or "").strip()
+def _s3_region() -> str | None:
+    return (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip() or None
+
+
+def s3_config_for_bucket(bucket: str | None) -> S3Config | None:
+    """An S3Config for an explicit bucket (used to read/delete an artifact from
+    whichever bucket it was written to)."""
+    bucket = (bucket or "").strip()
     if not bucket:
         return None
-    region = (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip() or None
-    return S3Config(bucket=bucket, region=region)
+    return S3Config(bucket=bucket, region=_s3_region())
 
 
+def get_s3_config() -> S3Config | None:
+    """Default ("temp") bucket: the transient upload hand-off and anonymous
+    report files (which auto-expire). Resolves S3_TEMP_BUCKET, falling back to
+    S3_BUCKET so a single-bucket deployment keeps working unchanged."""
+    return s3_config_for_bucket(os.environ.get("S3_TEMP_BUCKET") or os.environ.get("S3_BUCKET"))
+
+
+def get_persist_s3_config() -> S3Config | None:
+    """Persistent bucket: signed-in users' report files, kept until deletion.
+    Resolves S3_PERSIST_BUCKET, falling back to S3_BUCKET (single-bucket setup)."""
+    return s3_config_for_bucket(os.environ.get("S3_PERSIST_BUCKET") or os.environ.get("S3_BUCKET"))
+
+
+@lru_cache(maxsize=4)
 def _s3_client(region: str | None):
+    # Cached per region: boto3 clients are thread-safe and creating one is
+    # non-trivial (session + endpoint + credential resolution), so a worker
+    # touching several keys reuses one client instead of rebuilding it each call.
     import boto3
 
     kwargs = {}
@@ -46,6 +69,33 @@ def s3_upload_fileobj(
         client.upload_fileobj(fileobj, cfg.bucket, key)
 
 
+def s3_put_bytes(
+    cfg: S3Config,
+    *,
+    key: str,
+    data: bytes,
+    content_type: str | None = None,
+) -> None:
+    client = _s3_client(cfg.region)
+    kwargs = {}
+    if content_type:
+        kwargs["ContentType"] = content_type
+    client.put_object(Bucket=cfg.bucket, Key=key, Body=data, **kwargs)
+
+
+def s3_get_bytes(cfg: S3Config, *, key: str) -> bytes:
+    client = _s3_client(cfg.region)
+    response = client.get_object(Bucket=cfg.bucket, Key=key)
+    body = response["Body"]
+    try:
+        return body.read()
+    finally:
+        try:
+            body.close()
+        except Exception:
+            pass
+
+
 def s3_download_to_path(cfg: S3Config, *, key: str, path: str) -> None:
     client = _s3_client(cfg.region)
     target = Path(path)
@@ -56,6 +106,22 @@ def s3_download_to_path(cfg: S3Config, *, key: str, path: str) -> None:
 def s3_delete_key(cfg: S3Config, *, key: str) -> None:
     client = _s3_client(cfg.region)
     client.delete_object(Bucket=cfg.bucket, Key=key)
+
+
+def s3_copy_object(src: S3Config, dst: S3Config, *, key: str) -> None:
+    """Server-side copy of ``key`` from ``src`` bucket to ``dst`` bucket (same key).
+
+    Used when an anonymous report is claimed on login: its evidence is moved from
+    the temp (auto-expiring) bucket to the persistent one. Server-side copy avoids
+    round-tripping the bytes through the dyno and preserves content-type/metadata.
+    """
+    client = _s3_client(dst.region or src.region)
+    client.copy_object(
+        Bucket=dst.bucket,
+        Key=key,
+        CopySource={"Bucket": src.bucket, "Key": key},
+        MetadataDirective="COPY",
+    )
 
 
 def guess_content_type(path: str) -> Optional[str]:
@@ -69,4 +135,3 @@ def guess_content_type(path: str) -> Optional[str]:
     if suffix == ".csv":
         return "text/csv"
     return None
-
