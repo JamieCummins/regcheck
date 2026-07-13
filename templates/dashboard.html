@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta name="robots" content="noindex,nofollow">
+    <title>My reports · {{ brand_name }}</title>
+    <style>
+      .reports-main { flex: 1; width: min(960px, 100%); margin: 0 auto; padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem; text-align: left; }
+      .reports-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.4rem; }
+      .reports-head h1 { font-size: clamp(1.6rem, 2.6vw, 2.1rem); margin: 0; }
+      .reports-empty { color: var(--rc-muted); background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: var(--rc-radius); padding: 2rem; text-align: center; }
+      .reports-empty a { color: var(--rc-accent-strong); }
+      .report-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; background: var(--rc-surface); border: 1px solid var(--rc-border); border-radius: var(--rc-radius); padding: 0.9rem 1.1rem; margin-bottom: 0.7rem; }
+      .report-row__main { min-width: 0; flex: 1 1 18rem; }
+      .report-row__title { color: var(--rc-text); font-weight: 600; font-size: 1.02rem; text-decoration: none; }
+      .report-row__title:hover { color: var(--rc-accent-strong); }
+      .report-row__meta { color: var(--rc-faint); font-size: 0.78rem; margin-top: 0.25rem; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+      .vis-badge { border-radius: 999px; padding: 0.1rem 0.5rem; font-weight: 600; font-size: 0.7rem; border: 1px solid var(--rc-border); }
+      .vis-badge--public { color: var(--rc-ok); background: var(--rc-ok-bg); border-color: var(--rc-ok-border); }
+      .vis-badge--private { color: var(--rc-muted); background: var(--rc-surface-2); }
+      .report-row__actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+      .row-btn { border: 1px solid var(--rc-border); background: var(--rc-surface-2); color: var(--rc-text); border-radius: 8px; padding: 0.35rem 0.7rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+      .row-btn:hover { border-color: var(--rc-border-strong); background: var(--rc-surface-3); }
+      .row-btn--danger { color: var(--rc-flag); }
+      .row-btn--danger:hover { color: #fff; background: var(--rc-flag); border-color: var(--rc-flag); }
+      .reports-cta { display: inline-flex; align-items: center; gap: 0.4rem; background: var(--rc-accent); color: #fff; border-radius: 9px; padding: 0.5rem 1rem; font-weight: 600; text-decoration: none; }
+      .reports-cta:hover { background: var(--rc-accent-hover); }
+    </style>
+</head>
+{% set nav_active = 'reports' %}
+<body class="text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+    <header class="mb-auto">{% include '_partials/navbar.html' %}</header>
+    <main class="reports-main">
+      <div class="reports-head">
+        <h1>My reports</h1>
+        <a class="reports-cta" href="{{ url_for('compare') }}">New comparison</a>
+      </div>
+
+      {% if not reports %}
+      <div class="reports-empty">
+        <p>You haven't generated any reports yet.</p>
+        <p><a href="{{ url_for('compare') }}">Run your first comparison &rsaquo;</a></p>
+      </div>
+      {% else %}
+      <div id="reports-list">
+        {% for r in reports %}
+        <div class="report-row" data-task="{{ r.task_id }}">
+          <div class="report-row__main">
+            <a class="report-row__title" href="{{ url_for('result', task_id=r.task_id) }}">{{ r.title or 'Untitled report' }}</a>
+            <div class="report-row__meta">
+              <span>{{ r.created_at.strftime('%d %b %Y') }}</span>
+              {% if r.comparison_type %}<span>· {{ r.comparison_type.replace('_', ' ') }}</span>{% endif %}
+              <span class="vis-badge vis-badge--{{ 'public' if r.visibility == 'public' else 'private' }}" data-vis-badge>{{ 'Public' if r.visibility == 'public' else 'Private' }}</span>
+            </div>
+          </div>
+          <div class="report-row__actions">
+            <a class="row-btn" href="{{ url_for('result', task_id=r.task_id) }}">Open</a>
+            <button type="button" class="row-btn" data-act="rename">Rename</button>
+            <button type="button" class="row-btn" data-act="visibility" data-vis="{{ r.visibility }}">{{ 'Make private' if r.visibility == 'public' else 'Make public' }}</button>
+            <button type="button" class="row-btn row-btn--danger" data-act="delete">Delete</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </main>
+    {% include '_partials/footer.html' %}
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+  <script>
+    (() => {
+      async function post(path, params) {
+        const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) });
+        if (!res.ok) throw new Error("failed");
+        return res.json();
+      }
+      document.querySelectorAll(".report-row").forEach((row) => {
+        const taskId = row.dataset.task;
+        const titleEl = row.querySelector(".report-row__title");
+        const badge = row.querySelector("[data-vis-badge]");
+        row.querySelectorAll("[data-act]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const act = btn.dataset.act;
+            if (act === "rename") {
+              const next = window.prompt("Rename report", titleEl.textContent.trim());
+              if (next === null || !next.trim()) return;
+              post(`/reports/${encodeURIComponent(taskId)}/rename`, { title: next.trim() })
+                .then((d) => { titleEl.textContent = d.title; })
+                .catch(() => alert("Could not rename report."));
+            } else if (act === "visibility") {
+              const next = btn.dataset.vis === "public" ? "private" : "public";
+              post(`/reports/${encodeURIComponent(taskId)}/visibility`, { visibility: next })
+                .then((d) => {
+                  btn.dataset.vis = d.visibility;
+                  btn.textContent = d.visibility === "public" ? "Make private" : "Make public";
+                  if (badge) { badge.textContent = d.visibility === "public" ? "Public" : "Private"; badge.className = "vis-badge vis-badge--" + (d.visibility === "public" ? "public" : "private"); }
+                })
+                .catch(() => alert("Could not update visibility."));
+            } else if (act === "delete") {
+              if (!window.confirm("Delete this report permanently? This cannot be undone.")) return;
+              post(`/reports/${encodeURIComponent(taskId)}/delete`, {})
+                .then(() => { row.remove(); })
+                .catch(() => alert("Could not delete report."));
+            }
+          });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

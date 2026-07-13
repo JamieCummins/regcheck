@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import logging
@@ -91,8 +92,16 @@ def _fallback_chain() -> list[str]:
 
     Priority:
     - If PDF_PARSER_FALLBACKS is set, use its comma-separated values.
-    - Otherwise, if SCANNED_PDF_FALLBACK is set, use that single legacy fallback.
-    - Otherwise, default to ["dpt2", "pymupdf"].
+    - Otherwise, if SCANNED_PDF_FALLBACK is set, use that legacy fallback.
+    - Otherwise, default to ["pymupdf"] — LOCAL extraction only. A document is
+      never sent to an external parsing service (DPT2 OCR) unless the user picked
+      that parser or the deployment explicitly configured it as a fallback via
+      one of the two env vars above; when it runs, the status feed and the
+      report's settings disclose the parser actually used.
+
+    Any configured chain that tries DPT2 also tries PyMuPDF afterward. This keeps
+    legacy Heroku configs such as SCANNED_PDF_FALLBACK=dpt2 from failing the
+    whole report when DPT2 rejects the request but selectable PDF text is present.
     """
     env_chain = os.environ.get("PDF_PARSER_FALLBACKS")
     if env_chain is not None:
@@ -106,10 +115,16 @@ def _fallback_chain() -> list[str]:
         if legacy == "none":
             raw_items = []
         if env_chain is None and os.environ.get("SCANNED_PDF_FALLBACK") is None:
-            raw_items = ["dpt2", "pymupdf"]
+            raw_items = ["pymupdf"]
 
     allowed = {"dpt2", "pymupdf"}
-    return [item for item in raw_items if item in allowed]
+    chain: list[str] = []
+    for item in raw_items:
+        if item in allowed and item not in chain:
+            chain.append(item)
+    if "dpt2" in chain and "pymupdf" not in chain:
+        chain.append("pymupdf")
+    return chain
 
 
 async def _run_fallback_chain(
@@ -155,20 +170,12 @@ async def _run_fallback_chain(
     raise ValueError("Fallback parsing failed: " + "; ".join(errors))
 
 
-def _extract_pymupdf_text(filename: str) -> str:
-    if fitz is None:  # pragma: no cover - optional dependency
-        raise RuntimeError("PyMuPDF is not installed")
-    from .documents import extract_text_from_pdf
-
-    return extract_text_from_pdf(filename)
-
-
 async def pdf2grobid(
     filename: str,
     grobid_url: str | None = None,
 ) -> str:
     grobid_url = (grobid_url or os.environ.get("GROBID_URL") or "").strip() or (
-        "https://lfoppiano-grobid.hf.space/api/processFulltextDocument"
+        "https://kermitt2-grobid.hf.space/api/processFulltextDocument"
     )
     timeout = httpx.Timeout(60.0, read=60.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -189,7 +196,11 @@ async def pdf2dpt(
     dpt_url = (dpt_url or os.environ.get("DPT_URL") or "").strip() or (
         "https://api.va.eu-west-1.landing.ai/v1/ade/parse"
     )
-    headers = {"Authorization": api_key}
+    # landing.ai requires an auth scheme; a bare token is rejected ("Authorization
+    # header should start with 'Basic ' or 'Bearer '"). Accept a key that already
+    # carries a scheme (don't double-prefix); otherwise add Bearer (PAT default).
+    auth_value = api_key if api_key.lower().startswith(("bearer ", "basic ")) else f"Bearer {api_key}"
+    headers = {"Authorization": auth_value}
     data = {"model": "dpt-2-latest"}
     timeout_seconds = float(os.environ.get("DPT_TIMEOUT_SECONDS", "240") or 240)
     timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
@@ -242,13 +253,108 @@ def extract_dpt_text(payload: Any) -> str:
         return str(payload)
 
 
+async def pdf2external(
+    filename: str,
+    service_url: str | None = None,
+) -> dict[str, Any]:
+    """Send a PDF to an optional external structured-parsing HTTP service and
+    return its JSON. The service runs its own extraction; we only call its HTTP
+    API (`POST /papers/extract`, multipart `file`), mirroring the GROBID/DPT clients."""
+    base = (service_url or os.environ.get("EXTERNAL_PARSER_URL") or "").strip()
+    if not base:
+        raise RuntimeError("Missing EXTERNAL_PARSER_URL (external parser is not configured)")
+    endpoint = base.rstrip("/")
+    if not endpoint.endswith("/papers/extract"):
+        endpoint = f"{endpoint}/papers/extract"
+    api_key = (os.environ.get("EXTERNAL_PARSER_API_KEY") or "").strip()
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    timeout_seconds = float(os.environ.get("EXTERNAL_PARSER_TIMEOUT_SECONDS", "300") or 300)
+    timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            with open(filename, "rb") as document:
+                files = {"file": (os.path.basename(filename), document, "application/pdf")}
+                response = await client.post(endpoint, headers=headers, files=files)
+    except httpx.ReadTimeout as exc:
+        raise RuntimeError("External parser timed out; please retry or use another parser") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"External parser failed: {exc}") from exc
+    response.raise_for_status()
+    return response.json()
+
+
+def extract_external_text(payload: Any) -> str:
+    """Reconstruct readable full text from an external parser's JSON export.
+
+    Joins the `text` segments in order, grouping by paragraph and inserting each
+    section's header, so the comparison model sees structured prose."""
+    if not isinstance(payload, dict):
+        return ""
+    headers: dict[Any, str] = {}
+    for section in payload.get("section") or []:
+        if isinstance(section, dict) and section.get("section_id") is not None:
+            headers[section.get("section_id")] = (section.get("header") or "").strip()
+
+    blocks: list[str] = []
+    para_buf: list[str] = []
+    cur_section: Any = object()
+    cur_para: Any = object()
+
+    def _flush() -> None:
+        if para_buf:
+            blocks.append(" ".join(para_buf))
+            para_buf.clear()
+
+    for row in payload.get("text") or []:
+        if not isinstance(row, dict):
+            continue
+        seg = (row.get("text") or "").strip()
+        if not seg:
+            continue
+        section_id = row.get("section_id")
+        paragraph_id = row.get("paragraph_id")
+        if section_id != cur_section:
+            _flush()
+            cur_section = section_id
+            cur_para = object()
+            head = headers.get(section_id)
+            if head:
+                blocks.append(head)
+        if paragraph_id != cur_para:
+            _flush()
+            cur_para = paragraph_id
+        para_buf.append(seg)
+    _flush()
+
+    text = "\n\n".join(block for block in blocks if block.strip()).strip()
+    if text:
+        return text
+    # Fallback to whatever scalar text the export carries.
+    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+    parts = [str(info.get("title") or "").strip(), str(info.get("abstract") or "").strip()]
+    return "\n\n".join(part for part in parts if part).strip()
+
+
 def extract_body_text(xml_content: str) -> str:
     namespace = {"tei": "http://www.tei-c.org/ns/1.0"}
     root = ET.fromstring(xml_content)
     body = root.find(".//tei:body", namespace)
-    if body is not None:
-        return "".join(body.itertext()).strip()
-    return "Body tag not found."
+    if body is None:
+        return "Body tag not found."
+    # Emit each TEI heading (<head>) and paragraph (<p>) on its own line so section
+    # headings stay line-separated (GROBID TEI has no inline whitespace between
+    # <head> and <p>, which would otherwise glue "Method" onto the next paragraph and
+    # defeat boundary-aware chunking). Falls back to flat itertext for atypical TEI.
+    lines: list[str] = []
+    for el in body.iter():
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag in ("head", "p"):
+            txt = " ".join("".join(el.itertext()).split())
+            if txt:
+                lines.append(txt)
+    if lines:
+        return "\n".join(lines).strip()
+    return "".join(body.itertext()).strip()
 
 
 async def extract_pdf_text(
@@ -257,27 +363,62 @@ async def extract_pdf_text(
     parser_choice: str = "grobid",
     pdf_parser: Any | None = None,
     dpt_parser: Any | None = None,
+    external_parser: Any | None = None,
 ) -> tuple[str, str]:
     """Extract paper text from PDF; optionally fall back for scanned PDFs.
 
     Returns (extracted_text, used_parser_label).
     """
     normalized = (parser_choice or "grobid").strip().lower()
-    if normalized not in {"grobid", "dpt2", "pymupdf"}:
+    if normalized not in {"grobid", "dpt2", "pymupdf", "external"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
     fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
 
     if normalized == "pymupdf":
+        # In-process extraction (PyMuPDF / fitz): no external service, and it
+        # keeps all selectable text — including author notes and footnotes.
+        if fitz is None:  # pragma: no cover - optional dependency
+            if fallback_chain:
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise ValueError("PyMuPDF (fitz) is not installed.")
         try:
-            extracted = _extract_pymupdf_text(filename)
-            if not _has_usable_text(extracted):
-                raise ValueError("Parsed PDF but extracted no usable text (PyMuPDF).")
-            return extracted, "pymupdf"
+            from .documents import extract_text_from_pdf as _pymupdf_extract
+
+            extracted = await asyncio.to_thread(_pymupdf_extract, filename)
         except Exception as exc:
             if fallback_chain:
                 logger.warning(
                     "PyMuPDF parsing failed; attempting fallbacks",
+                    extra={"pdf_path": filename, "error": str(exc)},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise
+        if not _has_usable_text(extracted):
+            if is_likely_scanned_pdf(filename) and fallback_chain:
+                logger.info(
+                    "Scanned PDF detected (PyMuPDF); attempting fallbacks",
+                    extra={"pdf_path": filename},
+                )
+                return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)
+            raise ValueError(
+                "Parsed PDF but extracted no usable text (PyMuPDF). "
+                "If this is a scanned PDF, select the DPT2 parser (OCR)."
+            )
+        return extracted, "pymupdf"
+
+    if normalized == "external":
+        parser_callable = external_parser or pdf2external
+        try:
+            payload = await parser_callable(filename)
+            extracted = extract_external_text(payload)
+            if not _has_usable_text(extracted):
+                raise ValueError("Parsed PDF but extracted no usable text (external parser).")
+            return extracted, "external"
+        except Exception as exc:
+            if fallback_chain:
+                logger.warning(
+                    "External parser failed; attempting fallbacks",
                     extra={"pdf_path": filename, "error": str(exc)},
                 )
                 return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)

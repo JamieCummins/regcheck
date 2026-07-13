@@ -1,0 +1,11 @@
+This registration describes a confirmatory study of the testing effect in foreign-language vocabulary learning. Study type: confirmatory. We state one preregistered hypothesis (H1): participants who practise retrieval of Swahili-English word pairs will show higher cued-recall accuracy after a one-week delay than participants who restudy the same pairs.
+
+Design: a between-subjects experiment with two conditions, retrieval practice and restudy; participants will be randomly assigned to condition by computer.
+
+Sample: an a priori power analysis conducted in G*Power 3.1 (independent-samples t-test, d = 0.50, alpha = .05 two-tailed, power = .90) requires 172 participants. We will recruit exactly 172 adult native English speakers (86 per condition) via Prolific.
+
+Procedure and measures: in a single online session, participants will study 40 Swahili-English word pairs. The retrieval-practice group will then complete three cued-recall practice cycles with corrective feedback; the restudy group will re-view each pair for an equivalent duration. Seven days later, all participants will complete a 40-item cued-recall test in which the Swahili word is presented and the English translation must be typed. The primary outcome is the proportion of correctly recalled English translations on this delayed test.
+
+Analysis plan: H1 will be tested with a Welch two-sample t-test comparing the two conditions on the primary outcome, alpha = .05, two-tailed. We will report Cohen's d with a 95% confidence interval.
+
+Exclusion rule: participants failing more than one of three embedded attention checks will be excluded and replaced.

@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import os
+
 from redis import asyncio as aioredis
+
+
+def _tls_insecure() -> bool:
+    """Opt-OUT of certificate verification for managed Redis providers that ship
+    self-signed per-instance certs (e.g. Heroku Data for Redis). Verification is
+    the DEFAULT; disabling it is an explicit, documented deployment choice
+    (REDIS_TLS_INSECURE=1)."""
+    return (os.environ.get("REDIS_TLS_INSECURE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def create_redis_client(
@@ -21,6 +31,7 @@ def create_redis_client(
         # Keep connections warm to reduce first-request failures after idling.
         "health_check_interval": 30,
     }
-    if redis_url.startswith("rediss://"):
+    if redis_url.startswith("rediss://") and _tls_insecure():
         return aioredis.from_url(redis_url, ssl_cert_reqs=None, **kwargs)
+    # rediss:// without the opt-out gets the library's verified-TLS default.
     return aioredis.from_url(redis_url, **kwargs)

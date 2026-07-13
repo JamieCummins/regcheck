@@ -2,7 +2,52 @@ import pickle
 
 import numpy as np
 
-from backend.services.embeddings import build_corpus, save_embeddings
+import backend.services.embeddings as embeddings
+from backend.services.embeddings import (
+    build_corpus,
+    build_corpus_from_segments,
+    extract_chunks_tokens_with_spans,
+    save_embeddings,
+)
+
+
+def _capture_openai_kwargs(monkeypatch):
+    captured = {}
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", _FakeOpenAI)
+    embeddings._embed_client.cache_clear()
+    return captured
+
+
+def test_embed_client_routes_to_configured_endpoint(monkeypatch):
+    # EMBEDDINGS_BASE_URL/_API_KEY let retrieval embeddings run on a local
+    # OpenAI-compatible provider (e.g. GPUStack) instead of hosted OpenAI.
+    captured = _capture_openai_kwargs(monkeypatch)
+    monkeypatch.setenv("EMBEDDINGS_BASE_URL", "https://gpustack.unibe.ch/v1")
+    monkeypatch.setenv("EMBEDDINGS_API_KEY", "gpustack_test")
+    try:
+        embeddings._embed_client()
+        assert captured["base_url"] == "https://gpustack.unibe.ch/v1"
+        assert captured["api_key"] == "gpustack_test"
+    finally:
+        embeddings._embed_client.cache_clear()
+
+
+def test_embed_client_defaults_to_hosted_openai(monkeypatch):
+    captured = _capture_openai_kwargs(monkeypatch)
+    monkeypatch.delenv("EMBEDDINGS_BASE_URL", raising=False)
+    monkeypatch.delenv("EMBEDDINGS_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    try:
+        embeddings._embed_client()
+        assert captured["base_url"] is None  # hosted OpenAI default
+        assert captured["api_key"] == "sk-openai"
+    finally:
+        embeddings._embed_client.cache_clear()
 
 
 def test_build_corpus_handles_empty_embeddings(tmp_path):
@@ -46,3 +91,76 @@ def test_build_corpus_axis_error_guard(monkeypatch, tmp_path):
     assert corpus.embeddings.shape[0] == 1
     assert corpus.embeddings.shape[1] >= 1
     assert corpus.norms.shape == (1,)
+
+
+def test_extract_chunks_tokens_with_spans_preserves_source_offsets():
+    text = "First sentence. Second sentence with evidence."
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=100)
+
+    assert chunks
+    first = chunks[0]
+    assert text[first.start:first.end] == first.text
+
+
+def test_build_corpus_from_segments_keeps_metadata(monkeypatch):
+    import backend.services.embeddings as emb_mod
+
+    def fake_embed(segments, model="text-embedding-3-large"):
+        return np.ones((len(segments), 3), dtype=np.float32)
+
+    monkeypatch.setattr(emb_mod, "openai_embed_segments", fake_embed)
+
+    corpus = build_corpus_from_segments(
+        ["alpha", "beta"],
+        chunk_prefix="PAPER",
+        metadata=[{"source_id": "paper"}, {"source_id": "paper"}],
+    )
+
+    assert corpus.chunk_ids == ["PAPER_0001", "PAPER_0002"]
+    assert corpus.metadata[0]["source_id"] == "paper"
+    assert corpus.embeddings.shape == (2, 3)
+
+
+def test_boundary_aware_chunking_splits_at_headings():
+    # A methods fact (exclusion/sample size) must not share a chunk with adjacent results.
+    text = (
+        "Method\n"
+        "Participants were recruited via Prolific. Eight participants were excluded for "
+        "failing the attention check, leading to a final sample size of N = 192.\n\n"
+        "## Results\nThe effect was significant, t(190) = 2.30, p = .011.\n"
+    )
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=200)
+    excl = [c.text for c in chunks if "N = 192" in c.text]
+    assert excl, "exclusion fact should be present in some chunk"
+    assert not any("t(190)" in t for t in excl), "exclusion fact must be split from results stats"
+    # Character spans must map back to the source text.
+    for c in chunks:
+        assert c.text.strip() == text[c.start:c.end].strip()
+
+
+def test_chunking_falls_back_without_headings():
+    text = "This is sentence one. This is sentence two. This is sentence three."
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=200)
+    assert len(chunks) == 1  # no headings -> single block -> prior behaviour
+
+
+def test_long_sentence_is_not_split_midway():
+    # A single sentence longer than max_chunk_tokens must stay whole (the chunk flexes past
+    # the limit) rather than being cut mid-sentence.
+    long_sentence = ("alpha " * 80).strip()  # ~80 tokens, no internal sentence terminator
+    text = f"Short start. {long_sentence}. Short finish."
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=20, overlap_tokens=5)
+    assert any(c.text.count("alpha") >= 80 for c in chunks), "long sentence must be kept whole"
+    for c in chunks:
+        assert c.text.strip() == text[c.start:c.end].strip()          # spans map to source
+        assert c.text.rstrip().endswith((".", "!", "?"))              # no mid-sentence cut
+
+
+def test_chunk_overlap_shares_trailing_sentence():
+    text = " ".join(f"This is sentence number {i} with filler to add some length." for i in range(8))
+    chunks = extract_chunks_tokens_with_spans(text, max_chunk_tokens=40, overlap_tokens=14)
+    assert len(chunks) >= 3
+    assert all(b.start < a.end for a, b in zip(chunks, chunks[1:])), "consecutive chunks should overlap"
+    # overlap_tokens=0 -> no overlap (chunks are contiguous, not overlapping)
+    no_ov = extract_chunks_tokens_with_spans(text, max_chunk_tokens=40, overlap_tokens=0)
+    assert all(b.start >= a.end for a, b in zip(no_ov, no_ov[1:]))

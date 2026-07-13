@@ -12,17 +12,26 @@ import asyncio
 import csv
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
+
+from backend.services.llm import DEFAULT_GPUSTACK_BASE_URL
 
 from backend.services.comparisons import (
     animals_trial_comparison,
     clinical_trial_comparison,
     general_preregistration_comparison,
 )
+from backend.services.dimensions import discipline_keys, get_discipline_dimensions
 
 logger = logging.getLogger("backend.cli")
+
+# The web app's built-in discipline presets, surfaced to the CLI via --dimension-set
+# so the same named dimension sets are available everywhere.
+DISCIPLINE_KEYS = discipline_keys()
 
 
 def _load_dimensions_from_csv(csv_path: Path) -> list[dict[str, str]]:
@@ -58,13 +67,77 @@ def _normalized_suffix(path: str) -> str:
     return suffix.lower()
 
 
+def _resolve_dimensions_arg(args, *, require: bool) -> list[dict[str, str]] | None:
+    """Resolve dimensions from --dimension-set (a built-in discipline preset, same
+    as the web app) or --dimensions-csv. At most one may be given."""
+    csv_path = getattr(args, "dimensions_csv", None)
+    set_key = getattr(args, "dimension_set", None)
+    if csv_path and set_key:
+        raise ValueError("Use only one of --dimensions-csv or --dimension-set.")
+    if set_key:
+        dims = get_discipline_dimensions(set_key)
+        if not dims:
+            raise ValueError(f"Unknown dimension set: {set_key}")
+        logger.info("Using '%s' discipline preset (%d dimensions)", set_key, len(dims))
+        return dims
+    if csv_path:
+        logger.info("Loading dimensions from CSV: %s", csv_path)
+        return _load_dimensions_from_csv(Path(csv_path))
+    if require:
+        raise ValueError("Provide dimensions via --dimensions-csv or --dimension-set.")
+    return None
+
+
+def _resolve_general_prereg(args) -> tuple[str, str]:
+    """Resolve the preregistration source: an OSF link (--osf-url, resolved here the
+    same way the worker does) or a local file (--preregistration). Exactly one."""
+    osf_url = getattr(args, "osf_url", None)
+    prereg = getattr(args, "preregistration", None)
+    if osf_url and prereg:
+        raise ValueError("Use only one of --preregistration or --osf-url.")
+    if osf_url:
+        from backend.services import osf
+
+        dest = tempfile.mkdtemp(prefix="regcheck-osf-")
+        logger.info("Resolving OSF preregistration: %s", osf_url)
+        path, ext = osf.fetch_osf_preregistration(osf_url, dest_dir=dest)
+        return path, ext
+    if not prereg:
+        raise ValueError("Provide a preregistration via --preregistration or --osf-url.")
+    return prereg, _normalized_suffix(prereg)
+
+
+def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> None:
+    """Write a self-contained, browsable HTML report when --report-html is set."""
+    report_path = getattr(args, "report_html", None)
+    if not report_path:
+        return
+    from backend.services.report_html import write_report_html
+
+    evidence = evidence_out or {}
+    title = getattr(args, "report_title", None) or f"RegCheck · {Path(args.paper).stem}"
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    meta = f"Model: {args.client} · parser: {args.parser_choice} · {len(items)} dimensions"
+    write_report_html(
+        report_path,
+        title=title,
+        items=items,
+        manifest=evidence.get("manifest"),
+        render_data=evidence.get("render_data"),
+        meta=meta,
+        rr_integrity=evidence.get("rr_integrity"),
+    )
+    logger.info("Wrote browsable HTML report to %s", report_path)
+
+
 async def _run_general(args) -> dict:
-    logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-    dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=True)
+    prereg_path, prereg_ext = _resolve_general_prereg(args)
     logger.info("Running general preregistration comparison (dimensions=%d)", len(dimensions))
+    evidence_out: dict | None = {} if getattr(args, "report_html", None) else None
     result = await general_preregistration_comparison(
-        args.preregistration,
-        _normalized_suffix(args.preregistration),
+        prereg_path,
+        prereg_ext,
         args.paper,
         _normalized_suffix(args.paper),
         args.client,
@@ -75,16 +148,24 @@ async def _run_general(args) -> dict:
         multiple_experiments=args.multiple_experiments,
         experiment_number=args.experiment_number,
         experiment_text=args.experiment_text,
+        evidence_out=evidence_out,
+        num_voters=_resolve_num_voters(args),
+        isolation_cache_dir=_resolve_isolation_cache_dir(args),
+        isolation_passes=args.isolation_passes,
+        comparison_context=(
+            "registered_report"
+            if getattr(args, "comparison_type", "preregistration") == "registered-report"
+            else "preregistration"
+        ),
     )
     logger.info("Completed general comparison.")
-    return result.model_dump()
+    payload = result.model_dump()
+    _maybe_write_html_report(args, payload, evidence_out)
+    return payload
 
 
 async def _run_clinical(args) -> dict:
-    dimensions = None
-    if args.dimensions_csv:
-        logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-        dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
         "Running clinical trial comparison for %s (dimensions=%s)",
         args.registration_id,
@@ -99,6 +180,7 @@ async def _run_clinical(args) -> dict:
         selected_dimensions=dimensions,
         append_previous_output=args.append_previous_output,
         reasoning_effort=args.reasoning_effort,
+        num_voters=_resolve_num_voters(args),
     )
     logger.info("Completed clinical comparison.")
     return result.model_dump()
@@ -109,10 +191,7 @@ async def _run_animals(args) -> dict:
         raise ValueError(
             "Animal trial comparisons currently require --registration-csv until API support is available."
         )
-    dimensions = None
-    if args.dimensions_csv:
-        logger.info("Loading dimensions from CSV: %s", args.dimensions_csv)
-        dimensions = _load_dimensions_from_csv(Path(args.dimensions_csv))
+    dimensions = _resolve_dimensions_arg(args, require=False)
     logger.info(
         "Running animals (PCT) comparison for %s using CSV %s (dimensions=%s)",
         args.registration_id,
@@ -129,9 +208,126 @@ async def _run_animals(args) -> dict:
         selected_dimensions=dimensions,
         append_previous_output=args.append_previous_output,
         reasoning_effort=args.reasoning_effort,
+        num_voters=_resolve_num_voters(args),
     )
     logger.info("Completed animals comparison.")
     return result.model_dump()
+
+
+def _print_cost_summary(payload: dict, *, label: str = "") -> None:
+    """One-line cost estimate on stderr (the payload itself carries the full
+    breakdown under 'cost'; see backend/services/cost_tracking.py)."""
+    cost = payload.get("cost") if isinstance(payload, dict) else None
+    if not cost:
+        return
+    prefix = f"[{label}] " if label else ""
+    note = "" if cost.get("estimate_complete", True) else " (some models unpriced — tokens counted, USD partial)"
+    print(
+        f"{prefix}Estimated cost: ${cost.get('total_usd', 0):.4f} — "
+        f"{cost.get('input_tokens', 0)} in / {cost.get('output_tokens', 0)} out / "
+        f"{cost.get('embedding_tokens', 0)} embedding tokens{note}",
+        file=sys.stderr,
+    )
+
+
+_BATCH_TYPES = {"general", "clinical"}
+
+
+def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
+    """Build the per-row argument namespace a single-run function expects, from
+    the batch-level flags plus one manifest row."""
+    get = lambda key: (row.get(key) or "").strip() or None  # noqa: E731
+    return argparse.Namespace(
+        preregistration=get("preregistration"),
+        osf_url=get("osf_url"),
+        paper=get("paper"),
+        registration_id=get("registration_id"),
+        dimensions_csv=get("dimensions_csv"),
+        dimension_set=get("dimension_set"),
+        client=args.client,
+        parser_choice=args.parser_choice,
+        append_previous_output=args.append_previous_output,
+        reasoning_effort=args.reasoning_effort,
+        # General-flow extras (per-row overridable where they make sense).
+        multiple_experiments=(get("experiment_number") is not None),
+        experiment_number=get("experiment_number"),
+        experiment_text=None,
+        comparison_type="preregistration",
+        isolation_passes=1,
+        no_isolation_cache=False,
+        isolation_cache_dir=None,
+        report_html=None,
+        report_title=None,
+        embedding_model=getattr(args, "embedding_model", None),
+    )
+
+
+async def _run_batch(args) -> dict:
+    """Batch processing: one manifest CSV row per run. Columns: ``type``
+    (general|clinical), ``preregistration``/``osf_url``, ``paper``,
+    ``registration_id``, optional ``dimensions_csv``/``dimension_set`` and
+    ``label``. Per-row results are written to --output-dir; failures are
+    recorded and the batch continues (use --stop-on-error to abort instead)."""
+    manifest_path = Path(args.manifest)
+    if not manifest_path.exists():
+        raise ValueError(f"Manifest not found: {args.manifest}")
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with manifest_path.open(newline="", encoding="utf-8-sig") as fh:
+        rows = [row for row in csv.DictReader(fh)]
+    if not rows:
+        raise ValueError("Manifest contains no rows.")
+
+    runners = {"general": _run_general, "clinical": _run_clinical}
+    summary: list[dict] = []
+    for index, row in enumerate(rows, start=1):
+        run_type = (row.get("type") or "general").strip().lower()
+        label = (row.get("label") or "").strip() or f"row{index:03d}"
+        entry: dict = {"row": index, "label": label, "type": run_type}
+        logger.info("Batch %d/%d (%s, %s)", index, len(rows), label, run_type)
+        try:
+            if run_type not in _BATCH_TYPES:
+                raise ValueError(f"Unknown type '{run_type}' (use one of: {', '.join(sorted(_BATCH_TYPES))})")
+            payload = await runners[run_type](_batch_row_namespace(args, row))
+            out_path = out_dir / f"{label}.{args.output_format}"
+            _write_output(payload, str(out_path), args.output_format)
+            _print_cost_summary(payload, label=label)
+            entry.update(
+                {
+                    "status": "ok",
+                    "output": str(out_path),
+                    "dimensions": len(payload.get("items", [])),
+                    "cost_usd": (payload.get("cost") or {}).get("total_usd"),
+                }
+            )
+        except Exception as exc:
+            logger.error("Batch row %s failed: %s", label, exc)
+            entry.update({"status": "error", "error": str(exc)})
+            if getattr(args, "stop_on_error", False):
+                summary.append(entry)
+                break
+        summary.append(entry)
+
+    ok = sum(1 for e in summary if e.get("status") == "ok")
+    failed = [e["label"] for e in summary if e.get("status") == "error"]
+    total_usd = round(sum(e.get("cost_usd") or 0 for e in summary), 4)
+    summary_payload = {
+        "total": len(summary),
+        "succeeded": ok,
+        "failed": failed,
+        "estimated_total_usd": total_usd,
+        "rows": summary,
+    }
+    summary_path = out_dir / "batch_summary.json"
+    summary_path.write_text(json.dumps(summary_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(
+        f"Batch complete: {ok}/{len(summary)} succeeded"
+        + (f", failed: {', '.join(failed)}" if failed else "")
+        + f" — estimated total ${total_usd:.4f}. Summary: {summary_path}",
+        file=sys.stderr,
+    )
+    return summary_payload
 
 
 def _write_output(payload: dict, output_path: str | None, output_format: str) -> None:
@@ -154,6 +350,9 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         "registration_content_summary",
         "deviation_judgement",
         "deviation_information",
+        "unlocated_in_paper",
+        "unlocated_in_registration",
+        "chain_of_thought",
     ]
     rows: list[dict[str, str]] = []
     for item in items:
@@ -177,6 +376,62 @@ def _write_output(payload: dict, output_path: str | None, output_format: str) ->
         writer.writerows(rows)
 
 
+def _resolve_isolation_cache_dir(args) -> str | None:
+    """Resolve where to cache multi-study isolation extractions (general flow only).
+
+    Default-on for the CLI so repeated local runs of the same paper reuse the identical
+    isolated text (making the pipeline reproducible run-to-run); ``--no-isolation-cache``
+    disables it. This is CLI-only — the API/worker path never passes a cache dir, so it
+    always re-extracts fresh per job (no cross-job/cross-user reuse).
+    """
+    if getattr(args, "no_isolation_cache", False):
+        return None
+    explicit = getattr(args, "isolation_cache_dir", None)
+    if explicit:
+        return explicit
+    return str(Path.home() / ".cache" / "regcheck" / "isolation")
+
+
+def _resolve_num_voters(args) -> int:
+    """Resolve the per-dimension vote count from the judgement-method flags.
+
+    'single-judge' (or unset) → 1 judgement per dimension (unchanged behaviour).
+    'consensus-vote' → --number-of-voters independent judgements per dimension.
+    """
+    method = getattr(args, "judgement_method", "single-judge")
+    if method != "consensus-vote":
+        return 1
+    n = int(getattr(args, "number_of_voters", 5) or 5)
+    if n < 1:
+        raise ValueError("--number-of-voters must be a positive integer.")
+    return n
+
+
+def _add_judgement_args(p: argparse.ArgumentParser) -> None:
+    """Optional within-study output normalisation, shared by every subcommand."""
+    p.add_argument(
+        "--judgement-method",
+        default="single-judge",
+        choices=["single-judge", "consensus-vote"],
+        help=(
+            "How each dimension's verdict is decided. 'single-judge' (default) is one "
+            "model judgement per dimension. 'consensus-vote' judges each dimension "
+            "--number-of-voters times on the SAME retrieved evidence and reports the "
+            "plurality verdict (recall-biased tiebreak), with a consensus note appended "
+            "to the rationale. The report format is unchanged."
+        ),
+    )
+    p.add_argument(
+        "--number-of-voters",
+        type=int,
+        default=5,
+        help=(
+            "Number of independent judgements per dimension when "
+            "--judgement-method consensus-vote (default 5; ignored for single-judge)."
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run RegCheck backend comparisons from the command line."
@@ -188,30 +443,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     general.add_argument(
         "--preregistration",
-        required=True,
-        help="Path to the preregistration file (.pdf or .docx).",
+        help="Path to the preregistration file (.pdf/.docx/.txt/.html). Or use --osf-url.",
+    )
+    general.add_argument(
+        "--osf-url",
+        help="OSF link to a registration or file to use as the preregistration (alternative to --preregistration; mirrors the web app's OSF source).",
     )
     general.add_argument(
         "--paper",
         required=True,
-        help="Path to the published paper file (.pdf or .docx).",
+        help="Path to the published paper file (.pdf/.docx/.txt/.html).",
     )
     general.add_argument(
         "--dimensions-csv",
-        required=True,
-        help="CSV file with columns 'dimension' and optional 'definition'.",
+        help="CSV file with columns 'dimension' and optional 'definition'. Or use --dimension-set.",
+    )
+    general.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=(
+            "Use one of the web app's built-in discipline presets instead of a CSV "
+            f"({', '.join(DISCIPLINE_KEYS)})."
+        ),
     )
     general.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    general.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     general.add_argument(
         "--parser-choice",
-        default="grobid",
-        choices=["grobid", "dpt2", "pymupdf"],
-        help="PDF parser to extract paper text.",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     general.add_argument(
         "--append-previous-output",
@@ -238,6 +510,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional freeform note about the relevant experiment to include in the extraction prompt.",
     )
     general.add_argument(
+        "--isolation-cache-dir",
+        help=(
+            "Directory for caching multi-study isolation extractions so repeated local runs "
+            "of the same paper reuse identical isolated text — makes the pipeline reproducible "
+            "run-to-run (default: ~/.cache/regcheck/isolation). Only used with --multiple-experiments."
+        ),
+    )
+    general.add_argument(
+        "--comparison-type",
+        choices=["preregistration", "registered-report"],
+        default="preregistration",
+        help=(
+            "Framing for the comparison: a standard preregistration vs paper (default), "
+            "or a Registered Report Stage 1 vs Stage 2 manuscript (adds the RR prompt "
+            "framing, licensed-structure rules, and RR add-on dimensions)."
+        ),
+    )
+    general.add_argument(
+        "--no-isolation-cache",
+        action="store_true",
+        help="Disable the multi-study isolation cache (always re-extract the study text).",
+    )
+    general.add_argument(
+        "--isolation-passes",
+        type=int,
+        default=1,
+        help=(
+            "Run the multi-study isolation N times in parallel and UNION the extracted "
+            "spans (default 1). The single pass varies ~20%% on deviation-relevant content "
+            "(exclusions, analyses, sample tables); N>=3 recovers a span unless every pass "
+            "drops it. Only used with --multiple-experiments."
+        ),
+    )
+    general.add_argument(
         "--output",
         help="Optional path to write JSON results. Defaults to stdout.",
     )
@@ -247,10 +553,54 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+    general.add_argument(
+        "--report-html",
+        help=(
+            "Also write a self-contained, browsable HTML report (Overview + Evidence "
+            "panels with in-document quote tracing) to this path; open it in any browser."
+        ),
+    )
+    general.add_argument(
+        "--report-title",
+        help="Title shown in the --report-html report (defaults to 'RegCheck · <paper filename>').",
+    )
+
+    _add_judgement_args(general)
 
     clinical = subparsers.add_parser(
         "clinical", help="Compare a clinical trial registration (by ID) to a paper."
     )
+
+    batch = subparsers.add_parser(
+        "batch",
+        help="Run many comparisons from a manifest CSV (columns: type, preregistration, osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
+    )
+    batch.add_argument("--manifest", required=True, help="CSV manifest, one run per row.")
+    batch.add_argument("--output-dir", required=True, help="Directory for per-row outputs + batch_summary.json.")
+    batch.add_argument(
+        "--client",
+        default="openai",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider for every row.",
+    )
+    batch.add_argument("--embedding-model", help="Embeddings model for retrieval (default: text-embedding-3-large).")
+    batch.add_argument(
+        "--parser-choice",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser for every row (default pymupdf).",
+    )
+    batch.add_argument("--append-previous-output", action="store_true")
+    batch.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high"])
+    batch.add_argument(
+        "--output-format", default="json", choices=["csv", "json"], help="Per-row output format (default json)."
+    )
+    batch.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Abort the batch on the first failing row (default: record the failure and continue).",
+    )
+
     clinical.add_argument(
         "--registration-id",
         required=True,
@@ -266,16 +616,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV with 'dimension' and 'definition' columns to override defaults.",
     )
     clinical.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=f"Use a built-in discipline preset instead of defaults ({', '.join(DISCIPLINE_KEYS)}).",
+    )
+    clinical.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    clinical.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     clinical.add_argument(
         "--parser-choice",
-        default="grobid",
-        choices=["grobid", "dpt2", "pymupdf"],
-        help="PDF parser to extract paper text.",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     clinical.add_argument(
         "--append-previous-output",
@@ -298,6 +660,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+
+    _add_judgement_args(clinical)
 
     animals = subparsers.add_parser(
         "animals", help="Compare a preclinical (PCT) registration to a paper."
@@ -321,16 +685,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV with 'dimension' and 'definition' columns to override defaults.",
     )
     animals.add_argument(
+        "--dimension-set",
+        choices=DISCIPLINE_KEYS,
+        help=f"Use a built-in discipline preset instead of defaults ({', '.join(DISCIPLINE_KEYS)}).",
+    )
+    animals.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
-        help="LLM provider to use.",
+        choices=["openai", "deepseek", "qwen", "claude", "gpustack"],
+        help="LLM provider to use ('gpustack' = Uni Bern GPUStack; requires the Bern network).",
+    )
+    animals.add_argument(
+        "--embedding-model",
+        help=(
+            "Embeddings model for retrieval (default: text-embedding-3-large; "
+            "use qwen3-embedding-0.6b with --client gpustack)."
+        ),
     )
     animals.add_argument(
         "--parser-choice",
-        default="grobid",
-        choices=["grobid", "dpt2", "pymupdf"],
-        help="PDF parser to extract paper text.",
+        default="pymupdf",
+        choices=["grobid", "dpt2", "pymupdf", "external"],
+        help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     animals.add_argument(
         "--append-previous-output",
@@ -353,8 +729,44 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["csv", "json"],
         help="Output format (csv or json). Defaults to csv.",
     )
+    _add_judgement_args(animals)
 
     return parser
+
+
+def _apply_runtime_env(args) -> None:
+    """Translate CLI provider/embedding selections into the env vars the service
+    layer reads, so a single ``--client gpustack`` run keeps BOTH the LLM and the
+    retrieval embeddings on GPUStack without extra setup.
+
+    Precedence is preserved: anything already exported (e.g. in ``.env``) wins over
+    these conveniences.
+    """
+    client = getattr(args, "client", None)
+
+    # Embeddings model: an explicit --embedding-model wins; otherwise, when running
+    # against GPUStack, default to its embedding model rather than an OpenAI-only one.
+    embedding_model = getattr(args, "embedding_model", None)
+    if not embedding_model and client == "gpustack":
+        embedding_model = "qwen3-embedding-0.6b"
+    if embedding_model:
+        os.environ["EMBEDDINGS_MODEL"] = embedding_model
+
+    # Point embeddings at GPUStack too when using it for chat, unless the operator
+    # has already aimed them somewhere explicitly.
+    if client == "gpustack":
+        base_url = (os.environ.get("GPUSTACK_BASE_URL") or DEFAULT_GPUSTACK_BASE_URL).strip()
+        os.environ.setdefault("EMBEDDINGS_BASE_URL", base_url)
+        gpustack_key = (os.environ.get("GPUSTACK_API_KEY") or "").strip()
+        if gpustack_key:
+            os.environ.setdefault("EMBEDDINGS_API_KEY", gpustack_key)
+        if getattr(args, "parser_choice", None) in {"grobid", "dpt2", "external"}:
+            print(
+                f"Note: --parser-choice {args.parser_choice} sends the PDF to a remote parser. "
+                "For a fully-local GPUStack pipeline use --parser-choice pymupdf "
+                "(or a self-hosted GROBID via GROBID_URL).",
+                file=sys.stderr,
+            )
 
 
 def main(argv: Iterable[str] | None = None) -> None:
@@ -364,6 +776,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    _apply_runtime_env(args)
     try:
         if args.command == "general":
             payload = asyncio.run(_run_general(args))
@@ -371,12 +784,18 @@ def main(argv: Iterable[str] | None = None) -> None:
             payload = asyncio.run(_run_clinical(args))
         elif args.command == "animals":
             payload = asyncio.run(_run_animals(args))
+        elif args.command == "batch":
+            summary = asyncio.run(_run_batch(args))
+            if summary.get("failed"):
+                sys.exit(1)
+            return
         else:
             parser.error("Unknown command")
             return
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    _print_cost_summary(payload)
     _write_output(payload, getattr(args, "output", None), getattr(args, "output_format", "csv"))
 
 

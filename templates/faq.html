@@ -1,7 +1,6 @@
 <!doctype html>
-<html lang="en" data-bs-theme="auto">
+<html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260420' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
@@ -11,50 +10,181 @@
     <meta name="author" content="Jamie Cummins">
     <title>RegCheck FAQ</title>
     <style>
-      header {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
+      .faq-main {
+        flex: 1;
+        width: min(820px, 100%);
+        margin: 0 auto;
+        padding: clamp(1rem, 3vw, 2.5rem) 1rem 2rem;
+        text-align: left;
       }
-
-      main {
-          flex-grow: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
+      .faq-title {
+        font-size: clamp(1.9rem, 3vw, 2.6rem);
+        margin: 0 0 0.4rem;
+      }
+      .faq-lede {
+        color: var(--rc-muted);
+        margin: 0 0 1.6rem;
+        font-size: 1.02rem;
+      }
+      .faq-accordion {
+        --bs-accordion-btn-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23828A9C' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Cpath d='M3 6l5 5 5-5'/%3E%3C/svg%3E");
+        --bs-accordion-btn-active-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237BA0DC' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Cpath d='M3 6l5 5 5-5'/%3E%3C/svg%3E");
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+      }
+      .faq-accordion .accordion-item {
+        background: var(--rc-surface);
+        border: 1px solid var(--rc-border);
+        border-radius: var(--rc-radius);
+        overflow: hidden;
+      }
+      .faq-accordion .accordion-button {
+        background: transparent;
+        color: var(--rc-text);
+        font-weight: 600;
+        font-size: 1.04rem;
+        padding: 1.05rem 1.2rem;
+        box-shadow: none;
+      }
+      .faq-accordion .accordion-button:not(.collapsed) {
+        background: var(--rc-accent-soft);
+        color: var(--rc-accent-strong);
+      }
+      .faq-accordion .accordion-button:focus {
+        box-shadow: 0 0 0 0.18rem rgba(58, 91, 192, 0.25);
+      }
+      .faq-accordion .accordion-button:hover {
+        background: var(--rc-surface-2);
+      }
+      .faq-accordion .accordion-button:not(.collapsed):hover {
+        background: var(--rc-accent-soft);
+      }
+      .faq-accordion .accordion-body {
+        color: var(--rc-muted);
+        line-height: 1.65;
+        padding: 1.1rem 1.2rem 1.3rem;
+      }
+      .faq-accordion .accordion-body strong { color: var(--rc-text); }
+      .faq-accordion .accordion-body ul { margin: 0; padding-left: 1.1rem; }
+      .faq-accordion .accordion-body li { margin-bottom: 0.4rem; }
+      .faq-accordion .accordion-body a { color: var(--rc-accent-strong); }
+      .faq-verdict-dot {
+        display: inline-block;
+        width: 0.6rem;
+        height: 0.6rem;
+        border-radius: 50%;
+        margin-right: 0.4rem;
+        vertical-align: baseline;
       }
     </style>
 </head>
 {% set nav_active = 'faq' %}
-<body class="d-flex text-center text-bg-dark page-shell">
+<body class="text-bg-dark page-shell">
   <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
       <header class="mb-auto">
           {% include '_partials/navbar.html' %}
       </header>
-    {% include '_partials/mobile_notice.html' %}
 
-    <main class="px-3">
-      <div class="mx-auto text-start" style="max-width: 900px;">
-        <h1>Frequently Asked Questions</h1>
+    <main class="faq-main">
+      <h1 class="faq-title">Frequently asked questions</h1>
+      <p class="faq-lede">How to read RegCheck output, and answers to common questions.</p>
 
-        <h2>What do the deviation labels mean?</h2>
-        <ul>
-          <li><strong>Deviation found:</strong> The model judged that the paper diverges from the preregistered plan for that dimension.</li>
-          <li><strong>No deviation:</strong> The model judged that the paper is consistent with the preregistration for that dimension.</li>
-          <li><strong>Missing information / No information found:</strong> There was not enough evidence in the provided text to make a reliable judgement.</li>
-        </ul>
+      <div class="accordion faq-accordion" id="faqAccordion">
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q1" aria-expanded="true" aria-controls="faq-q1">
+              What do the deviation labels mean?
+            </button>
+          </h2>
+          <div id="faq-q1" class="accordion-collapse collapse show" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              <ul>
+                <li><span class="faq-verdict-dot" style="background: var(--rc-flag);"></span><strong>Deviation:</strong> the model judged that the paper diverges from the registered plan for that dimension.</li>
+                <li><span class="faq-verdict-dot" style="background: var(--rc-ok);"></span><strong>No deviation:</strong> the model judged that the paper is consistent with the registration for that dimension.</li>
+                <li><span class="faq-verdict-dot" style="background: var(--rc-warn);"></span><strong>Insufficient evidence:</strong> the model judged that there wasn&rsquo;t enough information in the provided text to make a reliable call for that dimension.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
 
-        <h2>What is a 'relevance score'?</h2>
-        <p>Each quote is tagged with a relevance score. This is the semantic similarity between that text chunk and the selected comparison dimension, based on embedding retrieval. Higher values mean the chunk is more strongly semantically related to the dimension of comparison.</p>
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q2" aria-expanded="false" aria-controls="faq-q2">
+              What is a &lsquo;relevance score&rsquo;?
+            </button>
+          </h2>
+          <div id="faq-q2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              We use "embeddings" models, a type of natural language processing model, to represent the meaning of extracted text. We compare the similarity of each extracted chunk of text (think, for example, paragraphs) against the definition of a specific dimension. We use a metric called 'cosine similarity' to estimate how similar each chunk is with that dimension (from a scale of 0 to 1). Higher values mean the chunk is more strongly semantically related to the dimension of comparison.
+            </div>
+          </div>
+        </div>
 
-        <h2>What is shown in direct quotes vs summary?</h2>
-        <p><strong>Direct quotes</strong> displays retrieved source excerpts with evidence IDs and relevance scores. <strong>Summary</strong> displays the model’s concise synthesis of those excerpts.</p>
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q3" aria-expanded="false" aria-controls="faq-q3">
+              What is shown in direct quotes vs summary?
+            </button>
+          </h2>
+          <div id="faq-q3" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              <strong>Direct quotes</strong> display direct quotes from the source material (i.e., registrations/papers) coupled with IDs and relevance scores. <strong>Summary</strong> displays LLM-based summaries of these excerpts.
+            </div>
+          </div>
+        </div>
 
-        <h2>Can I share report links?</h2>
-        <p>Yes. Anyone with the report link can view it. Do not share links publicly if uploads contain sensitive information.</p>
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q4" aria-expanded="false" aria-controls="faq-q4">
+              Can I share report links?
+            </button>
+          </h2>
+          <div id="faq-q4" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              Yes. Anyone with the report link can view it. Do not share links publicly if uploads contain sensitive information.
+            </div>
+          </div>
+        </div>
 
-        <h2>Where can I read about data handling?</h2>
-        <p>See the <a class="footer-link" href="{{ url_for('privacy') }}">Privacy Policy</a> for storage, retention, and deletion details.</p>
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q5" aria-expanded="false" aria-controls="faq-q5">
+              Where can I read about data handling?
+            </button>
+          </h2>
+          <div id="faq-q5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              See the <a href="{{ url_for('privacy') }}">Privacy Policy</a> for storage, retention, and deletion details.
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q6" aria-expanded="false" aria-controls="faq-q6">
+              Why can I choose a &lsquo;reasoning effort&rsquo;, and which should I pick?
+            </button>
+          </h2>
+          <div id="faq-q6" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              For ChatGPT you can set how much &lsquo;thinking&rsquo; the model does before answering. <strong>Higher</strong> effort is more thorough and can be more accurate on hard comparisons, but is slower and costs more; <strong>lower</strong> effort is faster and cheaper. It is not simply &ldquo;higher is always better&rdquo; — medium is a sensible default, and lower is often fine for straightforward documents. This setting applies to ChatGPT; other models ignore it.
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-q7" aria-expanded="false" aria-controls="faq-q7">
+              Which exact models does RegCheck use?
+            </button>
+          </h2>
+          <div id="faq-q7" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+            <div class="accordion-body">
+              The model menu lists families; the exact default models are ChatGPT = <code>gpt-5.5</code>, Claude Opus 4.8 = <code>claude-opus-4-8</code>, DeepSeek = <code>deepseek-reasoner</code>, and Qwen3.6 27B = <code>qwen/qwen3.6-27b</code> (open-weight, served via Groq). These are the defaults; a deployment can override them. The full API contract is in the <a href="{{ url_for('api_docs') }}">API reference</a>.
+            </div>
+          </div>
+        </div>
       </div>
     </main>
 

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "regcheck",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8078"],
+      "port": 8078
+    },
+    {
+      "name": "precheck",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["APP_MODE=precheck", ".venv/bin/python", "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8079"],
+      "port": 8079
+    }
+  ]
+}

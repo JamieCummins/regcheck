@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client",
         default="openai",
-        choices=["openai", "deepseek", "groq"],
+        choices=["openai", "deepseek", "claude"],
         help="LLM provider to use.",
     )
     parser.add_argument(

@@ -1,45 +1,79 @@
 <!doctype html>
-<html lang="en" data-bs-theme="auto">
+<html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260122' %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
+    <meta name="description" content="{{ brand_name }} is an AI tool to compare preregistrations with papers instantly."/>
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
-    <title>RegCheck Privacy Policy</title>
-    <link rel="canonical" href="https://getbootstrap.com/docs/5.3/examples/cover/">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@docsearch/css@3">
+    <title>{{ brand_name }} Privacy Policy</title>
     <style>
-      header {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
+      .legal-main {
+        flex: 1;
+        width: min(820px, 100%);
+        margin: 0 auto;
+        padding: clamp(1.25rem, 3vw, 2.5rem) 1rem 2.5rem;
+        text-align: left;
       }
-
-      main {
-          flex-grow: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: flex-start;
+      .legal-doc h1 {
+        font-size: clamp(1.9rem, 3vw, 2.6rem);
+        margin: 0 0 0.6rem;
       }
+      .legal-meta {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.3rem 0.8rem;
+        border-radius: 999px;
+        background: var(--rc-surface-2);
+        border: 1px solid var(--rc-border);
+        color: var(--rc-muted);
+        font-size: 0.8rem;
+        margin: 0 0 1.6rem;
+      }
+      .legal-doc h2 {
+        font-size: 1.2rem;
+        margin: 2.2rem 0 0.7rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--rc-border);
+        color: var(--rc-text);
+      }
+      .legal-doc h3 {
+        font-size: 1rem;
+        margin: 1.4rem 0 0.4rem;
+        color: var(--rc-accent-strong);
+      }
+      .legal-doc p {
+        color: var(--rc-muted);
+        line-height: 1.7;
+        margin: 0 0 0.85rem;
+      }
+      .legal-doc strong { color: var(--rc-text); font-weight: 600; }
+      .legal-doc ul {
+        color: var(--rc-muted);
+        line-height: 1.7;
+        padding-left: 1.2rem;
+        margin: 0 0 1rem;
+      }
+      .legal-doc li { margin-bottom: 0.5rem; }
+      .legal-doc a { color: var(--rc-accent-strong); word-break: break-word; }
+      .legal-doc a:hover { color: var(--rc-accent); }
     </style>
 </head>
 {% set nav_active = '' %}
-<body class="d-flex text-center text-bg-dark page-shell">
+<body class="text-bg-dark page-shell">
   <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
       <header class="mb-auto">
           {% include '_partials/navbar.html' %}
       </header>
     {% include '_partials/mobile_notice.html' %}
 
-    <main class="px-3">
-      <div class="mx-auto text-start" style="max-width: 900px;">
-        <h1>RegCheck Privacy Policy</h1>
-        <p class="lead">Effective date: 22/01/2026</p>
-        <p>This Privacy Policy explains how RegCheck (“RegCheck”, “we”, “us”) collects and processes personal data when you use our website and services (the “Service”).</p>
+    <main class="legal-main">
+      <article class="legal-doc">
+        <h1>{{ brand_name }} Privacy Policy</h1>
+        <p class="legal-meta">Effective date: 22/01/2026</p>
+        <p>This Privacy Policy explains how {{ brand_name }} (“{{ brand_name }}”, “we”, “us”) collects and processes personal data when you use our website and services (the “Service”).</p>
 
         <h2>1) Data controller and contact</h2>
         <p><strong>Data controller:</strong> Dr. Jamie Cummins, Fabrikstrasse 8, 3012 Bern, Switzerland.</p>
@@ -58,7 +92,8 @@
         <h3>A. Content you upload (documents)</h3>
         <p><strong>What:</strong> Papers, preregistrations, and related files you upload.</p>
         <p><strong>Why:</strong> To run the comparison and generate your report.</p>
-        <p><strong>Temporary storage under load:</strong> Under high traffic, uploaded files may be temporarily written to AWS S3 to support reliable processing. Files remain in S3 only while the comparison process is running and are automatically deleted once processing finishes. We do not intentionally create backups of uploaded files (subject to the underlying cloud provider’s standard technical operations).</p>
+        <p><strong>During processing:</strong> While a comparison runs, your uploaded file may be written to AWS S3 (object storage) to support reliable processing across our servers, and is deleted once processing finishes.</p>
+        <p><strong>Stored with your report:</strong> To power the report viewer, we keep a copy of your source document and a rendered (PDF/text) view of it in AWS S3 for as long as the report itself is retained (see Section 7), then delete them. These document files are private — they are served only through access-controlled links, never made publicly readable on S3. We do not intentionally create separate backups of these files (subject to the underlying cloud provider’s standard technical operations).</p>
 
         <h3>B. Model prompts and outputs (processing data)</h3>
         <p><strong>What:</strong> Prompts derived from your uploaded content and the resulting model outputs needed to generate the report.</p>
@@ -68,22 +103,28 @@
         <h3>C. Reports and shareable report data (persistence)</h3>
         <p><strong>What:</strong> Report content and quotations shown in the report viewer and any shareable report link.</p>
         <p><strong>Why:</strong> To let you view and share reports after processing.</p>
-        <p>We store this in an encrypted Redis database so that reports can remain accessible via their link until you request deletion.</p>
+        <p>We store the report’s text content and quotations in an encrypted Redis database, and the associated document files (your source document and its rendered view) in AWS S3, so that reports remain accessible via their link for the report’s lifetime (see Section 7: reports created without an account expire automatically after about 7 days; reports created while signed in are kept until you delete them).</p>
 
         <h3>D. Optional survey responses</h3>
         <p><strong>What:</strong> Any feedback or survey responses you voluntarily submit.</p>
         <p><strong>Why:</strong> Product improvement and research/quality feedback.</p>
-        <p>Survey responses are stored separately and we do not intentionally link survey responses to specific uploads or report links. Please avoid including identifying or sensitive information in free-text fields.</p>
+        <p>Survey responses are stored keyed to the report they follow, so deleting the report (or its automatic expiry) also deletes the associated responses. They are not linked to your account, even when you are signed in. Please avoid including identifying or sensitive information in free-text fields.</p>
 
         <h3>E. Minimal operational and security data (logs)</h3>
         <p><strong>What:</strong> Basic server and application logs (e.g., timestamps, request paths, error traces; may include IP addresses and user-agent strings as part of standard web/server operation).</p>
         <p><strong>Why:</strong> Security, abuse prevention, debugging, and reliability.</p>
-        <p>We do not use third-party analytics. We do not use advertising cookies. We do not require user accounts.</p>
+        <p>We do not use third-party analytics. We do not use advertising cookies. Accounts are optional (see Section 3G) — you can use {{ brand_name }} without signing in.</p>
 
         <h3>F. Local storage (device preferences)</h3>
         <p><strong>What:</strong> Client-side local storage (e.g., UI preferences) and similar browser technologies.</p>
         <p><strong>Why:</strong> Convenience and usability.</p>
         <p>We do not use advertising cookies.</p>
+
+        <h3>G. Account data (optional sign-in)</h3>
+        <p><strong>What:</strong> If you choose to sign in with Google or ORCID, we receive and store a stable account identifier and, where the provider supplies it, your name and email address. We also store optional profile fields you enter (your role/use case, academic position, and research field) and any API keys you create — API keys are stored only as a hash and the full key is shown to you once.</p>
+        <p><strong>Why:</strong> To keep your reports across sessions, let you set their visibility (public or private) and delete them, maintain a profile, and authenticate to the API. ORCID returns an ORCID iD (and name) but, under the scope we request, does not return your email.</p>
+        <p><strong>Private reports:</strong> If you make a report <em>private</em>, we store the email addresses and/or ORCID iDs you grant access to. Those people can open the report once they sign in with a matching account; you can add or remove them at any time. We use these identifiers only to control access to that report.</p>
+        <p>Signing in is optional and only needed for persistent or private reports and for API access. Authentication is handled via Google and ORCID as identity providers; review their privacy terms for how they process the sign-in.</p>
 
         <h2>4) Legal bases (GDPR/UK GDPR)</h2>
         <p>Where GDPR/UK GDPR applies, our legal bases are:</p>
@@ -97,36 +138,43 @@
 
         <h2>5) Model providers and how they handle data</h2>
         <p>When you run a comparison, you choose which language model provider receives the prompts/inputs derived from your uploaded documents. These providers may process data in different jurisdictions and under different terms. Providers’ practices can change; you should review the provider documentation before choosing a provider.</p>
+        <p><strong>Retrieval embeddings (always OpenAI):</strong> to find the passages of each document relevant to every comparison dimension, {{ brand_name }} computes text embeddings via the OpenAI API. This happens regardless of which provider you select for the comparison itself — so text from both documents is sent to OpenAI even when another provider is chosen as the judging model.</p>
         <ul>
-          <li><strong>OpenAI (API):</strong> OpenAI states that API inputs/outputs are not used to train models by default; it also describes retention of certain abuse monitoring logs. See <a class="footer-link" target="_blank" href="https://openai.com/enterprise-privacy/">https://openai.com/enterprise-privacy/</a> and <a class="footer-link" target="_blank" href="https://platform.openai.com/docs/guides/your-data">https://platform.openai.com/docs/guides/your-data</a>.</li>
-          <li><strong>Groq (hosting Llama 3.3):</strong> Groq describes its retention approach and a Zero Data Retention (ZDR) option, and states it does not use inputs/outputs to train or fine-tune models unless explicitly permitted. See <a class="footer-link" target="_blank" href="https://console.groq.com/docs/your-data">https://console.groq.com/docs/your-data</a>.</li>
-          <li><strong>DeepSeek:</strong> DeepSeek describes its data handling and jurisdictions in its documentation/policies, including that data may be processed in the People’s Republic of China (PRC). See <a class="footer-link" target="_blank" href="https://platform.deepseek.com/privacy">https://platform.deepseek.com/privacy</a> and <a class="footer-link" target="_blank" href="https://chat.deepseek.com/privacy-policy">https://chat.deepseek.com/privacy-policy</a>.</li>
+          <li><strong>OpenAI (API):</strong> OpenAI states that API inputs/outputs are not used to train models by default; it also describes retention of certain abuse monitoring logs. See <a class="footer-link" target="_blank" href="https://openai.com/enterprise-privacy/">OpenAI&rsquo;s enterprise privacy page</a> and <a class="footer-link" target="_blank" href="https://platform.openai.com/docs/guides/your-data">their data-usage guide</a>.</li>
+          <li><strong>DeepSeek:</strong> DeepSeek describes its data handling and jurisdictions in its documentation/policies, including that data may be processed in the People’s Republic of China (PRC). See <a class="footer-link" target="_blank" href="https://platform.deepseek.com/privacy">DeepSeek&rsquo;s platform privacy page</a> and <a class="footer-link" target="_blank" href="https://chat.deepseek.com/privacy-policy">chat privacy policy</a>.</li>
+          <li><strong>Groq (hosting Qwen3.6 27B):</strong> The open-weight Qwen model is served via Groq. Groq describes its retention approach and a Zero Data Retention (ZDR) option, and states it does not use inputs/outputs to train or fine-tune models unless explicitly permitted. See <a class="footer-link" target="_blank" href="https://console.groq.com/docs/your-data">Groq&rsquo;s data documentation</a>.</li>
+          <li><strong>Anthropic (Claude):</strong> Anthropic states that inputs/outputs from its commercial products (including the Anthropic API) are not used to train its models by default; this differs from its consumer Claude apps, which {{ brand_name }} does not use. See <a class="footer-link" target="_blank" href="https://www.anthropic.com/legal/commercial-terms">Anthropic&rsquo;s commercial terms</a> and <a class="footer-link" target="_blank" href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training">their data-usage documentation</a>.</li>
         </ul>
 
-        <h2>6) Sharing and public access via report links</h2>
-        <p>Reports may be accessible via a long, random token link (an “unguessable URL”). Anyone with the link can access the report.</p>
-        <p>Do not share report links publicly or include sensitive information in uploads if you plan to share the resulting report.</p>
+        <h2>6) Sharing and access via report links</h2>
+        <p>Each report has a long, random token link (an “unguessable URL”). How that link behaves depends on the report’s visibility:</p>
+        <ul>
+          <li><strong>Public</strong> — anyone with the link can view it, and it is listed on your public profile page (if enabled). Anyone the link is forwarded to can open it.</li>
+          <li><strong>Private</strong> — only you and the specific people you grant access to (by email or ORCID iD) can open it, and they must sign in. The link alone is not enough.</li>
+        </ul>
+        <p>Reports created without an account are always public. For public reports, do not share the link publicly or include sensitive information in uploads if you plan to share the resulting report.</p>
 
         <h2>7) Retention</h2>
         <ul>
-          <li><strong>Uploaded files in S3 (when used):</strong> stored only while the comparison process runs; deleted automatically when processing finishes.</li>
-          <li><strong>Reports and quotations in Redis:</strong> retained indefinitely to keep reports accessible and shareable until you request deletion.</li>
-          <li><strong>Survey responses:</strong> retained indefinitely unless you request deletion.</li>
+          <li><strong>Uploaded files during processing (S3):</strong> the transient working copy used while a comparison runs is deleted automatically when processing finishes.</li>
+          <li><strong>Reports, quotations and their document files (Redis + S3):</strong> the report text/quotations (Redis) and the associated source/rendered document files (S3) share the report’s lifetime — reports generated <em>without</em> an account are automatically deleted about 7 days after creation; reports generated while <em>signed in</em> are retained until you delete them (from the report, your dashboard, or the API) or delete your account.</li>
+          <li><strong>Account data (database):</strong> Your account, profile, API keys, and any access grants on private reports are retained until you delete the relevant item (e.g. revoke a key, remove someone’s access) or delete your account; deleting your account also deletes your reports and their access grants.</li>
+          <li><strong>Survey responses:</strong> share the lifetime of the report they follow — they are deleted together with that report (including the automatic expiry of anonymous reports), or earlier on request.</li>
           <li><strong>Server logs:</strong> retained for 1 day, then deleted.</li>
         </ul>
-        <p>Because we do not use user accounts, we may not be able to locate a specific report or survey record without the report link or other identifying details you provide.</p>
+        <p>For anonymous reports, we may not be able to locate a specific report without the report link or other identifying details you provide.</p>
 
         <h2>8) Security</h2>
         <p>We use reasonable technical and organisational measures, including:</p>
         <ul>
           <li>Encryption in transit (TLS) where supported.</li>
-          <li>Encrypted Redis storage for persisted reports.</li>
+          <li>Encrypted Redis storage for report content, and private (non-public) AWS S3 storage for report document files, served only via access-controlled links.</li>
           <li>Access controls limited to essential systems/personnel.</li>
         </ul>
         <p>No method of transmission or storage is 100% secure; however, we aim to use safeguards appropriate to the risk.</p>
 
         <h2>9) International data transfers</h2>
-        <p>RegCheck is operated from Switzerland, but data may be processed in other countries depending on the infrastructure and the model provider you choose.</p>
+        <p>{{ brand_name }} is operated from Switzerland, but data may be processed in other countries depending on the infrastructure and the model provider you choose.</p>
         <p>Where required, we rely on appropriate transfer mechanisms (e.g., contractual safeguards offered by providers). If you choose a provider that processes data in jurisdictions without an adequacy decision, your use of that provider may involve additional risks, and the transfer may be necessary to provide the Service you request using that provider.</p>
 
         <h2>10) Your rights and choices</h2>
@@ -141,11 +189,11 @@
         <p><strong>Response timeline:</strong> Where required, we aim to respond to rights requests within 30 days.</p>
         <p><strong>Deletion requests:</strong> Email <a class="footer-link" href="mailto:jamie.cummins@unibe.ch">jamie.cummins@unibe.ch</a> with the report link (or identifying details) and we will delete the relevant persisted report data and/or survey responses.</p>
         <p><strong>Local storage:</strong> You can clear local storage via your browser settings.</p>
-        <p><strong>Complaints:</strong> You may lodge a complaint with your local supervisory authority. In Switzerland, this is the Federal Data Protection and Information Commissioner (FDPIC): <a class="footer-link" target="_blank" href="https://www.edoeb.admin.ch/edoeb/en/home.html">https://www.edoeb.admin.ch/edoeb/en/home.html</a>.</p>
+        <p><strong>Complaints:</strong> You may lodge a complaint with your local supervisory authority. In Switzerland, this is the Federal Data Protection and Information Commissioner (FDPIC): <a class="footer-link" target="_blank" href="https://www.edoeb.admin.ch/edoeb/en/home.html">the FDPIC website</a>.</p>
 
         <h2>11) Changes to this policy</h2>
         <p>We may update this Policy from time to time. We will post the updated version and change the effective date above.</p>
-      </div>
+      </article>
     </main>
 
     {% include '_partials/footer.html' %}

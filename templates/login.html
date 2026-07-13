@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% include '_partials/head_assets.html' %}
+    <meta name="robots" content="noindex,nofollow">
+    <title>Sign in &middot; {{ brand_name }}</title>
+    <style>
+      .auth-main {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1.5rem, 5vh, 4rem) 1rem;
+      }
+      .auth-card {
+        width: min(26rem, 100%);
+        background: var(--rc-surface);
+        border: 1px solid var(--rc-border);
+        border-radius: var(--rc-radius);
+        box-shadow: var(--rc-shadow-md);
+        padding: clamp(1.5rem, 4vw, 2.2rem);
+        text-align: center;
+      }
+      .auth-card h1 { font-size: 1.6rem; margin: 0 0 0.5rem; }
+      .auth-card .auth-lede { color: var(--rc-muted); font-size: 0.92rem; line-height: 1.55; margin: 0 0 1.4rem; }
+      .auth-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.55rem;
+        width: 100%;
+        padding: 0.7rem 1rem;
+        margin: 0 0 0.7rem;
+        border-radius: var(--rc-radius-sm);
+        border: 1px solid var(--rc-border-strong);
+        background: var(--rc-surface-2);
+        color: var(--rc-text);
+        font-weight: 600;
+        font-size: 0.95rem;
+        text-decoration: none;
+        transition: border-color 0.14s ease, background 0.14s ease;
+      }
+      .auth-btn:hover { border-color: var(--rc-accent); background: var(--rc-surface-3); color: var(--rc-text); }
+      .auth-disabled { color: var(--rc-faint); font-size: 0.9rem; }
+      .auth-back { margin: 1.1rem 0 0; }
+      .auth-back a { color: var(--rc-accent-strong); font-size: 0.88rem; text-decoration: none; }
+      .auth-back a:hover { color: var(--rc-accent); }
+    </style>
+</head>
+{% set nav_active = 'account' %}
+<body class="text-bg-dark page-shell">
+  <div class="cover-container d-flex w-100 min-vh-100 p-3 mx-auto flex-column">
+    <header class="mb-auto">
+      {% include '_partials/navbar.html' %}
+    </header>
+
+    <main class="auth-main">
+      <div class="auth-card">
+        <h1>Sign in to {{ brand_name }}</h1>
+        <p class="auth-lede">Sign in to keep reports for as long as you like, choose who can see them, and create API keys. You can also use {{ brand_name }} without an account.</p>
+
+        {% if auth_enabled %}
+          {% for p in providers %}
+            <a class="auth-btn auth-btn--{{ p.key }}" href="{{ url_for('oauth_login', provider=p.key) }}?next={{ next | urlencode }}">
+              Continue with {{ p.label }}
+            </a>
+          {% endfor %}
+        {% else %}
+          <p class="auth-disabled">Sign-in is not configured on this deployment yet.</p>
+        {% endif %}
+
+        <p class="auth-back"><a href="{{ url_for('compare') }}">Continue without an account &rarr;</a></p>
+      </div>
+    </main>
+
+    {% include '_partials/footer.html' %}
+  </div>
+  <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+</body>
+</html>

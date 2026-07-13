@@ -1,0 +1,157 @@
+{
+  "client": "openai",
+  "total": 15,
+  "passed": 15,
+  "results": [
+    {
+      "name": "exact-value-deviation",
+      "rule": "Rule 1",
+      "dimension": "Sample size",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The registration committed to recruiting exactly 300 participants via Prolific, with attention-check failures excluded and not replaced, and no interim analyses planned [PREREG_0001] [PREREG_0002] [PREREG_0004]. The paper reports recruiting 310 participants and retaining/analyzing all 310, 155 per condition, because no one failed the attention check [PAPER_0001] [PAPER_0002]. The exclusion/non-replacement rule and no-interim-analysis statement are consistent, but the exact sample-size commitment is not.\n\n(RegCheck ran a targeted full-document search for: 'allowance for recruiting more than 300 participants (over-recruitment' (registration); 'extra participants)' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "bound-satisfied",
+      "rule": "Rule 2",
+      "dimension": "Sample size",
+      "expected": "no",
+      "got": "no",
+      "pass": true,
+      "raw_judgement": "no",
+      "rationale": "No deviation is evident. The registration committed to recruiting at least 300 participants, justified by an a priori power analysis requiring 290 and buffering against exclusions, with attention-check failures excluded before analysis [PREREG_0001] [PREREG_0002]. The paper reports recruiting 310, repeats the same power-analysis justification and minimum commitment, reports no attention-check exclusions, and analyses 310 participants [PAPER_0001] [PAPER_0002]."
+    },
+    {
+      "name": "bound-violated",
+      "rule": "Rule 2",
+      "dimension": "Sample size",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The registration committed to recruiting at least 300 participants and justified 300 as providing 90% power for d = 0.38 at alpha .05, two-tailed [PREREG_0002]. The paper repeats the power analysis but reports that only 290 participants were recruited and all 290 were retained/analyzed, with 145 per condition [PAPER_0001] [PAPER_0002]. Because 290 is below the registered minimum of at least 300, this is a deviation."
+    },
+    {
+      "name": "rewording-same-referent",
+      "rule": "Rule 7",
+      "dimension": "Measured variables",
+      "expected": "no",
+      "got": "no",
+      "pass": true,
+      "raw_judgement": "no",
+      "rationale": "The paper affirmatively reports the same measured variables and administration/scoring details specified in the registration: AMP with 72 trials, 36 plant-based and 36 conventional-meat primes, 75/125/100 ms sequence, ideograph pleasantness judgment, proportion of pleasant judgments by prime type, and the same three 7-point explicit semantic-differential items averaged by category [PREREG_0002] [PREREG_0003] [PREREG_0004] [PAPER_0001] [PAPER_0002] [PAPER_0003]. The paper’s added Cronbach’s alpha values are reliability reporting for the registered explicit index, not a new measured variable [PAPER_0003]."
+    },
+    {
+      "name": "variant-differs",
+      "rule": "Rule 7",
+      "dimension": "Measured variables",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "Deviation: the registered primary loneliness measure was the 20-item UCLA Loneliness Scale Version 3 by Russell (1996), scored 20–80, but the paper reports using the UCLA Loneliness Scale 8-item version (ULS-8; Hays & DiMatteo, 1987), scored 8–32. This is a different instrument/version/item count/score range. SWLS and timing are consistent. [PREREG_0002] [PAPER_0002] [PAPER_0003]\n\n(RegCheck ran a targeted full-document search for: '20-item UCLA Loneliness Scale Version 3 (UCLA-LS V3' (paper); 'Russell 1996)' (paper); 'loneliness total score range 20–80' (paper); '8-item UCLA Loneliness Scale (ULS-8' (registration); 'Hays & DiMatteo 1987)' (registration); 'loneliness total score range 8–32' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "added-analysis",
+      "rule": "Rule 4",
+      "dimension": "Statistical models",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The preregistered primary statistical model is verified in the paper: an OLS regression predicting donation amount from condition coded neutral = 0/awe = 1 with trait empathic concern as covariate [PREREG_0003] [PAPER_0004]. However, the registration states this was the “sole planned analysis” and that “No other analyses are planned,” with manipulation check and small-self only reported descriptively [PREREG_0003]. The paper adds an inferential mediation analysis using PROCESS Model 4 with condition as predictor, small-self as mediator, donation as outcome, and empathic concern as covariate, and draws a mechanistic conclusion from it [PAPER_0005]. This unregistered additional statistical model is a deviation.\n\n(RegCheck ran a targeted full-document search for: 'alpha = .05 two-tailed decision threshold (significance threshold, two-sided test)' (paper); 'mediation analysis (PROCESS Model 4, bootstrap mediation, indirect effect, small-self mediator, mechanism/pathway analysis)' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "elaboration-not-deviation",
+      "rule": "Rule 4",
+      "dimension": "Statistical models",
+      "expected": "no",
+      "got": "no",
+      "pass": true,
+      "raw_judgement": "no",
+      "rationale": "No deviation is evident. The registration specified a primary confirmatory one-way between-subjects ANOVA on PTAS composite scores with condition as the between-subjects factor at alpha .05, and no other planned analyses [PREREG_0003]. The paper reports that same preregistered ANOVA on the same dependent variable and factor at alpha .05 [PAPER_0004]. The reported Levene’s test and Q-Q plot checks are assumption checks attached to the registered ANOVA, not separate hypothesis-testing deviations [PAPER_0003]."
+    },
+    {
+      "name": "licensed-exploratory",
+      "rule": "Rule 5",
+      "dimension": "Statistical models",
+      "expected": "no",
+      "got": "no",
+      "pass": true,
+      "raw_judgement": "no",
+      "rationale": "No deviation: the paper reports the preregistered confirmatory two-tailed Welch independent-samples t-test on post-video STAI-S between conditions, alpha .05, and Cohen's d. Its added Pearson correlation is explicitly labelled exploratory and tentative, which is within the preregistered allowance for additional clearly labelled exploratory analyses. [PREREG_0003] [PAPER_0003] [PAPER_0004]"
+    },
+    {
+      "name": "licensed-overrun-new-hypothesis",
+      "rule": "Rule 5",
+      "dimension": "Hypotheses",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The registration specifies one confirmatory hypothesis only: H1 predicts higher backward digit span scores in the nature condition than the urban condition, and says additional exploratory analyses may be conducted only if clearly labelled exploratory [PREREG_0002] [PREREG_0003]. The paper reports the same H1, but adds H2 that the working-memory benefit is mediated by positive affect, reports a mediation analysis as supporting H2, and states that both hypotheses were confirmed [PAPER_0002] [PAPER_0004]. This H2 is not found in the provided registration excerpts and is presented as a hypothesis/confirmed result rather than merely a clearly labelled exploratory analysis, so this is a deviation.\n\n(RegCheck ran a targeted full-document search for: 'statement that H1 is the only confirmatory hypothesis' (paper); 'exploratory labelling for any additional hypothesis or mediation analysis (exploratory H2, exploratory mediation)' (paper); 'H2 that nature exposure benefit for working memory is mediated by positive affect (mediation hypothesis, positive affect mediator)' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "disclosed-deviation-still-yes",
+      "rule": "Rule 6",
+      "dimension": "Inclusion and exclusion criteria",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "There is a clear deviation: the registration specified excluding participants below 80% overall lexical-decision accuracy and excluding participants on no other basis, while the paper reports that it “relaxed” this participant-level exclusion threshold to 70% and excluded 6 participants under that criterion. The trial-level RT exclusion rule below 200 ms or above 1500 ms is consistent. [PREREG_0002] [PREREG_0003] [PAPER_0002] [PAPER_0003]"
+    },
+    {
+      "name": "registered-element-unverifiable",
+      "rule": "Rule 8",
+      "dimension": "Ethics approval",
+      "expected": "missing",
+      "got": "missing",
+      "pass": true,
+      "raw_judgement": "missing",
+      "rationale": "The registration states that the study was approved by the Institutional Review Board of the Faculty of Psychology under protocol number 2024-087 [PREREG_0003]. The provided paper excerpts describe methods, outcomes, and results but do not report ethics approval, the IRB, faculty, or protocol number [PAPER_0001] [PAPER_0002] [PAPER_0003] [PAPER_0004]. This prevents verification but does not show a contradictory approval.\n\n(RegCheck ran a targeted full-document search for: 'ethics approval (ethical approval, IRB approval, Institutional Review Board approval)' (paper); 'Faculty of Psychology IRB (Institutional Review Board of the Faculty of Psychology)' (paper); 'protocol number 2024-087 (approval number, ethics protocol)' (paper). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "mutual-silence",
+      "rule": "Rule 3",
+      "dimension": "Missing data",
+      "expected": "missing",
+      "got": "missing",
+      "pass": true,
+      "raw_judgement": "missing",
+      "rationale": "No deviation is evident, but the registration provides no usable specification for missing data handling, imputation, deletion, or retention thresholds in the provided excerpts; it only specifies measures and Welch t-test analyses [PREREG_0002] [PREREG_0003]. The paper likewise reports sample allocation, measures, and results without an explicit missing-data rule or handling method [PAPER_0001] [PAPER_0002] [PAPER_0004] [PAPER_0005]. Under the rule that mutual silence is not consistency, this dimension is missing.\n\n(RegCheck ran a targeted full-document search for: 'missing data handling (missing responses, incomplete responses, partial data)' (paper); 'imputation method' (paper); 'deletion rule (listwise deletion, pairwise deletion)' (paper); 'missing data handling (missing responses, incomplete responses, partial data)' (registration); 'imputation method' (registration); 'deletion rule (listwise deletion, pairwise deletion)' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "granularity-specified",
+      "rule": "Rule 4",
+      "dimension": "Sample size",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The registration committed to at least 100 participants in each of three conditions, minimum total N = 300, with recruitment continuing until each per-condition minimum was met [PREREG_0001]. The paper reports a final sample of 310 overall, but only 95 in the gain-framed condition, with 105 loss-framed and 110 control [PAPER_0002]. Thus the total minimum was met, but the registered per-condition minimum was not met for the gain condition."
+    },
+    {
+      "name": "epistemic-demotion",
+      "rule": "Rule 7",
+      "dimension": "Hypotheses",
+      "expected": "yes",
+      "got": "yes",
+      "pass": true,
+      "raw_judgement": "yes",
+      "rationale": "The registration specifies a confirmatory, directional hypothesis that retrieval practice will increase 48-hour cued recall relative to restudy, tested against no condition difference [PREREG_0001] with the dependent variable defined as 48-hour cued recall [PREREG_0003]. The paper addresses the same variables and observed direction, but reframes the analysis as tentative, exploratory, preliminary, and hypothesis-generating, explicitly drawing no confirmatory conclusions [PAPER_0002] [PAPER_0003] [PAPER_0004]. This is a substantive deviation in epistemic status from confirmatory prediction to exploratory analysis.\n\n(RegCheck ran a targeted full-document search for: 'confirmatory directional hypothesis/prediction (retrieval practice increases 48-hour cued recall vs restudy' (paper); 'null hypothesis of no condition difference)' (paper); 'exploratory or tentative research question (whether study strategy relates to delayed recall)' (registration); 'preliminary or hypothesis-generating epistemic status' (registration); 'no confirmatory conclusions framing' (registration). No further mentions were found beyond the excerpts already provided.)"
+    },
+    {
+      "name": "categorical-inference",
+      "rule": "Rule 9",
+      "dimension": "Study type (confirmatory vs exploratory)",
+      "expected": "no",
+      "got": "no",
+      "pass": true,
+      "raw_judgement": "no",
+      "rationale": "No deviation is evident. The registration explicitly identifies the study as confirmatory and states a preregistered H1 [PREREG_0001]. The paper reports preregistered, pre-data-collection elements: sample size determined before data collection [PAPER_0001], a primary outcome specified in the registration before data collection [PAPER_0003], and an advance-stated prediction/H1 tested as preregistered [PAPER_0003] [PAPER_0004]."
+    }
+  ]
+}

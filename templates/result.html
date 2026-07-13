@@ -1,886 +1,436 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
-    {% set static_version = '20260119' %}
     {% include '_partials/head_assets.html' %}
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-    <meta name="description" content="RegCheck is an AI tool to compare preregistrations with papers instantly."/>
+    <meta name="description" content="{{ brand_name }} is an AI tool to compare preregistrations with papers instantly."/>
     <meta name="robots" content="noindex,nofollow">
     <meta name="author" content="Jamie Cummins">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RegCheck Results</title>
+    <title>{{ brand_name }} Report</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/report.css') }}?v={{ static_version }}">
     <style>
-        .results-page .results-table__cell--prereg,
-        .results-page .results-table__cell--paper {
-            font-size: 0.82rem;
-            line-height: 1.45;
-        }
+      /* Inline title editing (click pencil -> edit in place -> save) */
+      .report-title.is-editing {
+        outline: none; cursor: text;
+        background: var(--rc-surface-2, #171b26);
+        border-bottom: 2px solid var(--rc-accent, #8b7cff);
+        border-radius: 4px 4px 0 0; padding: 0 0.3rem; min-width: 6rem;
+      }
+      .report-title-edit.is-saving { color: var(--rc-ok, #34d399); }
 
-        .results-page .results-table {
-            table-layout: auto;
-        }
-
-        /*
-         * Note: overflow on <td> is inconsistently supported across browsers.
-         * Wrap long content in a block-level div and scroll that instead.
-         */
-        .results-table__scroll {
-            max-height: 15rem;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
-
-        .results-page #results-table thead th:nth-child(1),
-        .results-page #results-table tbody tr.results-table__row--main td:nth-child(1) {
-            width: 18%;
-            min-width: 10.5rem;
-        }
-
-        .results-page #results-table thead th:nth-child(2),
-        .results-page #results-table tbody tr.results-table__row--main td:nth-child(2),
-        .results-page #results-table thead th:nth-child(3),
-        .results-page #results-table tbody tr.results-table__row--main td:nth-child(3) {
-            width: 41%;
-        }
-
-        .results-page .results-table__cell--paper {
-            border-top-right-radius: 16px;
-        }
-
-        .results-page .results-table__row--main .results-table__cell {
-            border-bottom: 0 !important;
-        }
-
-        .results-page .results-table__row--main .results-table__cell--dimension {
-            border-bottom-left-radius: 0;
-        }
-
-        .results-page .results-table__row--main .results-table__cell--paper {
-            border-bottom-right-radius: 0;
-        }
-
-        .results-page .results-table__cell--deviation {
-            border-top: 1px dashed rgba(255, 255, 255, 0.2);
-            border-left: 3px solid rgba(255, 255, 255, 0.1) !important;
-            border-right: 3px solid rgba(255, 255, 255, 0.1) !important;
-            border-bottom-left-radius: 16px;
-            border-bottom-right-radius: 16px;
-            color: #e9ecff;
-            font-size: 0.84rem;
-            line-height: 1.5;
-            text-align: left;
-        }
-
-        .results-page .results-table__deviation-label {
-            color: #ffffff;
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-        }
-
-        .results-page .results-subtitle {
-            color: #aeb6d9 !important;
-        }
-
-        .results-toggle {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            justify-content: center;
-            width: 100%;
-        }
-
-        .results-toggle-select {
-            width: auto;
-            min-width: 10.5rem;
-            background: #0c0f1a;
-            color: #f5f7ff;
-            border: 1px solid #2a3148;
-            border-radius: 10px;
-            font-size: 0.82rem;
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 500;
-            letter-spacing: 0.03em;
-            padding: 0.35rem 1.6rem 0.35rem 0.75rem;
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23f5f7ff' d='M1.41 0 6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 0.55rem center;
-            background-size: 0.6rem;
-            cursor: pointer;
-            box-shadow: none;
-            transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
-        }
-
-        .content-variant {
-            display: none;
-        }
-
-        .content-variant.active {
-            display: block;
-        }
-
-        .results-toggle-select:focus {
-            outline: none;
-            border-bottom-color: rgba(255, 255, 255, 0.5);
-            background-color: rgba(255, 255, 255, 0.05);
-        }
-
-        .results-toggle-select:hover {
-            color: #ffffff;
-            background-color: rgba(255, 255, 255, 0.04);
-        }
-
-        .results-page .cover-container {
-            padding-top: 1rem !important; /* match Bootstrap p-3 top padding used sitewide */
-        }
-
-        .results-page #results-page-tagline {
-            margin: 0;
-            letter-spacing: 0.04em;
-            padding: 0;
-        }
-
-        .results-page .results-main {
-            margin-top: 0.3rem;
-        }
-
-        .results-page header.mb-auto {
-            margin-bottom: 0 !important;
-        }
-
-        .results-page .results-meta {
-            margin: 0.25rem auto 0.5rem;
-            max-width: 100%;
-            min-width: 0;
-            width: 100%;
-        }
-
-        .results-page .results-log {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.25rem;
-            margin: 0 auto;
-            text-align: center;
-        }
-
-        .results-page .workflow-log-inline {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.2rem;
-            flex-wrap: nowrap;
-        }
-
-        .results-page .workflow-log-header {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-        }
-
-        .results-page .copy-link-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.06);
-            color: #dfe4ff;
-            padding: 0.16rem 0.45rem;
-            font-size: 0.7rem;
-            line-height: 1;
-        }
-
-        .results-page .copy-link-btn:hover,
-        .results-page .copy-link-btn:focus {
-            background: rgba(255, 255, 255, 0.12);
-            color: #ffffff;
-        }
-
-        .results-page .copy-link-btn__icon {
-            display: inline-flex;
-            width: 0.75rem;
-            height: 0.75rem;
-        }
-
-        .results-page .copy-link-btn__icon svg {
-            width: 100%;
-            height: 100%;
-            fill: currentColor;
-        }
-
-        .results-page #workflow-log-line {
-            word-break: break-word;
-            text-align: center;
-            max-width: 720px;
-            margin: 0 auto;
-        }
-
-        .results-page #workflow-log-container {
-            margin-top: 0;
-        }
-
-        .results-page #processing-status-note {
-            margin-bottom: 0.15rem;
-        }
-
-        @media (max-width: 768px) {
-            .results-page .results-meta {
-                max-width: 100%;
-                min-width: 0;
-            }
-
-            .results-page .results-log {
-                align-items: flex-start;
-                text-align: left;
-                max-width: 100%;
-            }
-
-        }
+      /* Share dialog (private reports) */
+      .report-share-modal {
+        position: fixed; inset: 0; z-index: 1080;
+        display: flex; align-items: center; justify-content: center;
+        padding: 1rem; background: rgba(4, 6, 12, 0.62);
+      }
+      .report-share-modal[hidden] { display: none; }
+      .report-share-dialog {
+        width: min(30rem, 100%); background: var(--rc-surface, #11141c);
+        border: 1px solid var(--rc-border-strong, rgba(190,200,230,.2));
+        border-radius: var(--rc-radius, 12px); box-shadow: var(--rc-shadow-md, 0 16px 40px rgba(0,0,0,.5));
+        padding: clamp(1.1rem, 3vw, 1.5rem);
+      }
+      .report-share-dialog__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem; margin-bottom: 0.3rem; }
+      .report-share-dialog__head h2 { font-size: 1.1rem; margin: 0; color: var(--rc-text, #eef1fb); }
+      .report-share-dialog__close {
+        border: none; background: none; color: var(--rc-faint, #8089a6); cursor: pointer;
+        font-size: 1.35rem; line-height: 1; padding: 0 0.2rem;
+      }
+      .report-share-dialog__close:hover { color: var(--rc-text, #eef1fb); }
+      .report-share-dialog__hint { color: var(--rc-muted, #9aa2bd); font-size: 0.82rem; margin: 0 0 0.9rem; }
+      .report-share-form { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0 0 0.9rem; }
+      .report-share-form input {
+        flex: 1 1 14rem; min-width: 0; background: var(--rc-surface-2, #171b26);
+        border: 1px solid var(--rc-border-strong, rgba(190,200,230,.2)); color: var(--rc-text, #eef1fb);
+        border-radius: var(--rc-radius-sm, 8px); padding: 0.5rem 0.7rem; font-size: 0.88rem;
+      }
+      .report-share-list { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; max-height: 14rem; overflow-y: auto; }
+      .report-share-item {
+        display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+        background: var(--rc-surface-2, #171b26); border: 1px solid var(--rc-border, rgba(190,200,230,.12));
+        border-radius: var(--rc-radius-sm, 8px); padding: 0.4rem 0.4rem 0.4rem 0.75rem; font-size: 0.85rem; color: var(--rc-text, #eef1fb);
+      }
+      .report-share-item__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .report-share-item__remove {
+        border: none; background: none; color: var(--rc-faint, #8089a6); cursor: pointer;
+        font-size: 1.15rem; line-height: 1; width: 1.5rem; height: 1.5rem; border-radius: 6px; flex: none;
+      }
+      .report-share-item__remove:hover { background: var(--rc-flag, #fb7185); color: #fff; }
+      .report-share-empty { color: var(--rc-faint, #8089a6); font-size: 0.82rem; margin: 0 0 0.9rem; }
+      .report-share-dialog__foot { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; border-top: 1px solid var(--rc-border, rgba(190,200,230,.12)); padding-top: 0.85rem; }
     </style>
 </head>
-<body class="d-flex h-100 text-center text-bg-dark results-page page-shell">
-    <div class="cover-container d-flex w-100 h-100 p-3 mx-auto flex-column">
-        <header class="mb-auto">
+<body class="text-bg-dark report-page page-shell">
+    <div class="report-shell">
+        <header class="report-header">
             {% include '_partials/navbar.html' %}
-        </header>
-        {% include '_partials/mobile_notice.html' %}
-
-        <main class="px-3 results-main">
-            <h1 class="text-center" id="results-page-tagline">Your RegCheck Report</h1>
-            <p class="small mb-1 results-subtitle" style="max-width: 720px; margin: 0.35rem auto 0.5rem;">
-                RegCheck reports may take a few minutes to generate—don’t worry, it’s running. Leaving this page won’t stop your report.
-            </p>
-                <div class="results-meta d-flex justify-content-center">
-                    <div class="results-log text-center">
-                        <div class="workflow-log-inline">
-                            <div class="workflow-log-header">
-                                <p class="small text-uppercase fw-semibold mb-0">Workflow log</p>
-                                <div id="workflow-spinner" class="spinner-border spinner-border-sm text-info" role="status" aria-hidden="true"></div>
-                                <button type="button" class="copy-link-btn" id="copy-report-link-btn" title="Copy report link" aria-label="Copy report link">
-                                    <span class="copy-link-btn__icon" aria-hidden="true">
-                                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                                            <path d="M15.5 2A5.5 5.5 0 0 0 10 7.5V9h2V7.5a3.5 3.5 0 0 1 7 0v3a3.5 3.5 0 0 1-3.5 3.5H14v2h1.5A5.5 5.5 0 0 0 21 10.5v-3A5.5 5.5 0 0 0 15.5 2Zm-7 6A5.5 5.5 0 0 0 3 13.5v3A5.5 5.5 0 0 0 8.5 22H10v-2H8.5a3.5 3.5 0 0 1-3.5-3.5v-3a3.5 3.5 0 0 1 3.5-3.5H10V8H8.5Zm1.5 5v2h4v-2h-4Z"/>
-                                        </svg>
-                                    </span>
-                                    <span id="copy-report-link-label">Copy report link</span>
-                                </button>
-                            </div>
-                            <p id="workflow-log-line" class="small mb-0 font-monospace text-info"></p>
-                        </div>
-                        <p id="processing-status-note" class="small mb-0"></p>
+            <div class="report-topbar">
+                <div class="report-topbar__lead">
+                    <div class="report-view-toggle d-none" id="report-view-toggle" role="group" aria-label="Report view">
+                        <button type="button" class="report-view-btn is-active" data-view="decision">Overview</button>
+                        <button type="button" class="report-view-btn" data-view="documents">Evidence</button>
                     </div>
+                    <h1 id="results-page-tagline" class="report-title">{{ report_title }}</h1>
+                    {% if is_owner %}
+                    <button type="button" class="report-title-edit" id="report-rename-btn" aria-label="Rename report" title="Rename report">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    </button>
+                    {% endif %}
+                    <span class="report-status-pill" id="report-status-pill" aria-live="polite" title="">
+                        <span class="report-status-pill__dot" id="report-status-dot"></span>
+                        <span id="report-status-text">Processing</span>
+                    </span>
+                    <span class="report-cost-line d-none" id="report-cost-line" title="Estimated model cost for this report (tokens priced per provider rates)"></span>
+                    {% if can_set_visibility %}
+                    <label class="report-visibility" title="Who can see this report">
+                        <select id="report-visibility-select" aria-label="Report visibility">
+                            <option value="public" {{ 'selected' if report_visibility == 'public' else '' }}>Public</option>
+                            <option value="private" {{ 'selected' if report_visibility != 'public' else '' }}>Private</option>
+                        </select>
+                    </label>
+                    {% elif is_owner %}
+                    <span class="report-visibility-badge">{{ report_visibility|capitalize }}</span>
+                    {% endif %}
                 </div>
-            <div class="d-flex align-items-center justify-content-between flex-wrap mb-2">
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <label for="quote-limit-select" class="small mb-0">Quotes shown per cell:</label>
-                    <select id="quote-limit-select" class="form-select form-select-sm" style="width: auto; min-width: 6rem; font-size: 0.8rem;">
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3" selected>3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                        <option value="8">8</option>
-                        <option value="9">9</option>
-                        <option value="10">10</option>
-                        <option value="all">All available</option>
-                    </select>
+                <div class="report-actions">
+                    <button type="button" class="report-action-btn report-action-btn--ghost report-focus-btn" id="report-focus-btn" aria-label="Full screen" title="Full screen (more room for documents)" aria-pressed="false">
+                        <svg class="report-action-btn__icon report-focus-btn__expand" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                        <svg class="report-action-btn__icon report-focus-btn__compress" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+                        <span class="report-focus-btn__label">Full screen</span>
+                    </button>
+                    <button type="button" class="report-action-btn report-action-btn--icon report-action-btn--ghost report-settings-btn d-none" id="report-settings-btn" aria-label="View report settings" title="View settings (model, parser, dimensions)" aria-haspopup="dialog" aria-expanded="false">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></svg>
+                    </button>
+                    {% if is_owner %}
+                    <button type="button" class="report-action-btn report-action-btn--icon report-action-btn--ghost report-action-btn--danger" id="report-delete-btn" aria-label="Delete report" title="Delete report">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                    </button>
+                    {% endif %}
+                    <button type="button" class="report-action-btn report-action-btn--icon report-action-btn--primary" id="copy-report-link-btn" aria-label="Share report" title="Share">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                        <span id="copy-report-link-label" class="visually-hidden">Share</span>
+                    </button>
+                    <button type="button" class="report-action-btn report-action-btn--icon report-action-btn--ghost" id="report-download-btn" aria-label="Download report" title="Download" aria-haspopup="menu" aria-expanded="false">
+                        <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <path d="M7 10l5 5 5-5"/>
+                            <path d="M12 15V3"/>
+                        </svg>
+                    </button>
                 </div>
-                <!-- Legend explaining row colors -->
-                <div class="results-legend mb-0" aria-label="Legend: row color meanings">
-                    <span class="legend-item"><span class="legend-swatch legend-swatch--red"></span> Deviation found</span>
-                    <span class="legend-item"><span class="legend-swatch legend-swatch--blue"></span> No deviation</span>
-                    <span class="legend-item"><span class="legend-swatch legend-swatch--amber"></span> Missing information / No information found</span>
+            </div>
+            <div id="report-log" class="report-log d-none" aria-live="polite">
+                <div class="report-log__head">
+                    <span class="report-log__title">
+                        <span class="report-log__spinner" aria-hidden="true"></span>
+                        Generating report
+                    </span>
+                    <span id="report-log-progress" class="report-log__progress"></span>
                 </div>
+                <ol id="report-log-list" class="report-log__list"></ol>
+            </div>
+        </header>
+
+        {% if multi_study_isolation == "failed" %}
+        <div role="alert" style="margin:0 auto 1.1rem; max-width:1100px; padding:.85rem 1.1rem; border:1px solid rgba(214,158,46,.5); border-left:4px solid #d69e2e; border-radius:.5rem; background:rgba(214,158,46,.12); font-size:.92rem; line-height:1.5;">
+            <strong>Multi-study isolation didn't run.</strong>
+            {{ brand_name }} couldn't isolate study {{ multi_study_label or "the selected study" }} from the paper, so this comparison ran on the <strong>full paper</strong> rather than just that study.{% if multi_study_isolation_error %} Reason: {{ multi_study_isolation_error }}.{% endif %}
+            Re-running, or choosing a different model, may help.
+        </div>
+        {% endif %}
+
+        <main id="report-app" class="report-workspace" data-task-id="{{ task_id }}">
+            <div id="view-decision" class="report-view report-view--decision">
+                <aside class="report-dimension-rail" aria-label="Dimensions">
+                    <div class="rail-heading">
+                        <span>Dimensions</span>
+                        <span id="dimension-count" class="rail-count">0</span>
+                    </div>
+                    <div id="dimension-list" class="dimension-list"></div>
+                </aside>
+
+                <section class="report-detail" aria-label="Report detail">
+                    <div id="report-empty-state" class="report-empty-state">
+                        <span class="report-empty-state__spinner" aria-hidden="true"></span>
+                        <p>Preparing your report&hellip;</p>
+                    </div>
+                    <article id="dimension-detail" class="dimension-detail d-none"></article>
+                </section>
+
+                <aside class="report-quotes" aria-label="Summaries">
+                    <div id="quotes-pane" class="quotes-pane"></div>
+                </aside>
             </div>
 
-            <!-- Result container, will be dynamically updated -->
-            <div id="result-container" class="table-responsive results-table-wrapper">
-                <table id="results-table" class="results-table align-middle">
-                    <thead>
-                        <tr>
-                            <th>Dimension</th>
-                            <th>
-                                <div class="results-toggle">
-                                    <select id="prereg-view-toggle" class="form-select form-select-sm results-toggle-select" aria-label="Preregistration view">
-                                        <option value="quotes" selected>PREREGISTRATION — DIRECT QUOTES</option>
-                                        <option value="summary">PREREGISTRATION — SUMMARY</option>
-                                    </select>
-                                </div>
-                            </th>
-                            <th>
-                                <div class="results-toggle">
-                                    <select id="paper-view-toggle" class="form-select form-select-sm results-toggle-select" aria-label="Paper view">
-                                        <option value="quotes" selected>PAPER — DIRECT QUOTES</option>
-                                        <option value="summary">PAPER — SUMMARY</option>
-                                    </select>
-                                </div>
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    </tbody>
-                </table>
-            </div>
-            <div class="text-center">
-                <button class="btn btn-primary btn-submit" id="app-download-btn">Download as CSV</button>
-            </div>
+            <section id="view-documents" class="report-view report-view--documents d-none" aria-label="Source documents"></section>
         </main>
 
         {% include '_partials/footer.html' %}
     </div>
 
+    <div id="report-toast" class="report-toast" role="status" aria-live="polite"></div>
+
+    {% if can_set_visibility %}
+    <div id="report-share-modal" class="report-share-modal" hidden role="dialog" aria-modal="true" aria-labelledby="report-share-title">
+      <div class="report-share-dialog">
+        <div class="report-share-dialog__head">
+          <h2 id="report-share-title">Share this report</h2>
+          <button type="button" class="report-share-dialog__close" id="report-share-close" aria-label="Close">&times;</button>
+        </div>
+        <p class="report-share-dialog__hint">Only you and the people you add can open this private report. Add by email or ORCID iD; they'll need to sign in.</p>
+        <form id="report-share-form" class="report-share-form">
+          <input type="text" id="report-share-input" name="grantee" placeholder="Email or ORCID iD" autocomplete="off" aria-label="Email or ORCID iD to grant access">
+          <button type="submit" class="report-action-btn report-action-btn--primary">Add</button>
+        </form>
+        <ul id="report-share-list" class="report-share-list">
+          {% for s in shares %}
+          <li class="report-share-item" data-share-id="{{ s.id }}">
+            <span class="report-share-item__label">{{ s.label }}</span>
+            <button type="button" class="report-share-item__remove" data-share-id="{{ s.id }}" aria-label="Remove {{ s.label }}">&times;</button>
+          </li>
+          {% endfor %}
+        </ul>
+        <p id="report-share-empty" class="report-share-empty{{ ' d-none' if shares else '' }}">No one added yet — only you can see this report.</p>
+        <div class="report-share-dialog__foot">
+          <button type="button" class="report-action-btn report-action-btn--ghost" id="report-share-copy">
+            <svg class="report-action-btn__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <span>Copy link</span>
+          </button>
+          <button type="button" class="report-action-btn report-action-btn--primary" id="report-share-done">Done</button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
+    <script src="{{ url_for('static', path='js/quote-locator.js') }}?v={{ static_version }}"></script>
+    <script src="{{ url_for('static', path='js/report.js') }}?v={{ static_version }}"></script>
+    {% if is_owner %}
     <script>
-        (function() {
-        })();
-    </script>
-<script>
-    function createResultsCell(content, extraClass = "") {
-        const cell = document.createElement("td");
-        cell.className = `results-table__cell ${extraClass}`.trim();
+      (() => {
+        const app = document.getElementById("report-app");
+        const taskId = app ? app.dataset.taskId : "";
+        const titleEl = document.getElementById("results-page-tagline");
+        const renameBtn = document.getElementById("report-rename-btn");
+        const visSelect = document.getElementById("report-visibility-select");
+        const deleteBtn = document.getElementById("report-delete-btn");
+        const toast = document.getElementById("report-toast");
 
-        // For long text columns, wrap content in a scrollable div
-        const needsScroll = extraClass.includes("results-table__cell--prereg")
-            || extraClass.includes("results-table__cell--paper");
-
-        if (needsScroll) {
-            const wrapper = document.createElement("div");
-            wrapper.className = "results-table__scroll";
-            wrapper.innerHTML = content || "";
-            cell.appendChild(wrapper);
-        } else {
-            cell.innerHTML = content || "";
+        function flash(message) {
+          if (!toast) return;
+          toast.textContent = message;
+          toast.classList.add("is-visible");
+          clearTimeout(flash._t);
+          flash._t = setTimeout(() => toast.classList.remove("is-visible"), 1800);
         }
-        return cell;
-    }
-
-    function getDeviationLabel(deviationJudgement) {
-        const normalized = (deviationJudgement || "").toString().trim().toLowerCase();
-        if (normalized === "yes") return "Deviation";
-        if (normalized === "no") return "No Deviation";
-        return "Inconclusive";
-    }
-
-    function createDeviationCell(content, deviationJudgement) {
-        const cell = document.createElement("td");
-        cell.className = "results-table__cell results-table__cell--deviation";
-        cell.setAttribute("colspan", "3");
-
-        const label = document.createElement("span");
-        label.className = "results-table__deviation-label";
-        label.textContent = `${getDeviationLabel(deviationJudgement)}:`;
-
-        const details = document.createElement("span");
-        const text = (content || "").toString().trim() || "No deviation information found.";
-        details.textContent = ` ${text}`;
-
-        cell.appendChild(label);
-        cell.appendChild(details);
-        return cell;
-    }
-
-    function applyVariantToCell(cell, variant) {
-        const variants = cell.querySelectorAll(".content-variant");
-        variants.forEach((el) => el.classList.remove("active"));
-        const target = cell.querySelector(`.content-variant--${variant}`);
-        if (target) {
-            target.classList.add("active");
-        } else if (variants.length > 0) {
-            variants[0].classList.add("active");
+        async function post(path, params) {
+          const res = await fetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(params),
+          });
+          if (!res.ok) throw new Error("Request failed: " + res.status);
+          return res.json();
         }
-    }
 
-    function escapeHtml(str) {
-        if (str === null || str === undefined) return "";
-        return str
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
+        // ── Inline title rename (edit in place; pencil ⇄ save) ──────────────
+        const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+        const CHECK_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
+        let renameOriginal = "";
 
-    function parseQuotes(quotes) {
-        if (!quotes) return [];
-        const parts = [];
-        const regex = /\[((?:PREREG|PAPER)_(\d+)),\s*relevance_score=([0-9.]+)\]\s*([\s\S]*?)(?=(\[(?:PREREG|PAPER)_[0-9]{4,}[^\]]*\])|$)/g;
-        let match;
-        while ((match = regex.exec(quotes)) !== null) {
-            const chunk = (match[0] || "").trim();
-            if (!chunk) continue;
-            const id = match[1] || "";
-            const num = parseInt(match[2], 10);
-            const score = parseFloat(match[3]);
-            const text = (match[4] || "").trim();
-            parts.push({
-                id,
-                num: Number.isFinite(num) ? num : 0,
-                score: Number.isFinite(score) ? score : 0,
-                text,
-                raw: chunk,
-            });
+        function enterRename() {
+          renameOriginal = titleEl.textContent.trim();
+          titleEl.setAttribute("contenteditable", "true");
+          titleEl.classList.add("is-editing");
+          renameBtn.innerHTML = CHECK_SVG;
+          renameBtn.classList.add("is-saving");
+          renameBtn.setAttribute("aria-label", "Save report name");
+          renameBtn.title = "Save report name";
+          titleEl.focus();
+          const range = document.createRange();
+          range.selectNodeContents(titleEl);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
         }
-        if (parts.length === 0) {
-            // Fallback: treat blank lines as separators
-            const fallback = quotes.split(/\n\s*\n/);
-            return fallback
-                .map(p => p.trim())
-                .filter(Boolean)
-                .map((t, idx) => ({
-                    id: `QUOTE_${idx + 1}`,
-                    num: idx + 1,
-                    score: 0,
-                    text: t,
-                    raw: t,
-                }));
+
+        function exitRename() {
+          titleEl.removeAttribute("contenteditable");
+          titleEl.classList.remove("is-editing");
+          renameBtn.innerHTML = PENCIL_SVG;
+          renameBtn.classList.remove("is-saving");
+          renameBtn.setAttribute("aria-label", "Rename report");
+          renameBtn.title = "Rename report";
         }
-        return parts;
-    }
 
-    function renderQuotes(quotesList, limit) {
-        if (!Array.isArray(quotesList) || quotesList.length === 0) return "";
-
-        // Sort by relevance (score desc) to select, then by doc order (id num asc) to display
-        let sorted = [...quotesList].sort((a, b) => (b.score || 0) - (a.score || 0));
-        if (typeof limit === "number" && limit > 0) {
-            sorted = sorted.slice(0, limit);
-        }
-        sorted.sort((a, b) => (a.num || 0) - (b.num || 0));
-
-        return sorted
-            .map(q => {
-                let label = "";
-                if (q.id) {
-                    const scoreStr =
-                        Number.isFinite(q.score) && q.score !== null
-                            ? `, relevance_score=${q.score.toFixed(3)}`
-                            : "";
-                    label = `[${escapeHtml(q.id)}${scoreStr}] `;
-                }
-                return label + escapeHtml(q.text || q.raw || "");
+        function saveRename() {
+          const next = titleEl.textContent.replace(/\s+/g, " ").trim();
+          if (!next || next === renameOriginal) {
+            titleEl.textContent = renameOriginal;
+            exitRename();
+            return;
+          }
+          post(`/reports/${encodeURIComponent(taskId)}/rename`, { title: next })
+            .then((data) => {
+              const saved = data.title || next;
+              titleEl.textContent = saved;
+              document.title = saved + " · {{ brand_name }}";
+              flash("Report renamed");
             })
-            .join("<br><br>");
-    }
-
-    function renderQuotesPlain(quotesList, limit) {
-        if (!Array.isArray(quotesList) || quotesList.length === 0) return "";
-        let sorted = [...quotesList].sort((a, b) => (b.score || 0) - (a.score || 0));
-        if (typeof limit === "number" && limit > 0) {
-            sorted = sorted.slice(0, limit);
+            .catch(() => { titleEl.textContent = renameOriginal; flash("Could not rename report"); })
+            .finally(exitRename);
         }
-        sorted.sort((a, b) => (a.num || 0) - (b.num || 0));
-        return sorted
-            .map((q) => {
-                let label = "";
-                if (q.id) {
-                    const scoreStr =
-                        Number.isFinite(q.score) && q.score !== null
-                            ? `, relevance_score=${q.score.toFixed(3)}`
-                            : "";
-                    label = `[${q.id}${scoreStr}] `;
-                }
-                return `${label}${(q.text || q.raw || "").toString().trim()}`.trim();
-            })
-            .join("\n\n");
-    }
 
-    function applyQuoteLimitAll() {
-        const limit = window.quoteLimit;
-        document.querySelectorAll(".content-variant--quotes").forEach(div => {
-            const quotesList = div._quotesList || [];
-            div.innerHTML = renderQuotes(quotesList, limit);
-        });
-    }
-
-    function createToggleCell({ quotes, summary, section }) {
-        const cell = document.createElement("td");
-        const sectionClass = section === "paper" ? "results-table__cell--paper" : "results-table__cell--prereg";
-        cell.className = `results-table__cell ${sectionClass}`.trim();
-        cell.dataset.section = section;
-
-        const wrapper = document.createElement("div");
-        wrapper.className = "results-table__scroll";
-
-        const quotesDiv = document.createElement("div");
-        quotesDiv.className = "content-variant content-variant--quotes";
-        const quotesList = parseQuotes(quotes);
-        quotesDiv._quotesList = quotesList;
-        quotesDiv.innerHTML = renderQuotes(quotesList, window.quoteLimit);
-
-        const summaryDiv = document.createElement("div");
-        summaryDiv.className = "content-variant content-variant--summary";
-        summaryDiv.innerHTML = summary || "";
-
-        wrapper.appendChild(quotesDiv);
-        wrapper.appendChild(summaryDiv);
-        cell.appendChild(wrapper);
-
-        const view = section === "paper" ? window.paperView || "quotes" : window.preregView || "quotes";
-        applyVariantToCell(cell, view);
-        return cell;
-    }
-
-    function updateSectionView(section, variant) {
-        const cells = document.querySelectorAll(`td[data-section="${section}"]`);
-        cells.forEach((cell) => applyVariantToCell(cell, variant));
-    }
-
-    function csvEscape(value) {
-        const text = (value === null || value === undefined ? "" : value).toString();
-        return `"${text.replace(/"/g, "\"\"")}"`;
-    }
-
-    function getSectionSummaryCsvText(item, section) {
-        return (section === "paper" ? item.paper_content_summary : item.registration_content_summary) || "";
-    }
-
-    function getSectionQuotesCsvText(item, section) {
-        const quotes = (section === "paper" ? item.paper_content_quotes : item.registration_content_quotes) || "";
-        return renderQuotesPlain(parseQuotes(quotes), undefined);
-    }
-
-    function getOrderedResultItems() {
-        const ordered = [];
-        const rows = document.querySelectorAll("#results-table tbody tr.results-table__row--main");
-        rows.forEach((row) => {
-            const key = row.getAttribute("data-key") || "";
-            const item = window.latestResultItemsByKey.get(key);
-            if (item) {
-                ordered.push(item);
-            }
-        });
-        if (ordered.length > 0) return ordered;
-        return Array.from(window.latestResultItemsByKey.values());
-    }
-
-    function downloadCsv() {
-        const rows = [[
-            "Dimension",
-            "Preregistration Direct Quotes",
-            "Preregistration Summary",
-            "Paper Direct Quotes",
-            "Paper Summary",
-            "Deviation Information",
-            "Deviation Judgement",
-        ]];
-
-        getOrderedResultItems().forEach((item) => {
-            rows.push([
-                item.dimension || "",
-                getSectionQuotesCsvText(item, "prereg"),
-                getSectionSummaryCsvText(item, "prereg"),
-                getSectionQuotesCsvText(item, "paper"),
-                getSectionSummaryCsvText(item, "paper"),
-                item.deviation_information || "",
-                item.deviation_judgement || "",
-            ]);
-        });
-
-        const csvText = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-        const csvFile = new Blob(["\uFEFF", csvText], { type: "text/csv;charset=utf-8;" });
-        const downloadLink = document.createElement("a");
-        downloadLink.download = "output.csv";
-        downloadLink.href = window.URL.createObjectURL(csvFile);
-        downloadLink.style.display = "none";
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-    }
-
-    window.preregView = "quotes";
-    window.paperView = "quotes";
-    window.quoteLimit = 3;
-    window.latestResultItemsByKey = new Map();
-
-    const preregToggle = document.getElementById("prereg-view-toggle");
-    const paperToggle = document.getElementById("paper-view-toggle");
-
-    if (preregToggle) {
-        preregToggle.addEventListener("change", (event) => {
-            window.preregView = event.target.value || "quotes";
-            updateSectionView("prereg", window.preregView);
-        });
-    }
-
-    if (paperToggle) {
-        paperToggle.addEventListener("change", (event) => {
-            window.paperView = event.target.value || "quotes";
-            updateSectionView("paper", window.paperView);
-        });
-    }
-
-    const quoteLimitSelect = document.getElementById("quote-limit-select");
-    if (quoteLimitSelect) {
-        quoteLimitSelect.addEventListener("change", (event) => {
-            const value = event.target.value;
-            if (value === "all") {
-                window.quoteLimit = undefined;
-            } else {
-                const parsed = parseInt(value, 10);
-                window.quoteLimit = Number.isFinite(parsed) && parsed > 0 ? parsed : 3;
-            }
-            applyQuoteLimitAll();
-        });
-    }
-
-    const downloadButton = document.getElementById("app-download-btn");
-    if (downloadButton) {
-        downloadButton.addEventListener("click", downloadCsv);
-    }
-
-    async function copyReportLink() {
-        const link = window.location.href;
-        if (navigator.clipboard && window.isSecureContext) {
-            try {
-                await navigator.clipboard.writeText(link);
-                return true;
-            } catch (error) {
-                // Fall through to legacy copy path.
-            }
+        if (renameBtn && titleEl) {
+          renameBtn.addEventListener("click", () => {
+            if (titleEl.classList.contains("is-editing")) saveRename();
+            else enterRename();
+          });
+          titleEl.addEventListener("keydown", (event) => {
+            if (!titleEl.classList.contains("is-editing")) return;
+            if (event.key === "Enter") { event.preventDefault(); saveRename(); }
+            else if (event.key === "Escape") { event.preventDefault(); titleEl.textContent = renameOriginal; exitRename(); }
+          });
         }
-        const fallback = document.createElement("textarea");
-        fallback.value = link;
-        fallback.style.position = "fixed";
-        fallback.style.left = "-9999px";
-        document.body.appendChild(fallback);
-        fallback.focus();
-        fallback.select();
-        let copied = false;
-        try {
-            copied = document.execCommand("copy");
-        } catch (error) {
-            copied = false;
-        }
-        document.body.removeChild(fallback);
-        return copied;
-    }
 
-    const copyReportLinkButton = document.getElementById("copy-report-link-btn");
-    const copyReportLinkLabel = document.getElementById("copy-report-link-label");
-    let copyReportLinkResetHandle = null;
-    if (copyReportLinkButton) {
-        copyReportLinkButton.addEventListener("click", async () => {
-            const copied = await copyReportLink();
-            if (copyReportLinkLabel) {
-                copyReportLinkLabel.textContent = copied ? "Copied" : "Copy failed";
-                if (copyReportLinkResetHandle) {
-                    window.clearTimeout(copyReportLinkResetHandle);
-                }
-                copyReportLinkResetHandle = window.setTimeout(() => {
-                    copyReportLinkLabel.textContent = "Copy report link";
-                }, 1600);
-            }
-        });
-    }
+        // ── Visibility + private share dialog ───────────────────────────────
+        const modal = document.getElementById("report-share-modal");
+        const shareList = document.getElementById("report-share-list");
+        const shareForm = document.getElementById("report-share-form");
+        const shareInput = document.getElementById("report-share-input");
+        const shareEmpty = document.getElementById("report-share-empty");
 
-    function getDeviationRowClass(deviation) {
-        const normalized = (deviation || "").toString().trim().toLowerCase();
-        if (normalized === "yes") return "results-table__row--dev-yes";
-        if (normalized === "no") return "results-table__row--dev-no";
-        // Prepare for potential future states like missing/unknown
-        if (normalized === "unknown" || normalized === "missing" || normalized === "no information found" || normalized === "information missing") {
-            return "results-table__row--dev-unknown";
-        }
-        return "";
-    }
-
-    let lastWorkflowStatus = null;
-    window.latestWorkflowStatus = "";
-    const workflowSpinner = document.getElementById("workflow-spinner");
-
-    function appendWorkflowLog(statusText) {
-        if (!statusText) return;
-        if (statusText === lastWorkflowStatus) return;
-        lastWorkflowStatus = statusText;
-        window.latestWorkflowStatus = statusText;
-        const logLine = document.getElementById("workflow-log-line");
-        if (!logLine) return;
-        const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-        logLine.textContent = `[${timestamp}] ${statusText}`;
-    }
-
-    async function pollTaskStatus() {
-        const taskId = "{{ task_id }}";
-        const resultContainer = document.getElementById("result-container");
-        const loadingMessage = document.getElementById("loading-message");
-        const processedCounter = document.getElementById("processed-count");
-        const totalCounter = document.getElementById("total-count");
-        const statusNote = document.getElementById("processing-status-note");
-
-        const coerceCount = (value) => {
-            if (value === null || value === undefined) {
-                return null;
-            }
-            if (typeof value === "number" && Number.isFinite(value)) {
-                return value;
-            }
-            if (typeof value === "string") {
-                const parsed = Number.parseInt(value.trim(), 10);
-                if (!Number.isNaN(parsed)) {
-                    return parsed;
-                }
-            }
-            return null;
+        const VIS_MESSAGE = {
+          public: "Now public (listed on your profile)",
+          private: "Now private (only you and people you add)",
         };
 
-        function updateProgress(processed, total, state) {
-            if (processedCounter && processed !== null) {
-                processedCounter.textContent = processed;
-            }
-            if (totalCounter && total !== null) {
-                totalCounter.textContent = total;
-            }
-            if (statusNote) {
-                statusNote.classList.remove("text-danger", "text-success", "text-muted");
-                if (state === "SUCCESS") {
-                    statusNote.textContent = "";
-                    statusNote.classList.add("text-success");
-                } else if (state === "FAILURE") {
-                    statusNote.textContent = window.latestWorkflowStatus || "An error occurred while processing your request.";
-                    statusNote.classList.add("text-danger");
-                } else {
-                    statusNote.textContent = "";
-                    statusNote.classList.add("text-muted");
-                }
-            }
-            if (loadingMessage) {
-                loadingMessage.dataset.state = state || "PENDING";
-            }
-
-            if (workflowSpinner) {
-                if (state === "SUCCESS" || state === "FAILURE") {
-                    workflowSpinner.classList.add("d-none");
-                    workflowSpinner.setAttribute("aria-hidden", "true");
-                } else {
-                    workflowSpinner.classList.remove("d-none");
-                    workflowSpinner.removeAttribute("aria-hidden");
-                }
-            }
-
-            const logLine = document.getElementById("workflow-log-line");
-            if (logLine) {
-                logLine.className = "small mb-0 font-monospace";
-                if (state === "SUCCESS") {
-                    logLine.classList.add("text-success");
-                } else {
-                    logLine.classList.add("text-info");
-                }
-            }
+        function currentVisibility() {
+          return visSelect ? visSelect.value : "private";
+        }
+        function openShareModal() {
+          if (!modal) return;
+          modal.hidden = false;
+          if (shareInput) shareInput.focus();
+        }
+        function closeShareModal() {
+          if (modal) modal.hidden = true;
         }
 
-        async function checkStatus() {
+        // The Share button (wired in report.js) defers to this: private reports
+        // open the dialog; public just copies the link.
+        window.regcheckShareClick = () => {
+          if (currentVisibility() === "private") { openShareModal(); return true; }
+          return false;
+        };
+
+        const shareClose = document.getElementById("report-share-close");
+        const shareDone = document.getElementById("report-share-done");
+        const shareCopy = document.getElementById("report-share-copy");
+        if (shareClose) shareClose.addEventListener("click", closeShareModal);
+        if (shareDone) shareDone.addEventListener("click", closeShareModal);
+        if (shareCopy) shareCopy.addEventListener("click", () => {
+          if (typeof window.regcheckCopyReportLink === "function") window.regcheckCopyReportLink();
+        });
+        if (modal) {
+          modal.addEventListener("click", (event) => { if (event.target === modal) closeShareModal(); });
+          window.addEventListener("keydown", (event) => { if (event.key === "Escape" && !modal.hidden) closeShareModal(); });
+        }
+
+        function refreshEmptyState() {
+          if (!shareEmpty || !shareList) return;
+          const hasAny = shareList.querySelector(".report-share-item") !== null;
+          shareEmpty.classList.toggle("d-none", hasAny);
+        }
+
+        function addShareItem(share) {
+          if (!shareList) return;
+          const li = document.createElement("li");
+          li.className = "report-share-item";
+          li.dataset.shareId = share.id;
+          const label = document.createElement("span");
+          label.className = "report-share-item__label";
+          label.textContent = share.label;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "report-share-item__remove";
+          btn.dataset.shareId = share.id;
+          btn.setAttribute("aria-label", "Remove " + share.label);
+          btn.innerHTML = "&times;";
+          li.append(label, btn);
+          shareList.appendChild(li);
+          refreshEmptyState();
+        }
+
+        if (visSelect) {
+          visSelect.addEventListener("change", () => {
+            const value = visSelect.value;
+            post(`/reports/${encodeURIComponent(taskId)}/visibility`, { visibility: value })
+              .then((data) => flash(VIS_MESSAGE[data.visibility] || "Visibility updated"))
+              .catch(() => flash("Could not update visibility"));
+            // Making it private? Open the dialog so they can add people now.
+            if (value === "private") openShareModal();
+          });
+        }
+
+        if (shareForm && shareInput) {
+          shareForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const value = shareInput.value.trim();
+            if (!value) return;
             try {
-                const response = await fetch(`/task_status/${taskId}`);
-                const data = await response.json();
-                appendWorkflowLog(data.status || data.state || "");
-
-                let processedCount = coerceCount(data.processed_dimensions);
-                let totalCount = coerceCount(data.total_dimensions);
-
-                if (data.result && Array.isArray(data.result.items)) {
-                    const resultsTableBody = document.querySelector("#results-table tbody");
-                    const existingKeys = new Set();
-                    if (resultsTableBody) {
-                        for (const row of resultsTableBody.querySelectorAll("tr.results-table__row--main")) {
-                            const key = row.getAttribute("data-key");
-                            if (key) {
-                                existingKeys.add(key);
-                            }
-                        }
-                    }
-                    const uniqueDimensions = new Set();
-                    data.result.items.forEach(item => {
-                        const rawDimension = item && typeof item.dimension === "string" ? item.dimension : "";
-                        const key = `${rawDimension}`;
-                        uniqueDimensions.add(key);
-                        if (!existingKeys.has(key)) {
-                            window.latestResultItemsByKey.set(key, item || {});
-                            const tr = document.createElement("tr");
-                            tr.setAttribute("data-key", key);
-                            tr.classList.add("results-table__row", "results-table__row--main");
-                            const rowClass = getDeviationRowClass(item.deviation_judgement);
-                            if (rowClass) tr.classList.add(rowClass);
-
-                            const dimensionCell = createResultsCell(item.dimension || "", "results-table__cell--dimension");
-                            const preregCell = createToggleCell({
-                                quotes: item.registration_content_quotes || "",
-                                summary: item.registration_content_summary || "",
-                                section: "prereg"
-                            });
-                            const paperCell = createToggleCell({
-                                quotes: item.paper_content_quotes || "",
-                                summary: item.paper_content_summary || "",
-                                section: "paper"
-                            });
-
-                            tr.appendChild(dimensionCell);
-                            tr.appendChild(preregCell);
-                            tr.appendChild(paperCell);
-
-                            const deviationTr = document.createElement("tr");
-                            deviationTr.classList.add("results-table__row", "results-table__row--deviation");
-                            if (rowClass) deviationTr.classList.add(rowClass);
-                            deviationTr.appendChild(
-                                createDeviationCell(item.deviation_information || "", item.deviation_judgement || "")
-                            );
-
-                            if (resultsTableBody) {
-                                resultsTableBody.appendChild(tr);
-                                resultsTableBody.appendChild(deviationTr);
-                                existingKeys.add(key);
-                            }
-                        }
-                    });
-                    if (processedCount === null) {
-                        processedCount = uniqueDimensions.size;
-                    }
-                    if (totalCount === null && uniqueDimensions.size > 0) {
-                        totalCount = uniqueDimensions.size;
-                    }
-                }
-
-                if (processedCount === null && processedCounter) {
-                    const existingProcessed = coerceCount(processedCounter.textContent);
-                    if (existingProcessed !== null) {
-                        processedCount = existingProcessed;
-                    } else {
-                        processedCount = 0;
-                    }
-                }
-                if (totalCount === null && totalCounter) {
-                    const existingTotal = coerceCount(totalCounter.textContent);
-                    if (existingTotal !== null) {
-                        totalCount = existingTotal;
-                    } else if (processedCount !== null) {
-                        totalCount = processedCount;
-                    }
-                }
-
-                updateProgress(processedCount, totalCount, data.state);
-
-                if (data.state === "FAILURE") {
-                    resultContainer.innerHTML = "<p class='text-danger'>An error occurred while processing your request.</p>";
-                    return;
-                }
-
-                if (data.state !== "SUCCESS") {
-                    setTimeout(checkStatus, 3000);
-                }
-            } catch (e) {
-                resultContainer.innerHTML = "<p class='text-danger'>Failed to fetch status. Please refresh the page.</p>";
-                updateProgress(null, null, "FAILURE");
+              const res = await fetch(`/reports/${encodeURIComponent(taskId)}/shares`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({ grantee: value }),
+              });
+              const data = await res.json().catch(() => ({ ok: false }));
+              if (!data.ok) { flash(data.error || "Could not add that person"); return; }
+              if (!shareList.querySelector(`[data-share-id="${data.share.id}"]`)) addShareItem(data.share);
+              shareInput.value = "";
+              flash("Access granted to " + data.share.label);
+            } catch (err) {
+              flash("Could not add person");
             }
+          });
         }
-        checkStatus();
-    }
-    window.onload = pollTaskStatus;
+
+        if (shareList) {
+          shareList.addEventListener("click", (event) => {
+            const btn = event.target.closest(".report-share-item__remove");
+            if (!btn) return;
+            const id = btn.dataset.shareId;
+            post(`/reports/${encodeURIComponent(taskId)}/shares/${encodeURIComponent(id)}/delete`, {})
+              .then((data) => {
+                if (!data.ok) { flash("Could not remove"); return; }
+                const item = shareList.querySelector(`.report-share-item[data-share-id="${id}"]`);
+                if (item) item.remove();
+                refreshEmptyState();
+                flash("Access removed");
+              })
+              .catch(() => flash("Could not remove person"));
+          });
+        }
+
+        if (deleteBtn) {
+          deleteBtn.addEventListener("click", () => {
+            if (!window.confirm("Delete this report permanently? This cannot be undone.")) return;
+            // Logged-in owners (who have the visibility control) return to their
+            // dashboard; anonymous creators go home.
+            const dest = visSelect ? "/reports" : "/";
+            post(`/reports/${encodeURIComponent(taskId)}/delete`, {})
+              .then(() => { window.location.href = dest; })
+              .catch(() => flash("Could not delete report"));
+          });
+        }
+      })();
     </script>
+    {% endif %}
 </body>
 </html>

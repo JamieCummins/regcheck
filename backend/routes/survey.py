@@ -28,13 +28,13 @@ SURVEY_QUESTIONS = [
         "name": "academic_position",
         "label": "What is your academic position?",
         "type": "select",
-        "options": ["Undergrad", "Masters", "PhD", "Postdoc", "Professor", "Nonacademic"],
+        "options": ["Undergrad", "Master's", "PhD", "Postdoc", "Professor", "Non-academic"],
     },
     {
         "name": "research_field",
         "label": "What is your scientific field?",
         "type": "select",
-        "options": ["Psychology", "Economics", "Medicine", "Animal research", "Other"],
+        "options": ["Psychology", "Medicine", "Economics", "Animal Research", "Other"],
     },
 ]
 
@@ -55,6 +55,33 @@ def _string_or_empty(value: str | None) -> str:
 @router.get("/survey/{task_id}", response_class=HTMLResponse, name="survey")
 async def survey(request: Request, task_id: str):
     redis_client = request.app.state.redis
+
+    # Signed-in users already provided these fields in their profile, so skip the
+    # per-run survey and record their profile answers for analytics.
+    user = getattr(request.state, "user", None)
+    if user is not None:
+        # Survey answers are unlinked from the account: no user_id is stored, so
+        # deleting the report (which removes survey:{task_id} + survey:task_ids)
+        # leaves no trace. Analytics read the survey:task_ids set + per-task hashes.
+        submission = {
+            "submitted_at": datetime.now(timezone.utc).isoformat(),
+            "academic_position": _string_or_empty(getattr(user, "academic_position", None)),
+            "research_field": _string_or_empty(getattr(user, "research_field", None)),
+            "use_case": _string_or_empty(getattr(user, "use_case", None)),
+            "skipped": "0",
+            "from_profile": "1",
+        }
+        try:
+            await redis_client.hset(f"survey:{task_id}", mapping=submission)
+            await redis_client.sadd("survey:task_ids", task_id)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Failed to record profile-based survey response", exc_info=exc)
+        try:
+            result_url = request.url_for("result", task_id=task_id)
+        except Exception:
+            result_url = f"/result/{task_id}"
+        return RedirectResponse(url=result_url, status_code=303)
+
     task_meta = {}
     try:
         task_meta = await redis_client.hgetall(task_id)
@@ -70,9 +97,9 @@ async def survey(request: Request, task_id: str):
         result_url = f"/result/{task_id}"
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "survey.html",
         {
-            "request": request,
             "task_id": task_id,
             "result_url": result_url,
             "state": state,
@@ -115,9 +142,7 @@ async def submit_survey(
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Failed to persist survey response", exc_info=exc)
     else:
-        record = {"task_id": task_id, **submission}
         try:
-            await redis_client.lpush("survey:responses", json.dumps(record))
             await redis_client.sadd("survey:task_ids", task_id)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to append survey response to index", exc_info=exc)
