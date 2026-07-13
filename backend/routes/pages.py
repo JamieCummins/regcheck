@@ -61,6 +61,10 @@ _COMING_SOON = {
         "title": "Code–Paper Comparison",
         "blurb": "Compare a study's analysis code against what its paper reports, to check that the published results match the code that produced them.",
     },
+    "registration-quality": {
+        "title": "Registration Quality Evaluation",
+        "blurb": "Evaluate how completely and unambiguously a registration specifies its planned study — element by element, with every judgement traced to quoted evidence. Launching soon as a dedicated companion site.",
+    },
 }
 
 
