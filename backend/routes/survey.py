@@ -52,7 +52,11 @@ def _string_or_empty(value: str | None) -> str:
     return value.strip()
 
 
-@router.get("/survey/{task_id}", response_class=HTMLResponse, name="survey")
+# Served at /next-steps rather than /survey: ad-blocker "annoyance" filter lists
+# aggressively target survey-named URLs and selectors, and this page is the only
+# path from a submitted wizard to the report. The route NAME stays "survey" so
+# url_for("survey") keeps working; Redis keys (survey:*) are untouched.
+@router.get("/next-steps/{task_id}", response_class=HTMLResponse, name="survey")
 async def survey(request: Request, task_id: str):
     redis_client = request.app.state.redis
 
@@ -98,7 +102,7 @@ async def survey(request: Request, task_id: str):
 
     return request.app.state.templates.TemplateResponse(
         request,
-        "survey.html",
+        "next_steps.html",
         {
             "task_id": task_id,
             "result_url": result_url,
@@ -110,7 +114,14 @@ async def survey(request: Request, task_id: str):
     )
 
 
-@router.post("/survey/{task_id}")
+@router.get("/survey/{task_id}", include_in_schema=False)
+async def survey_legacy(request: Request, task_id: str):
+    """Legacy path (pre-rename) — bounce in-flight links to the new URL."""
+    return RedirectResponse(url=f"/next-steps/{task_id}", status_code=301)
+
+
+@router.post("/next-steps/{task_id}")
+@router.post("/survey/{task_id}")  # legacy alias: pages rendered pre-deploy still post here
 async def submit_survey(
     request: Request,
     task_id: str,

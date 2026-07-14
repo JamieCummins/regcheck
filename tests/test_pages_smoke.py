@@ -73,6 +73,22 @@ def test_legacy_wizard_paths_redirect_to_compare(client):
         assert resp.headers["location"].endswith("/compare")
 
 
+def test_post_run_page_avoids_survey_selectors(client):
+    # The post-submit page must not use survey-named URLs/classes/ids: ad-blocker
+    # annoyance lists hide them, and this page is the only path wizard -> report.
+    resp = client.get("/next-steps/some-task-id")
+    assert resp.status_code == 200
+    html = resp.text
+    assert 'class="postrun-card"' in html
+    assert 'id="report-direct"' in html  # escape hatch outside the hideable card
+    assert 'class="survey' not in html and 'id="survey' not in html
+    assert 'id="step-survey"' not in html and 'id="to-survey"' not in html
+    # Legacy URL still lands somewhere sensible.
+    legacy = client.get("/survey/some-task-id", follow_redirects=False)
+    assert legacy.status_code == 301
+    assert legacy.headers["location"].endswith("/next-steps/some-task-id")
+
+
 def test_wizard_ships_extension_fallback_note(client):
     # The content-blocker fallback: present in markup, armed (hidden) by
     # wizard.js at runtime, revealed by CSS delay if the script never runs.

@@ -30,7 +30,7 @@ _UNSET = object()
 async def _compare_and_redirect(*args, **kwargs) -> RedirectResponse:
     """UI wrapper: queue a comparison and redirect to the post-run survey."""
     task_id = await _queue_comparison(*args, **kwargs)
-    return RedirectResponse(url=f"/survey/{task_id}", status_code=302)
+    return RedirectResponse(url=f"/next-steps/{task_id}", status_code=302)
 
 
 def _session_track_report(request: Request, task_id: str) -> None:
