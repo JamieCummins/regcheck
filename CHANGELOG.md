@@ -5,6 +5,13 @@ Notable changes to RegCheck. The application version lives in one place —
 
 ## Unreleased
 
+- Frame-bust cross-site iframe embeds: requests carrying `Sec-Fetch-Dest:
+  iframe` + `Sec-Fetch-Site: cross-site` get a tiny page that navigates the
+  top window to the canonical site (`CANONICAL_BASE_URL`, default
+  `https://regcheck.app`), preserving path and query. Rescues browsers still
+  rendering the cached pre-migration registrar masking page, whose embedded
+  frame the CSP otherwise correctly blanks.
+
 - Registration-quality evaluation (single-document completeness assessment)
   moved to its own product, PreCheck, maintained in a separate codebase. The
   Tools menu now links to the PreCheck site (`PRECHECK_URL`, default
