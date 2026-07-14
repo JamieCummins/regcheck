@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from starlette.datastructures import MutableHeaders
+import json
+from urllib.parse import quote
+
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # Baseline Content-Security-Policy. Tuned to the app's actual resource loading:
@@ -27,6 +30,75 @@ DEFAULT_CSP = "; ".join(
         "form-action 'self'",
     ]
 )
+
+
+class FrameBustMiddleware:
+    """Serve a tiny frame-busting page to cross-site iframe embeds.
+
+    ``frame-ancestors 'self'`` (below) means a cross-site ``<iframe>`` of this
+    app can never render — the browser fetches the document and then blanks the
+    frame. The main real-world source of such embeds is the pre-July-2026
+    regcheck.app setup: a registrar "URL masking" page that iframed the
+    herokuapp URL. That page was served without ``Cache-Control``, so browsers
+    heuristically cache it for weeks — returning visitors keep rendering it
+    from disk long after DNS moved, and see a dead frame.
+
+    Instead of letting those embeds die, answer them (identified by the
+    browser-set, unforgeable ``Sec-Fetch-Dest: iframe`` + ``Sec-Fetch-Site:
+    cross-site`` fetch-metadata headers) with a minimal page that navigates the
+    TOP window to the canonical site, preserving path and query. For a stale
+    masking page this transparently lands the user on the real site; for a
+    hostile embedder it is classic frame-busting — strictly better than a
+    blank frame in both cases. Same-/own-origin frames (``about:blank`` print
+    frames, ``frame-src`` blob viewers) are untouched.
+
+    Must be registered OUTSIDE SecurityHeadersMiddleware (added after it) so
+    the bust response short-circuits before frame-ancestors/X-Frame-Options
+    are stamped — the bust page must itself be allowed to render in the frame.
+    """
+
+    def __init__(self, app: ASGIApp, *, canonical_base: str = "https://regcheck.app") -> None:
+        self.app = app
+        self.canonical_base = canonical_base.rstrip("/")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("method") != "GET"
+            or Headers(scope=scope).get("sec-fetch-dest") != "iframe"
+            or Headers(scope=scope).get("sec-fetch-site") != "cross-site"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        target = self.canonical_base + quote(scope.get("path") or "/", safe="/")
+        query = (scope.get("query_string") or b"").decode("latin-1")
+        if query:
+            target += "?" + query
+        # json.dumps + < keeps attacker-influenced path/query inert inside
+        # both the <script> block and the href attribute.
+        js_target = json.dumps(target).replace("<", "\\u003c")
+        html_target = target.replace("&", "&amp;").replace("<", "&lt;").replace('"', "&quot;")
+        body = (
+            "<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<script>top.location.replace({js_target});</script></head>"
+            f"<body><a href=\"{html_target}\" target=\"_top\">Continue to RegCheck</a>"
+            "</body></html>"
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"text/html; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"referrer-policy", b"strict-origin-when-cross-origin"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
 
 class SecurityHeadersMiddleware:

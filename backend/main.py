@@ -15,7 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .core.auth_context import CurrentUserMiddleware
 from .core.config import get_settings
 from .core.logging import configure_logging
-from .core.security_headers import SecurityHeadersMiddleware
+from .core.security_headers import FrameBustMiddleware, SecurityHeadersMiddleware
 from .core.oauth import build_oauth
 from .core.redis import create_redis_client
 from .db.session import create_engine_from_url, create_sessionmaker, init_models
@@ -99,6 +99,13 @@ def create_app() -> FastAPI:
     csp_report_only = (os.environ.get("CSP_REPORT_ONLY") or "").strip().lower() in {"1", "true", "yes", "on"}
     app.add_middleware(
         SecurityHeadersMiddleware, hsts=settings.is_production, csp_report_only=csp_report_only
+    )
+    # Outermost (added after SecurityHeaders): rescues cross-site iframe embeds
+    # — chiefly browsers still rendering the cached pre-2026 registrar masking
+    # page — by busting to the canonical site instead of a CSP-blanked frame.
+    app.add_middleware(
+        FrameBustMiddleware,
+        canonical_base=(os.environ.get("CANONICAL_BASE_URL") or "https://regcheck.app").strip(),
     )
     # Per-IP rate limiting on cost-bearing submission endpoints is applied per
     # route via the comparison_rate_limit dependency (see core.rate_limit),
