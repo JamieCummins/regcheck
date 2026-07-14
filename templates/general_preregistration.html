@@ -20,6 +20,24 @@
       <main class="wizard-main">
         <form method="post" action="{{ url_for('compare') }}" enctype="multipart/form-data" id="wizard-form">
           <div class="wizard">
+              {# Fallback surfaced when wizard.js never runs (blocked/crashed), or by
+                 the JS interference guard when an extension force-hides a control.
+                 Deliberately bland class/id names: filter lists key on selectors.
+                 The inline script below runs even when external scripts are blocked. #}
+              <div class="wizard-fallback" id="wizard-fallback-note" role="alert">
+                  This wizard needs JavaScript, which appears to be blocked.
+                  If you use a content blocker or privacy extension, allow this
+                  site in its settings and reload the page.
+              </div>
+              <noscript><div class="wizard-fallback is-late" role="alert">
+                  This wizard needs JavaScript. Please enable it and reload the page.
+              </div></noscript>
+              <script>
+                  setTimeout(function () {
+                      var n = document.getElementById("wizard-fallback-note");
+                      if (n && !n.classList.contains("is-armed")) n.classList.add("is-late");
+                  }, 2500);
+              </script>
               <div class="wizard-progress">
                   <div class="wizard-progress__track"><span class="wizard-progress__fill" id="wizard-progress-fill"></span></div>
                   <p class="wizard-progress__count" id="wizard-step-count">Step 1</p>

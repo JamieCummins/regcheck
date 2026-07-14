@@ -747,6 +747,30 @@
     text-align: center;
 }
 
+/* fallback ------------------------------------------------------------------ */
+/* Hidden on every load. An inline script in the template adds .is-late after a
+   grace period; wizard.js adds .is-armed on init, which wins. So the note shows
+   only when wizard.js was blocked/crashed — or when the interference guard
+   force-reveals it inline. */
+.wizard-fallback {
+    display: none;
+    margin: 0 0 1rem;
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--rc-warn-border, #b58900);
+    border-radius: 0.5rem;
+    background: var(--rc-warn-bg, rgba(181, 137, 0, 0.12));
+    color: var(--rc-text, inherit);
+    font-size: 0.95rem;
+}
+
+.wizard-fallback.is-late {
+    display: block;
+}
+
+.wizard-fallback.is-armed {
+    display: none !important;
+}
+
 /* nav ----------------------------------------------------------------------- */
 .wizard-nav {
     display: flex;

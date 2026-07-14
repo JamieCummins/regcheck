@@ -4,6 +4,11 @@
     document.addEventListener("DOMContentLoaded", function () {
         const form = document.getElementById("wizard-form");
         if (!form) return;
+
+        // The script is running: arm the CSS-delayed "JavaScript is blocked"
+        // fallback so it never shows. It comes back only via noteInterference().
+        const fallbackNote = document.getElementById("wizard-fallback-note");
+        if (fallbackNote) fallbackNote.classList.add("is-armed");
         // One wizard script, two flows: "compare" (registration vs paper, the
         // default) and "quality" (single-document registration-quality
         // assessment; fewer steps, no paper upload). Set via data-flow on the form.
@@ -405,6 +410,47 @@
                 forwardButton.disabled = isIntro || isFinal || isTileStep;
             }
             if (submitButton) submitButton.classList.toggle("d-none", !isFinal);
+            guardControls();
+        }
+
+        /* ---- extension-interference guard ---------------------------------- */
+        // Some content blockers force-hide page elements with injected CSS. If a
+        // control the flow depends on is hidden even though our own state says it
+        // should be visible, force it back with inline !important (which outranks
+        // injected author styles); if it still won't render, surface the fallback
+        // note so the user knows an extension is interfering instead of facing a
+        // silently dead wizard.
+        function noteInterference() {
+            if (!fallbackNote) return;
+            fallbackNote.textContent =
+                "A browser extension appears to be hiding parts of this page, " +
+                "so some buttons may be missing. Allow this site in the " +
+                "extension's settings (or turn it off for this page) and reload.";
+            fallbackNote.style.setProperty("display", "block", "important");
+            fallbackNote.style.setProperty("opacity", "1", "important");
+            fallbackNote.style.setProperty("visibility", "visible", "important");
+            fallbackNote.style.setProperty("animation", "none", "important");
+        }
+
+        function ensureRendered(el, display) {
+            if (!el) return;
+            // Hidden by our own step logic — nothing to defend.
+            if (el.classList.contains("is-hidden") || el.classList.contains("d-none")) return;
+            if (el.offsetParent !== null) return; // rendering normally
+            el.style.setProperty("display", display, "important");
+            el.style.setProperty("visibility", "visible", "important");
+            el.style.setProperty("opacity", "1", "important");
+            if (el.offsetParent === null) noteInterference(); // an ancestor is hidden
+        }
+
+        function guardControls() {
+            const nav = form.querySelector(".wizard-nav");
+            ensureRendered(nav, "flex");
+            ensureRendered(backButton, "inline-block");
+            ensureRendered(forwardButton, "inline-block");
+            ensureRendered(submitButton, "inline-block");
+            const active = form.querySelector(".form-step.active");
+            ensureRendered(active, "block");
         }
 
         /* ---- reasoning effort --------------------------------------------- */
