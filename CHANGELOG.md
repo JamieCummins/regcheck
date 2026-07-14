@@ -47,6 +47,14 @@ First stable release. Highlights relative to the public beta:
 - Dependency refresh to a pip-audit-clean set; self-hosted Swagger UI under
   the site CSP; CI (tests, lint, audit, migrations) with a hash-locked
   lockfile.
+- Post-submit page hardened against content blockers: moved from
+  `/survey/{id}` to `/next-steps/{id}` (old URL 301s; old form posts still
+  accepted) and all `survey-*` selectors renamed — annoyance filter lists
+  target survey-named URLs and elements, and this page is the only path from
+  a submitted wizard to the report. A "View your report" link outside the
+  hideable card (plus an auto-redirect when the report is ready but the card
+  is hidden) guarantees the page is never a dead end. Survey analytics,
+  Redis keys, and the account-offer step are unchanged.
 - Wizard resilience against content blockers: a per-step guard detects
   controls force-hidden by extension-injected CSS and restores them with
   inline `!important` styles; if the wizard script itself is blocked (or

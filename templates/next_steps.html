@@ -10,7 +10,7 @@
     <meta name="author" content="Jamie Cummins">
     <title>Finishing your report — {{ brand_name }}</title>
     <style>
-        .survey-main {
+        .postrun-main {
             flex: 1 1 auto;
             width: 100%;
             display: flex;
@@ -19,7 +19,7 @@
             padding: 1.5rem 1.25rem 4rem;
         }
 
-        .survey-card {
+        .postrun-card {
             width: 560px;
             max-width: 100%;
             background: var(--rc-surface);
@@ -31,7 +31,7 @@
         }
 
         /* ---- live report status + wizard step ---- */
-        .survey-status {
+        .postrun-status {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -39,14 +39,14 @@
             margin-bottom: 0.75rem;
         }
 
-        .survey-status__report {
+        .postrun-status__report {
             display: flex;
             align-items: center;
             gap: 0.45rem;
             min-width: 0;
         }
 
-        .survey-status__label {
+        .postrun-status__label {
             font-family: var(--rc-font-mono);
             font-weight: 600;
             font-size: 0.72rem;
@@ -55,9 +55,9 @@
             white-space: nowrap;
         }
 
-        .survey-status__label.is-error { color: var(--rc-accent-red); }
+        .postrun-status__label.is-error { color: var(--rc-accent-red); }
 
-        .survey-status__sub {
+        .postrun-status__sub {
             font-family: var(--rc-font-mono);
             font-weight: 500;
             font-size: 0.7rem;
@@ -65,7 +65,7 @@
             white-space: nowrap;
         }
 
-        .survey-status__step {
+        .postrun-status__step {
             font-family: var(--rc-font-mono);
             font-weight: 600;
             font-size: 0.625rem;
@@ -75,7 +75,7 @@
             white-space: nowrap;
         }
 
-        .survey-progress {
+        .postrun-progress {
             height: 3px;
             border-radius: 99px;
             background: var(--rc-surface-2);
@@ -83,7 +83,7 @@
             margin-bottom: 1.6rem;
         }
 
-        .survey-progress__fill {
+        .postrun-progress__fill {
             height: 100%;
             border-radius: inherit;
             background: linear-gradient(90deg, var(--rc-accent), var(--rc-accent-strong));
@@ -91,10 +91,10 @@
         }
 
         /* ---- steps ---- */
-        .survey-step { display: none; }
-        .survey-step.is-active { display: block; }
+        .postrun-step { display: none; }
+        .postrun-step.is-active { display: block; }
 
-        .survey-step__title {
+        .postrun-step__title {
             font-size: 1.5rem;
             font-weight: 600;
             letter-spacing: -0.01em;
@@ -102,7 +102,7 @@
             margin: 0 0 0.6rem;
         }
 
-        .survey-step__body {
+        .postrun-step__body {
             font-size: 0.875rem;
             line-height: 1.55;
             color: var(--rc-muted);
@@ -111,17 +111,17 @@
         }
 
         /* Step 1 — account offer */
-        .survey-step--account { text-align: center; padding: 0.4rem 0 0.25rem; }
-        .survey-step--account .survey-step__body { max-width: 380px; margin-inline: auto; }
+        .postrun-step--account { text-align: center; padding: 0.4rem 0 0.25rem; }
+        .postrun-step--account .postrun-step__body { max-width: 380px; margin-inline: auto; }
 
-        .survey-account-actions {
+        .postrun-account-actions {
             display: flex;
             flex-direction: column;
             gap: 0.625rem;
             margin-top: 1.6rem;
         }
 
-        .survey-btn {
+        .postrun-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -136,29 +136,29 @@
             transition: background-color 0.16s ease, border-color 0.16s ease;
         }
 
-        .survey-btn--primary {
+        .postrun-btn--primary {
             border: none;
             background: var(--rc-accent);
             color: var(--rc-on-accent);
         }
-        .survey-btn--primary:hover,
-        .survey-btn--primary:focus-visible {
+        .postrun-btn--primary:hover,
+        .postrun-btn--primary:focus-visible {
             background: var(--rc-accent-hover);
             color: var(--rc-on-accent);
         }
 
-        .survey-btn--ghost {
+        .postrun-btn--ghost {
             border: 1px solid var(--rc-border-strong);
             background: transparent;
             color: var(--rc-text);
         }
-        .survey-btn--ghost:hover,
-        .survey-btn--ghost:focus-visible {
+        .postrun-btn--ghost:hover,
+        .postrun-btn--ghost:focus-visible {
             background: var(--rc-surface-2);
             color: var(--rc-text);
         }
 
-        .survey-continue {
+        .postrun-continue {
             background: none;
             border: none;
             color: var(--rc-faint);
@@ -168,11 +168,11 @@
             margin-top: 1.1rem;
             padding: 0.3rem 0.4rem;
         }
-        .survey-continue:hover,
-        .survey-continue:focus-visible { color: var(--rc-muted); outline: none; }
+        .postrun-continue:hover,
+        .postrun-continue:focus-visible { color: var(--rc-muted); outline: none; }
 
-        /* Step 2 — survey */
-        .survey-back {
+        /* Step 2 — questions */
+        .postrun-back {
             background: none;
             border: none;
             color: var(--rc-accent-strong);
@@ -182,22 +182,22 @@
             padding: 0;
             margin-bottom: 0.9rem;
         }
-        .survey-back:hover,
-        .survey-back:focus-visible { color: var(--rc-accent-blue); outline: none; }
+        .postrun-back:hover,
+        .postrun-back:focus-visible { color: var(--rc-accent-blue); outline: none; }
 
-        .survey-step--survey .survey-step__title { font-size: 1.375rem; margin-bottom: 0.4rem; }
-        .survey-step--survey .survey-step__body { font-size: 0.8125rem; color: var(--rc-faint); margin-bottom: 1.25rem; }
+        .postrun-step--questions .postrun-step__title { font-size: 1.375rem; margin-bottom: 0.4rem; }
+        .postrun-step--questions .postrun-step__body { font-size: 0.8125rem; color: var(--rc-faint); margin-bottom: 1.25rem; }
 
-        .survey-fields {
+        .postrun-fields {
             border: 1px solid var(--rc-border);
             border-radius: 13px;
             background: var(--rc-surface-2);
         }
 
-        .survey-row { position: relative; }
-        .survey-row:not(:last-child) { border-bottom: 1px solid var(--rc-border); }
+        .postrun-row { position: relative; }
+        .postrun-row:not(:last-child) { border-bottom: 1px solid var(--rc-border); }
 
-        .survey-row__toggle {
+        .postrun-row__toggle {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -210,38 +210,38 @@
             text-align: left;
         }
 
-        .survey-row__label {
+        .postrun-row__label {
             font-size: 0.8125rem;
             font-weight: 500;
             color: var(--rc-muted);
         }
 
-        .survey-row__value-wrap {
+        .postrun-row__value-wrap {
             display: flex;
             align-items: center;
             gap: 0.5rem;
             flex: 0 0 auto;
         }
 
-        .survey-row__value {
+        .postrun-row__value {
             font-size: 0.8125rem;
             font-weight: 400;
             color: var(--rc-faint);
         }
-        .survey-row.is-answered .survey-row__value {
+        .postrun-row.is-answered .postrun-row__value {
             font-weight: 600;
             color: var(--rc-accent-blue);
         }
 
-        .survey-row__chevron {
+        .postrun-row__chevron {
             display: inline-block;
             color: var(--rc-faint);
             font-size: 0.7rem;
             transition: transform 0.15s ease;
         }
-        .survey-row.is-open .survey-row__chevron { transform: rotate(180deg); }
+        .postrun-row.is-open .postrun-row__chevron { transform: rotate(180deg); }
 
-        .survey-menu {
+        .postrun-menu {
             position: absolute;
             top: calc(100% - 4px);
             left: 10px;
@@ -257,7 +257,7 @@
             box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
         }
 
-        .survey-menu__item {
+        .postrun-menu__item {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -272,26 +272,26 @@
             background: transparent;
             cursor: pointer;
         }
-        .survey-menu__item:hover,
-        .survey-menu__item:focus-visible {
+        .postrun-menu__item:hover,
+        .postrun-menu__item:focus-visible {
             background: var(--rc-surface-3);
             color: var(--rc-text);
             outline: none;
         }
-        .survey-menu__item.is-selected {
+        .postrun-menu__item.is-selected {
             background: rgba(94, 146, 206, 0.16);
             color: var(--rc-text);
         }
-        .survey-menu__check {
+        .postrun-menu__check {
             color: var(--rc-accent-strong);
             opacity: 0;
         }
-        .survey-menu__item.is-selected .survey-menu__check { opacity: 1; }
+        .postrun-menu__item.is-selected .postrun-menu__check { opacity: 1; }
 
-        .survey-step--survey .survey-submit { margin-top: 1.5rem; }
+        .postrun-step--questions .postrun-submit { margin-top: 1.5rem; }
 
-        .survey-skip-wrap { text-align: center; margin-top: 0.875rem; }
-        .survey-skip {
+        .postrun-skip-wrap { text-align: center; margin-top: 0.875rem; }
+        .postrun-skip {
             background: none;
             border: none;
             color: var(--rc-faint);
@@ -301,17 +301,19 @@
             text-decoration: underline;
             text-underline-offset: 3px;
         }
-        .survey-skip:hover,
-        .survey-skip:focus-visible { color: var(--rc-muted); outline: none; }
+        .postrun-skip:hover,
+        .postrun-skip:focus-visible { color: var(--rc-muted); outline: none; }
 
         @media (max-width: 600px) {
-            .survey-card { padding: 1.6rem 1.4rem 1.9rem; }
+            .postrun-card { padding: 1.6rem 1.4rem 1.9rem; }
             /* The mono status label + step label don't both fit at phone widths;
                drop the numeric sub-count (the progress bar conveys the same
                progress) so the two labels never collide. */
-            .survey-status__report { min-width: 0; }
-            .survey-status__sub { display: none; }
+            .postrun-status__report { min-width: 0; }
+            .postrun-status__sub { display: none; }
         }
+        .postrun-direct { text-align: center; margin: 0 0 0.9rem; font-size: 0.95rem; }
+        .postrun-direct a { color: var(--rc-accent); }
     </style>
 </head>
 {% set nav_active = 'tools' %}
@@ -327,63 +329,70 @@
         </header>
         {% include '_partials/mobile_notice.html' %}
 
-        <main class="survey-main">
-            <div class="survey-card"
+        <main class="postrun-main">
+            {# Deliberately OUTSIDE the card: if a content blocker hides the card
+               (and with it every button leading to the report), this link is the
+               guaranteed way forward. Revealed on SUCCESS, or at load when the
+               card is missing/hidden. #}
+            <p class="postrun-direct" id="report-direct"{% if not _done %} hidden{% endif %}>
+                <a href="{{ result_url }}">View your report &rarr;</a>
+            </p>
+            <div class="postrun-card"
                  data-task-id="{{ task_id }}"
                  data-state="{{ state }}"
                  data-result-url="{{ result_url }}"
                  {% if show_account %}data-has-account="1"{% endif %}>
 
                 <!-- live report status + wizard step -->
-                <div class="survey-status">
-                    <div class="survey-status__report">
-                        <span class="survey-status__label{% if _failed %} is-error{% endif %}" id="report-label">{% if _done %}Report ready{% elif _failed %}Report unavailable{% else %}Generating report{% endif %}</span>
-                        <span class="survey-status__sub" id="report-sub">{% if not _done and not _failed %}{% if total_dimensions %}· {{ processed_dimensions or 0 }} / {{ total_dimensions }} dimensions{% else %}· working…{% endif %}{% endif %}</span>
+                <div class="postrun-status">
+                    <div class="postrun-status__report">
+                        <span class="postrun-status__label{% if _failed %} is-error{% endif %}" id="report-label">{% if _done %}Report ready{% elif _failed %}Report unavailable{% else %}Generating report{% endif %}</span>
+                        <span class="postrun-status__sub" id="report-sub">{% if not _done and not _failed %}{% if total_dimensions %}· {{ processed_dimensions or 0 }} / {{ total_dimensions }} dimensions{% else %}· working…{% endif %}{% endif %}</span>
                     </div>
                     {% if show_account %}
-                    <span class="survey-status__step" id="step-label">Step 1 of 2</span>
+                    <span class="postrun-status__step" id="step-label">Step 1 of 2</span>
                     {% endif %}
                 </div>
-                <div class="survey-progress"><div class="survey-progress__fill" id="report-fill" style="width: {{ _pct }}%;"></div></div>
+                <div class="postrun-progress"><div class="postrun-progress__fill" id="report-fill" style="width: {{ _pct }}%;"></div></div>
 
                 {% if show_account %}
                 <!-- STEP 1: account offer -->
-                <section class="survey-step survey-step--account is-active" id="step-account" aria-label="Save this report">
-                    <h2 class="survey-step__title">Save this report?</h2>
-                    <p class="survey-step__body">Reports run without an account are automatically deleted after 7&nbsp;days. Creating a free account keeps this one permanently and lets you re-open it anytime.</p>
-                    <div class="survey-account-actions">
-                        <a class="survey-btn survey-btn--primary" href="{{ login_next }}">Create free account</a>
-                        <a class="survey-btn survey-btn--ghost" href="{{ login_next }}">Log in</a>
+                <section class="postrun-step postrun-step--account is-active" id="step-account" aria-label="Save this report">
+                    <h2 class="postrun-step__title">Save this report?</h2>
+                    <p class="postrun-step__body">Reports run without an account are automatically deleted after 7&nbsp;days. Creating a free account keeps this one permanently and lets you re-open it anytime.</p>
+                    <div class="postrun-account-actions">
+                        <a class="postrun-btn postrun-btn--primary" href="{{ login_next }}">Create free account</a>
+                        <a class="postrun-btn postrun-btn--ghost" href="{{ login_next }}">Log in</a>
                     </div>
-                    <button type="button" class="survey-continue" id="to-survey">Continue without an account →</button>
+                    <button type="button" class="postrun-continue" id="to-questions">Continue without an account →</button>
                 </section>
                 {% endif %}
 
-                <!-- STEP 2: survey -->
-                <section class="survey-step survey-step--survey{% if not show_account %} is-active{% endif %}" id="step-survey" aria-label="Quick questions">
+                <!-- STEP 2: questions -->
+                <section class="postrun-step postrun-step--questions{% if not show_account %} is-active{% endif %}" id="step-questions" aria-label="Quick questions">
                     {% if show_account %}
-                    <button type="button" class="survey-back" id="to-account">← Back</button>
+                    <button type="button" class="postrun-back" id="to-account">← Back</button>
                     {% endif %}
-                    <h3 class="survey-step__title">Some quick questions</h3>
-                    <p class="survey-step__body">These optional questions help us know who is using {{ brand_name }} and why.</p>
+                    <h3 class="postrun-step__title">Some quick questions</h3>
+                    <p class="postrun-step__body">These optional questions help us know who is using {{ brand_name }} and why.</p>
 
-                    <form method="post" action="{{ url_for('survey', task_id=task_id) }}" id="survey-form">
-                        <div class="survey-fields">
+                    <form method="post" action="{{ url_for('survey', task_id=task_id) }}" id="postrun-form">
+                        <div class="postrun-fields">
                             {% for question in questions %}
-                            <div class="survey-row" data-row>
-                                <button type="button" class="survey-row__toggle" data-toggle aria-haspopup="listbox" aria-expanded="false">
-                                    <span class="survey-row__label">{{ question.label }}</span>
-                                    <span class="survey-row__value-wrap">
-                                        <span class="survey-row__value" data-value>Choose an option</span>
-                                        <span class="survey-row__chevron" aria-hidden="true">▾</span>
+                            <div class="postrun-row" data-row>
+                                <button type="button" class="postrun-row__toggle" data-toggle aria-haspopup="listbox" aria-expanded="false">
+                                    <span class="postrun-row__label">{{ question.label }}</span>
+                                    <span class="postrun-row__value-wrap">
+                                        <span class="postrun-row__value" data-value>Choose an option</span>
+                                        <span class="postrun-row__chevron" aria-hidden="true">▾</span>
                                     </span>
                                 </button>
                                 <input type="hidden" name="{{ question.name }}" value="" data-input>
-                                <div class="survey-menu" role="listbox" hidden>
+                                <div class="postrun-menu" role="listbox" hidden>
                                     {% for opt in question.options %}
-                                    <button type="button" class="survey-menu__item" role="option" data-opt="{{ opt }}">
+                                    <button type="button" class="postrun-menu__item" role="option" data-opt="{{ opt }}">
                                         <span>{{ opt }}</span>
-                                        <span class="survey-menu__check" aria-hidden="true">✓</span>
+                                        <span class="postrun-menu__check" aria-hidden="true">✓</span>
                                     </button>
                                     {% endfor %}
                                 </div>
@@ -391,9 +400,9 @@
                             {% endfor %}
                         </div>
 
-                        <button type="submit" class="survey-btn survey-btn--primary survey-submit" id="survey-submit">Submit &amp; view report</button>
-                        <div class="survey-skip-wrap">
-                            <button type="submit" class="survey-skip" name="skip" value="1" formnovalidate>Skip &amp; go to report</button>
+                        <button type="submit" class="postrun-btn postrun-btn--primary postrun-submit" id="postrun-submit">Submit &amp; view report</button>
+                        <div class="postrun-skip-wrap">
+                            <button type="submit" class="postrun-skip" name="skip" value="1" formnovalidate>Skip &amp; go to report</button>
                         </div>
                     </form>
                 </section>
@@ -405,28 +414,32 @@
     <script src="{{ url_for('static', path='js/bootstrap.bundle.min.js') }}?v={{ static_version }}"></script>
     <script>
         (function () {
-            const card = document.querySelector(".survey-card");
+            const card = document.querySelector(".postrun-card");
+            const directLink = document.getElementById("report-direct");
+            // Card collapsed or hidden (e.g. by a content-blocker rule): surface
+            // the direct report link immediately so the page is never a dead end.
+            if (directLink && (!card || card.offsetParent === null)) directLink.hidden = false;
             if (!card) return;
             const taskId = card.dataset.taskId;
             const hasAccount = card.dataset.hasAccount === "1";
 
             // ---- wizard step navigation ----
             const stepAccount = document.getElementById("step-account");
-            const stepSurvey = document.getElementById("step-survey");
+            const stepQuestions = document.getElementById("step-questions");
             const stepLabel = document.getElementById("step-label");
 
             function showStep(which) {
                 if (!hasAccount) return;
                 const onAccount = which === "account";
                 stepAccount.classList.toggle("is-active", onAccount);
-                stepSurvey.classList.toggle("is-active", !onAccount);
+                stepQuestions.classList.toggle("is-active", !onAccount);
                 if (stepLabel) stepLabel.textContent = onAccount ? "Step 1 of 2" : "Step 2 of 2";
                 closeAllMenus();
             }
 
-            const toSurvey = document.getElementById("to-survey");
+            const toQuestions = document.getElementById("to-questions");
             const toAccount = document.getElementById("to-account");
-            if (toSurvey) toSurvey.addEventListener("click", () => showStep("survey"));
+            if (toQuestions) toQuestions.addEventListener("click", () => showStep("questions"));
             if (toAccount) toAccount.addEventListener("click", () => showStep("account"));
 
             // ---- custom dropdown rows ----
@@ -437,7 +450,7 @@
                     if (row === except) return;
                     row.classList.remove("is-open");
                     const toggle = row.querySelector("[data-toggle]");
-                    const menu = row.querySelector(".survey-menu");
+                    const menu = row.querySelector(".postrun-menu");
                     if (toggle) toggle.setAttribute("aria-expanded", "false");
                     if (menu) menu.hidden = true;
                 });
@@ -445,7 +458,7 @@
 
             rows.forEach((row) => {
                 const toggle = row.querySelector("[data-toggle]");
-                const menu = row.querySelector(".survey-menu");
+                const menu = row.querySelector(".postrun-menu");
                 const valueEl = row.querySelector("[data-value]");
                 const input = row.querySelector("[data-input]");
 
@@ -458,14 +471,14 @@
                     menu.hidden = !willOpen;
                 });
 
-                menu.querySelectorAll(".survey-menu__item").forEach((item) => {
+                menu.querySelectorAll(".postrun-menu__item").forEach((item) => {
                     item.addEventListener("click", (event) => {
                         event.stopPropagation();
                         const value = item.dataset.opt;
                         input.value = value;
                         valueEl.textContent = value;
                         row.classList.add("is-answered");
-                        menu.querySelectorAll(".survey-menu__item").forEach((other) => {
+                        menu.querySelectorAll(".postrun-menu__item").forEach((other) => {
                             other.classList.toggle("is-selected", other === item);
                         });
                         row.classList.remove("is-open");
@@ -482,8 +495,8 @@
 
             // Guard against a double submit without disabling the clicked button,
             // so its name/value (the Skip flag) survives into the POST.
-            const form = document.getElementById("survey-form");
-            const submitBtn = document.getElementById("survey-submit");
+            const form = document.getElementById("postrun-form");
+            const submitBtn = document.getElementById("postrun-submit");
             let submitted = false;
             if (form) {
                 form.addEventListener("submit", (event) => {
@@ -504,6 +517,12 @@
                     labelEl.classList.remove("is-error");
                     subEl.textContent = "";
                     fillEl.style.width = "100%";
+                    if (directLink) directLink.hidden = false;
+                    // Report ready but the card (and its buttons) hidden by an
+                    // extension: don't strand the user — go straight to it.
+                    if (card.offsetParent === null) {
+                        window.location.replace(card.dataset.resultUrl || ("/result/" + taskId));
+                    }
                     return;
                 }
                 if (state === "FAILURE") {
