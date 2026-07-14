@@ -47,6 +47,11 @@ First stable release. Highlights relative to the public beta:
 - Dependency refresh to a pip-audit-clean set; self-hosted Swagger UI under
   the site CSP; CI (tests, lint, audit, migrations) with a hash-locked
   lockfile.
+- Wizard resilience against content blockers: a per-step guard detects
+  controls force-hidden by extension-injected CSS and restores them with
+  inline `!important` styles; if the wizard script itself is blocked (or
+  recovery fails), a fallback notice tells the user a browser extension is
+  interfering instead of leaving a silently dead page.
 - Frame-bust cross-site iframe embeds: requests carrying `Sec-Fetch-Dest:
   iframe` + `Sec-Fetch-Site: cross-site` get a tiny page that navigates the
   top window to the canonical site (`CANONICAL_BASE_URL`, default

@@ -71,3 +71,11 @@ def test_legacy_wizard_paths_redirect_to_compare(client):
         resp = client.get(path, follow_redirects=False)
         assert resp.status_code == 302
         assert resp.headers["location"].endswith("/compare")
+
+
+def test_wizard_ships_extension_fallback_note(client):
+    # The content-blocker fallback: present in markup, armed (hidden) by
+    # wizard.js at runtime, revealed by CSS delay if the script never runs.
+    html = client.get("/compare").text
+    assert 'id="wizard-fallback-note"' in html
+    assert "content blocker" in html
