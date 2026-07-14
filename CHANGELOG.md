@@ -1,24 +1,8 @@
 # Changelog
 
-Notable changes to RegCheck. The application version lives in one place —
-`APP_VERSION` in `backend/main.py` — and is what `/openapi.json` reports.
+Notable changes to RegCheck. The application version lives in
+`APP_VERSION` in `backend/main.py` and is what `/openapi.json` reports.
 
-## Unreleased
-
-- Frame-bust cross-site iframe embeds: requests carrying `Sec-Fetch-Dest:
-  iframe` + `Sec-Fetch-Site: cross-site` get a tiny page that navigates the
-  top window to the canonical site (`CANONICAL_BASE_URL`, default
-  `https://regcheck.app`), preserving path and query. Rescues browsers still
-  rendering the cached pre-migration registrar masking page, whose embedded
-  frame the CSP otherwise correctly blanks.
-
-- Registration-quality evaluation (single-document completeness assessment)
-  moved to its own product, PreCheck, maintained in a separate codebase. The
-  Tools menu now links to the PreCheck site (`PRECHECK_URL`, default
-  `https://precheck.app`). Existing quality reports remain viewable.
-- Live cost tracking: per-run token/cost estimates shown on reports and in the
-  CLI; chain-of-thought capture for providers that expose it (CSV exports
-  only); `python -m backend.cli batch` for manifest-driven batch runs.
 
 ## 1.0.0 — 2026-07
 
@@ -63,3 +47,16 @@ First stable release. Highlights relative to the public beta:
 - Dependency refresh to a pip-audit-clean set; self-hosted Swagger UI under
   the site CSP; CI (tests, lint, audit, migrations) with a hash-locked
   lockfile.
+- Frame-bust cross-site iframe embeds: requests carrying `Sec-Fetch-Dest:
+  iframe` + `Sec-Fetch-Site: cross-site` get a tiny page that navigates the
+  top window to the canonical site (`CANONICAL_BASE_URL`, default
+  `https://regcheck.app`), preserving path and query. Rescues browsers still
+  rendering the cached pre-migration registrar masking page, whose embedded
+  frame the CSP otherwise correctly blanks.
+- Registration-quality evaluation (single-document completeness assessment)
+  moved to its own product, PreCheck, maintained in a separate codebase. The
+  Tools menu now links to the PreCheck site (`PRECHECK_URL`, default
+  `https://precheck.app`). Existing quality reports remain viewable.
+- Live cost tracking: per-run token/cost estimates shown on reports and in the
+  CLI; chain-of-thought capture for providers that expose it (CSV exports
+  only); `python -m backend.cli batch` for manifest-driven batch runs.
