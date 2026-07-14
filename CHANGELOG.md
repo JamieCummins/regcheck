@@ -47,6 +47,13 @@ First stable release. Highlights relative to the public beta:
 - Dependency refresh to a pip-audit-clean set; self-hosted Swagger UI under
   the site CSP; CI (tests, lint, audit, migrations) with a hash-locked
   lockfile.
+- Fixed `og:image`/`twitter:image` emitting a double-prefixed URL
+  (`https://hosthttps://host/...`): Starlette's `url_for` is already
+  absolute, so `base_url` is no longer prepended. Social cards now resolve.
+- Removed the beta-era blanket `noindex,nofollow` from public pages
+  (home, wizard, team, FAQ, contact, privacy, API docs, demo, jobs) —
+  the site was invisible to search engines. Report, post-run, and account
+  surfaces keep `noindex` deliberately (reports are public-by-link).
 - Post-submit page hardened against content blockers: moved from
   `/survey/{id}` to `/next-steps/{id}` (old URL 301s; old form posts still
   accepted) and all `survey-*` selectors renamed — annoyance filter lists

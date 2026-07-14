@@ -73,6 +73,35 @@ def test_legacy_wizard_paths_redirect_to_compare(client):
         assert resp.headers["location"].endswith("/compare")
 
 
+def test_og_image_is_single_absolute_url_and_resolves(client):
+    # Regression: base_url used to be prepended to the already-absolute
+    # url_for(), yielding "https://hosthttps://host/static/...".
+    import re
+    from urllib.parse import urlparse
+
+    html = client.get("/").text
+    m = re.search(r'property="og:image" content="([^"]+)"', html)
+    assert m, "og:image missing"
+    url = m.group(1)
+    assert url.count("://") == 1, f"malformed og:image: {url}"
+    parsed = urlparse(url)
+    assert parsed.scheme in ("http", "https") and parsed.netloc
+    # twitter:image uses the same value.
+    assert f'name="twitter:image" content="{url}"' in html
+    # The asset itself serves as an image.
+    asset = client.get(parsed.path)
+    assert asset.status_code == 200
+    assert asset.headers["content-type"].startswith("image/")
+
+
+def test_robots_noindex_only_on_private_surfaces(client):
+    # Public/marketing pages must be indexable (the beta-era blanket noindex
+    # is gone); report-bearing surfaces stay noindexed (public-by-link).
+    for path in ("/", "/team", "/faq", "/privacy", "/compare"):
+        assert "noindex" not in client.get(path).text, f"{path} still noindexed"
+    assert "noindex" in client.get("/next-steps/some-task").text
+
+
 def test_post_run_page_avoids_survey_selectors(client):
     # The post-submit page must not use survey-named URLs/classes/ids: ad-blocker
     # annoyance lists hide them, and this page is the only path wizard -> report.
