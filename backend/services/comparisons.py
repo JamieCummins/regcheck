@@ -1241,12 +1241,15 @@ async def general_preregistration_comparison(
                 evidence_out["rr_integrity"] = rr_integrity
         except Exception as exc:  # pragma: no cover - degrade to Track B only
             logger.warning("RR carried-forward alignment failed; Track B continues", exc_info=exc)
-        if evidence_out is not None:
-            inline_manifest, inline_render_data = _assemble_inline_bundle(
-                task_id, "general_preregistration", source_payloads
-            )
-            evidence_out["manifest"] = inline_manifest
-            evidence_out["render_data"] = inline_render_data
+    # Inline evidence bundle for callers without Redis (CLI --report-html, demo
+    # regeneration). Applies to EVERY general run — it must stay outside the
+    # RR/Track-A conditional above.
+    if evidence_out is not None:
+        inline_manifest, inline_render_data = _assemble_inline_bundle(
+            task_id, "general_preregistration", source_payloads
+        )
+        evidence_out["manifest"] = inline_manifest
+        evidence_out["render_data"] = inline_render_data
     logger.info(
         "general_preregistration_comparison start",
         extra={

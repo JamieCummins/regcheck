@@ -137,16 +137,23 @@ def test_general_orchestrator_attaches_cost(tmp_path):
             items=[comparisons.ComparisonItem(dimension="Sample size", deviation_judgement="no")]
         )
 
+    evidence_out: dict = {}
     result = _run(
         comparisons.general_preregistration_comparison(
             str(reg), ".txt", str(paper), ".txt", "openai", "pymupdf",
             selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
             comparison_runner=fake_runner,
+            evidence_out=evidence_out,
         )
     )
     assert result.cost is not None
     assert result.cost["input_tokens"] == 1000
     assert result.cost["total_usd"] > 0
+    # Regression: the inline bundle must be populated for STANDARD runs (it was
+    # once accidentally nested inside the RR Track-A conditional, silently
+    # breaking CLI --report-html and demo regeneration).
+    assert "manifest" in evidence_out and "render_data" in evidence_out
+    assert set(evidence_out["manifest"]["sources"]) == {"registration", "paper"}
 
 
 # ── CLI batch runner ───────────────────────────────────────────────────────────
