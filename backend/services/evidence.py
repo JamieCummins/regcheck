@@ -47,6 +47,28 @@ def _content_type_for_path(path: str) -> str:
     return guessed or "application/octet-stream"
 
 
+def _evidence_coverage(chunks: dict[str, dict[str, Any]]) -> dict[str, int | float]:
+    """Summarize how completely chunk text can be traced in the viewer."""
+    total = len(chunks)
+    visual = sum(
+        1
+        for chunk in chunks.values()
+        if any(
+            location.get("kind") == "pdf" and location.get("rects")
+            for location in chunk.get("locations", [])
+        )
+    )
+    traceable = sum(1 for chunk in chunks.values() if chunk.get("locations"))
+    return {
+        "total_chunks": total,
+        "visually_located_chunks": visual,
+        "text_only_chunks": max(0, total - visual),
+        "traceable_chunks": traceable,
+        "visual_coverage": visual / total if total else 1.0,
+        "traceability_coverage": traceable / total if total else 1.0,
+    }
+
+
 def _build_text_pdf_render(text: str, *, title: str) -> bytes | None:
     if fitz is None or not (text or "").strip():
         return None
@@ -246,6 +268,7 @@ def build_text_evidence_source(
         "kind": kind,
         "render_mode": "text",
         "raw_filename": raw_filename,
+        "evidence_coverage": _evidence_coverage(manifest_chunks),
         "metadata": metadata or {},
     }
     return {
@@ -550,6 +573,7 @@ def build_pdf_evidence_source(
             **base_source,
             "render_mode": render_mode,
             "page_count": len(doc),
+            "evidence_coverage": _evidence_coverage(manifest_chunks),
             # start/end are char offsets into the source text, letting the
             # viewer map any text span to its page when rects are missing.
             "pages": [
