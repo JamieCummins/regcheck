@@ -33,6 +33,7 @@ def test_build_pdf_evidence_source_locates_text_rectangles(tmp_path):
     pdf_locations = [location for location in chunk["locations"] if location["kind"] == "pdf"]
     assert payload["source"]["kind"] == "pdf"
     assert payload["source"]["page_count"] == 1
+    assert payload["source"]["evidence_coverage"]["visual_coverage"] == 1.0
     assert pdf_locations
     assert pdf_locations[0]["page"] == 1
     assert pdf_locations[0]["rects"]
@@ -54,6 +55,24 @@ def test_build_json_evidence_source_tracks_text_spans():
     assert payload["render_data"]["rows"]
     assert location["kind"] == "json"
     assert payload["text"][location["start"] : location["end"]] == chunk["text"]
+
+
+def test_text_evidence_reports_traceability_without_visual_locations():
+    from backend.services.evidence import build_text_evidence_source
+
+    payload = build_text_evidence_source(
+        source_id="registration",
+        label="Registration",
+        text="The planned sample size is 120 participants.",
+        chunk_prefix="PREREG",
+        max_chunk_tokens=100,
+    )
+
+    coverage = payload["source"]["evidence_coverage"]
+    assert coverage["total_chunks"] == 1
+    assert coverage["traceability_coverage"] == 1.0
+    assert coverage["visual_coverage"] == 0.0
+    assert coverage["text_only_chunks"] == 1
 
 
 def test_pdf_rects_cover_multiline_and_hyphenated_text(tmp_path):
