@@ -86,7 +86,7 @@ MAX_DIMENSION_DEFINITION_CHARS = 4000
 _MAX_DIMENSIONS_PAYLOAD_CHARS = 512 * 1024
 
 # Document types the comparison pipeline can read (mirrors documents.read_file).
-_SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
+_SUPPORTED_DOC_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm", ".xml"}
 
 ComparisonType = Literal[
     "clinical_trials",
@@ -147,7 +147,7 @@ def _validate_doc_ext(ext: str, *, kind: str) -> None:
     if (ext or "").lower() not in _SUPPORTED_DOC_EXTS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported {kind} file type ('{ext or 'unknown'}'). Upload a PDF, DOCX, TXT, or HTML file.",
+            detail=f"Unsupported {kind} file type ('{ext or 'unknown'}'). Upload a PDF, DOCX, TXT, HTML, or XML file.",
         )
 
 
@@ -489,7 +489,7 @@ async def _queue_comparison(
         elif _file_ext(preregistration.filename) not in _SUPPORTED_DOC_EXTS:
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported preregistration file type. Upload a PDF, DOCX, TXT, or HTML file, or paste an OSF link.",
+                detail="Unsupported preregistration file type. Upload a PDF, DOCX, TXT, HTML, or XML file, or paste an OSF link.",
             )
         else:
             stored_prereg_path, prereg_ext = await _save_upload(

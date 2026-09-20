@@ -46,7 +46,7 @@ _RETRY_STATUS = {502, 503, 504}
 # Cap the fetched file like direct uploads (MAX_UPLOAD_BYTES in the upload route)
 # so a huge OSF file can't fill the dyno's disk/memory.
 _MAX_DOWNLOAD_BYTES = _int_env("OSF_MAX_DOWNLOAD_BYTES", 20 * 1024 * 1024)
-_SUPPORTED_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm"}
+_SUPPORTED_EXTS = {".pdf", ".docx", ".txt", ".html", ".htm", ".xml"}
 _BARE_GUID_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
 _PATH_AFTER_HOST_RE = re.compile(r"osf\.io/(.+)", re.IGNORECASE)
 _GUID_SEGMENT_RE = re.compile(r"^[a-z0-9]{5,}$", re.IGNORECASE)
@@ -263,6 +263,8 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
         ext = {
             "application/pdf": ".pdf",
             "text/html": ".html",
+            "text/xml": ".xml",
+            "application/xml": ".xml",
             "text/plain": ".txt",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
         }.get(content_type, "")
@@ -270,7 +272,7 @@ def _download_file(data: dict[str, Any], dest_dir: str | Path, guid: str) -> tup
         resp.close()
         raise ValueError(
             f"That OSF file type ('{ext or 'unknown'}') isn't supported. "
-            "Link to a PDF, DOCX, TXT, or HTML file."
+            "Link to a PDF, DOCX, TXT, HTML, or XML file."
         )
 
     dest = Path(dest_dir) / f"osf_{guid}_{uuid.uuid4().hex}{ext}"

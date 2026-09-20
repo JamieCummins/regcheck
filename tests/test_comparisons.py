@@ -883,6 +883,123 @@ async def test_multi_study_isolation_failure_is_surfaced(tmp_path, monkeypatch):
     assert len(res.items) == 1
 
 
+def test_target_study_doctrine_only_for_multi_study_runs():
+    assert comparisons._target_study_doctrine(None) == ""
+    assert comparisons._target_study_doctrine("  ") == ""
+    block = comparisons._target_study_doctrine("2", "the replication with the online sample")
+    assert "TARGET STUDY" in block
+    assert "'Study 2' ONLY" in block
+    assert "the replication with the online sample" in block
+    assert "never report that it is unclear which study the registration refers to" in block
+    # A bare label repeated as the note is not echoed twice.
+    assert "described the target study" not in comparisons._target_study_doctrine("2", "2")
+    # Non-numeric labels are used verbatim.
+    assert "'Experiment 1b' ONLY" in comparisons._target_study_doctrine("Experiment 1b")
+
+
+def test_run_comparison_prompt_names_target_study(monkeypatch):
+    """When the paper was isolated to one study, the judge must be told which study
+    the registration belongs to; otherwise it reads leftover mentions of sibling
+    studies as ambiguity and returns 'missing'."""
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    def _corpus(prefix):
+        return EmbeddingCorpus(
+            segments=["a segment of text"],
+            embeddings=np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+            chunk_ids=[f"{prefix}_0001"],
+            norms=np.array([1.0], dtype=np.float32),
+            metadata=[{}],
+        )
+
+    prereg, paper = "p", "x"
+    corpus_cache = {
+        f"prereg:{hashlib.sha256(prereg.encode()).hexdigest()}": _corpus("PREREG"),
+        f"paper:{hashlib.sha256(paper.encode()).hexdigest()}": _corpus("PAPER"),
+    }
+    captured = {}
+
+    def _capture(messages, **_kw):
+        captured["prompt"] = messages[-1]["content"]
+        return '{"dimension": "Sample size", "deviation_judgement": "no"}'
+
+    monkeypatch.setattr(
+        comparisons, "get_embedding", lambda text, model=None: np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    )
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _capture)
+
+    comparisons.run_comparison(prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache)
+    assert "TARGET STUDY" not in captured["prompt"]
+
+    comparisons.run_comparison(
+        prereg, paper, "claude", "Sample size", corpus_cache=corpus_cache, target_study="3"
+    )
+    prompt = captured["prompt"]
+    assert "TARGET STUDY" in prompt
+    assert "'Study 3' ONLY" in prompt
+    # The block sits in the static (cacheable) prefix, before the per-dimension part.
+    assert prompt.index("TARGET STUDY") < prompt.index("The dimension along which you should compare")
+
+
+@pytest.mark.asyncio
+async def test_multi_study_run_forwards_target_study_to_every_judgement(tmp_path, monkeypatch):
+    """The target-study label reaches the per-dimension runner both when isolation
+    succeeds and when it fails (the full paper is then used, so the label matters MORE)."""
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+
+    seen: list[dict] = []
+
+    def fake_runner(p, pa, c, d, **kw):
+        seen.append(kw)
+        return comparisons.ComparisonResult(items=[comparisons.ComparisonItem(
+            dimension=d, paper_content_quotes="", paper_content_summary="x",
+            registration_content_quotes="", registration_content_summary="y",
+            deviation_judgement="no", deviation_information="ok")])
+
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 2.")
+    paper = tmp_path / "paper.txt"; paper.write_text("Intro. Study 1. Study 2 results. Discussion.")
+    dims = [{"dimension": "Hypotheses", "definition": "h"}, {"dimension": "Sample size", "definition": "n"}]
+
+    async def ok_isolation(*a, **k):
+        return "Intro. Study 2 results. Discussion."
+    monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", ok_isolation)
+    await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=dims, comparison_runner=fake_runner,
+        multiple_experiments="yes", experiment_number="2", experiment_text="the online replication")
+    assert len(seen) == 2
+    assert all(kw.get("target_study") == "2" for kw in seen)
+    assert all(kw.get("target_study_note") == "the online replication" for kw in seen)
+
+    seen.clear()
+    async def boom(*a, **k):
+        raise RuntimeError("model context exceeded")
+    monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", boom)
+    await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=dims, comparison_runner=fake_runner,
+        multiple_experiments="yes", experiment_number="2")
+    assert len(seen) == 2
+    assert all(kw.get("target_study") == "2" for kw in seen)
+
+    seen.clear()
+    await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=dims, comparison_runner=fake_runner,
+        multiple_experiments="no", experiment_number="2")
+    assert all(kw.get("target_study") is None for kw in seen)
+
+
 def test_compute_top_k_scales_for_short_corpora():
     assert comparisons._compute_top_k(16) == 8    # ceil(16*0.45)=8 beats min_k=6
     assert comparisons._compute_top_k(100) == 10  # ~10% rate for large corpora
@@ -1224,7 +1341,7 @@ def _verif_corpora():
     return cache
 
 
-def _verif_reply(verdict="no", unlocated_paper="", info="rationale"):
+def _verif_reply(verdict="no", unlocated_paper="", info="rationale", unlocated_reg=""):
     import json
 
     return json.dumps(
@@ -1237,7 +1354,7 @@ def _verif_reply(verdict="no", unlocated_paper="", info="rationale"):
             "deviation_judgement": verdict,
             "deviation_information": info,
             "unlocated_in_paper": unlocated_paper,
-            "unlocated_in_registration": "",
+            "unlocated_in_registration": unlocated_reg,
         }
     )
 
@@ -1317,6 +1434,112 @@ def test_verification_pass_is_free_when_nothing_flagged(monkeypatch):
         "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1, num_voters=2
     )
     assert len(calls) == 2
+
+
+def _verif_corpora_with_reg_plant():
+    """Like _verif_corpora, but the registration also carries a planted chunk
+    (PREREG_0002, 'delta questionnaire') that top-1 retrieval cannot reach."""
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    # Plants sit at index 5 so the small-to-big neighbour expansion (window 2)
+    # around the retrieved *_0001 chunk cannot reach them — the targeted search
+    # must be what surfaces them (same layout as _verif_corpora).
+    def _corpus(prefix, lead, plant):
+        segments = [lead] + ["filler text"] * 4 + [plant]
+        vecs = [[1.0, 0.0]] + [[0.9701, -0.2425]] * 4 + [[0.0, 1.0]]
+        return EmbeddingCorpus(
+            segments=segments,
+            embeddings=np.array(vecs, dtype=np.float32),
+            chunk_ids=[f"{prefix}_{i + 1:04d}" for i in range(6)],
+            norms=np.ones(6, dtype=np.float32),
+            metadata=[{} for _ in range(6)],
+        )
+
+    prereg = _corpus(
+        "PREREG",
+        "the registration plans a sample of 100",
+        "participants also complete the delta questionnaire at home",
+    )
+    paper = _corpus(
+        "PAPER",
+        "the paper reports a sample of 100",
+        "the beta protocol ran for six weeks as planned",
+    )
+    return {
+        f"prereg:{hashlib.sha256(b'p').hexdigest()}": prereg,
+        f"paper:{hashlib.sha256(b'x').hexdigest()}": paper,
+    }
+
+
+def _fake_embed_two_plants():
+    import numpy as np
+
+    def _embed(text, model=None):
+        if "beta protocol" in text or "delta questionnaire" in text:
+            return np.array([0.0, 1.0], dtype=np.float32)
+        if "Sample size" in text:
+            return np.array([1.0, 0.0], dtype=np.float32)
+        return np.array([0.0, 0.0], dtype=np.float32)
+
+    return _embed
+
+
+def test_verification_loop_searches_the_rejudgements_unlocated_elements(monkeypatch):
+    # Regression (validation article 43): the re-judgement after augmentation
+    # produces its OWN unlocated lists — the ones the emitted item carries —
+    # and those must be searched too, not just pass 1's.
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        if len(calls) == 1:
+            return _verif_reply(verdict="yes", unlocated_paper="beta protocol (BP)")
+        if len(calls) == 2:
+            # Re-judge names a NEW registration element it could not locate.
+            return _verif_reply(verdict="yes", unlocated_reg="delta questionnaire")
+        return _verif_reply(verdict="no", info="all elements verified")
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_two_plants())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    result = comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora_with_reg_plant(), top_k=1
+    )
+    item = result.items[0]
+    assert len(calls) == 3  # pass 1 + re-judge + second-round re-judge
+    assert "Additional targeted registration excerpts" in calls[2]
+    assert "PREREG_0006" in calls[2]
+    assert "delta questionnaire" in calls[2]
+    # Round 1's paper augmentation must still be present in the final prompt.
+    assert "Additional targeted paper excerpts" in calls[2]
+    assert _normalize_verdict(item.deviation_judgement) == "no"  # final round's verdict wins
+    assert "'beta protocol (BP)' (paper)" in item.deviation_information
+    assert "'delta questionnaire' (registration)" in item.deviation_information
+
+
+def test_verification_loop_terminates_when_element_is_relisted(monkeypatch):
+    # The judge keeps listing the SAME element even after its excerpts were
+    # supplied: it is searched once, and the loop stops instead of spinning.
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        if len(calls) == 1:
+            return _verif_reply(verdict="yes", unlocated_paper="beta protocol (BP)")
+        return _verif_reply(verdict="yes", unlocated_paper="Beta  Protocol (BP)", info="still unsure")
+
+    monkeypatch.setattr(comparisons, "get_embedding", _fake_embed_factory())
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    result = comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1
+    )
+    assert len(calls) == 2  # one augmentation + re-judge; the re-listing triggers no new search
+    assert result.items[0].deviation_information.count("'beta protocol (BP)' (paper)") == 1
 
 
 def test_split_unlocated_and_search_terms():

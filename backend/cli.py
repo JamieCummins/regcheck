@@ -90,7 +90,8 @@ def _resolve_dimensions_arg(args, *, require: bool) -> list[dict[str, str]] | No
 
 def _resolve_general_prereg(args) -> tuple[str, str]:
     """Resolve the preregistration source: an OSF link (--osf-url, resolved here the
-    same way the worker does) or a local file (--preregistration). Exactly one."""
+    same way the worker does) or a local file (--preregistration). Exactly one.
+    Any --additional-preregistration files are merged in afterwards."""
     osf_url = getattr(args, "osf_url", None)
     prereg = getattr(args, "preregistration", None)
     if osf_url and prereg:
@@ -101,10 +102,40 @@ def _resolve_general_prereg(args) -> tuple[str, str]:
         dest = tempfile.mkdtemp(prefix="regcheck-osf-")
         logger.info("Resolving OSF preregistration: %s", osf_url)
         path, ext = osf.fetch_osf_preregistration(osf_url, dest_dir=dest)
-        return path, ext
-    if not prereg:
+    elif prereg:
+        path, ext = prereg, _normalized_suffix(prereg)
+    else:
         raise ValueError("Provide a preregistration via --preregistration or --osf-url.")
-    return prereg, _normalized_suffix(prereg)
+
+    extras = [p for p in (getattr(args, "additional_preregistration", None) or []) if p]
+    if extras:
+        path, ext = _combine_prereg_materials(path, ext, extras)
+    return path, ext
+
+
+def _combine_prereg_materials(
+    main_path: str, main_ext: str, extra_paths: list[str]
+) -> tuple[str, str]:
+    """Merge the main preregistration with additional registered materials into one
+    plain-text document with labelled separators — the same shape the web app's
+    multi-file upload produces (routes.comparisons._coalesce_uploads), so the
+    comparison sees a single registration either way."""
+    from backend.services.documents import read_file
+
+    sources = [(main_path, main_ext)] + [(p, _normalized_suffix(p)) for p in extra_paths]
+    parts: list[str] = []
+    for index, (path, ext) in enumerate(sources, start=1):
+        if not Path(path).exists():
+            raise FileNotFoundError(f"Preregistration material not found: {path}")
+        text = read_file(path, ext)
+        parts.append(f"===== Document {index}: {Path(path).name} =====\n\n{(text or '').strip()}")
+    logger.info(
+        "Combined preregistration with %d additional material file(s).", len(extra_paths)
+    )
+    combined_dir = tempfile.mkdtemp(prefix="regcheck-prereg-combined-")
+    combined_path = Path(combined_dir) / "preregistration-combined.txt"
+    combined_path.write_text("\n\n\n".join(parts), encoding="utf-8")
+    return str(combined_path), ".txt"
 
 
 def _maybe_write_html_report(args, payload: dict, evidence_out: dict | None) -> None:
@@ -237,8 +268,14 @@ def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
     """Build the per-row argument namespace a single-run function expects, from
     the batch-level flags plus one manifest row."""
     get = lambda key: (row.get(key) or "").strip() or None  # noqa: E731
+    additional = [
+        p.strip()
+        for p in (get("additional_preregistration") or "").split(";")
+        if p.strip()
+    ]
     return argparse.Namespace(
         preregistration=get("preregistration"),
+        additional_preregistration=additional or None,
         osf_url=get("osf_url"),
         paper=get("paper"),
         registration_id=get("registration_id"),
@@ -265,8 +302,9 @@ def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
 async def _run_batch(args) -> dict:
     """Batch processing: one manifest CSV row per run. Columns: ``type``
     (general|clinical), ``preregistration``/``osf_url``, ``paper``,
-    ``registration_id``, optional ``dimensions_csv``/``dimension_set`` and
-    ``label``. Per-row results are written to --output-dir; failures are
+    ``registration_id``, optional ``additional_preregistration``
+    (';'-separated paths of extra registered materials),
+    ``dimensions_csv``/``dimension_set`` and ``label``. Per-row results are written to --output-dir; failures are
     recorded and the batch continues (use --stop-on-error to abort instead)."""
     manifest_path = Path(args.manifest)
     if not manifest_path.exists():
@@ -443,7 +481,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     general.add_argument(
         "--preregistration",
-        help="Path to the preregistration file (.pdf/.docx/.txt/.html). Or use --osf-url.",
+        help="Path to the preregistration file (.pdf/.docx/.txt/.html/.xml). Or use --osf-url.",
+    )
+    general.add_argument(
+        "--additional-preregistration",
+        action="append",
+        metavar="PATH",
+        help=(
+            "Path to an additional preregistration material file (e.g. an analysis plan, "
+            "materials appendix, or amendment) to merge with the main preregistration. "
+            "Repeat the flag for several files (.pdf/.docx/.txt/.html/.xml). The files are "
+            "extracted to text and concatenated with labelled separators, exactly like the "
+            "web app's multi-file registration upload."
+        ),
     )
     general.add_argument(
         "--osf-url",
@@ -452,7 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--paper",
         required=True,
-        help="Path to the published paper file (.pdf/.docx/.txt/.html).",
+        help="Path to the published paper file (.pdf/.docx/.txt/.html/.xml).",
     )
     general.add_argument(
         "--dimensions-csv",
@@ -573,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     batch = subparsers.add_parser(
         "batch",
-        help="Run many comparisons from a manifest CSV (columns: type, preregistration, osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
+        help="Run many comparisons from a manifest CSV (columns: type, preregistration, additional_preregistration (';'-separated paths), osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
     )
     batch.add_argument("--manifest", required=True, help="CSV manifest, one run per row.")
     batch.add_argument("--output-dir", required=True, help="Directory for per-row outputs + batch_summary.json.")

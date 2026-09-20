@@ -505,7 +505,7 @@
             if (bad) {
                 const display = fileDisplay(input);
                 if (display) {
-                    display.textContent = "Unsupported file (" + (fileExt(bad.name) || "no extension") + "). Use PDF, DOCX, TXT, or HTML.";
+                    display.textContent = "Unsupported file (" + (fileExt(bad.name) || "no extension") + "). Use PDF, DOCX, TXT, HTML, or XML.";
                     display.removeAttribute("title");
                 }
                 if (dropzone) { dropzone.classList.add("has-error"); dropzone.classList.remove("has-file"); }

@@ -1,12 +1,22 @@
 """Structural integrity of the frozen verdict benchmark (no LLM calls here —
 the live run is benchmarks/run_probes.py). Guards against a probe being edited
-or deleted without its manifest entry, and vice versa."""
+or deleted without its manifest entry, and vice versa.
+
+``benchmarks/`` is gitignored (local-only), so these checks run where the folder
+exists (the maintainer's checkout) and are skipped on a fresh clone / in CI."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pytest
+
 BENCH = Path(__file__).resolve().parents[1] / "benchmarks"
+
+pytestmark = pytest.mark.skipif(
+    not (BENCH / "manifest.json").is_file(),
+    reason="benchmarks/ is local-only (gitignored) and not present in this checkout",
+)
 
 
 def _manifest():

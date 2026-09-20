@@ -122,3 +122,71 @@ def test_general_parser_default_matches_app_and_accepts_dimension_set():
     )
     assert args.parser_choice == "pymupdf"  # harmonised with web/API default
     assert args.dimension_set == "psychology"
+
+
+def test_additional_preregistration_flag_is_repeatable():
+    args = cli.build_parser().parse_args(
+        [
+            "general",
+            "--preregistration", "p.pdf",
+            "--paper", "a.pdf",
+            "--dimension-set", "psychology",
+            "--additional-preregistration", "plan.docx",
+            "--additional-preregistration", "materials.xml",
+        ]
+    )
+    assert args.additional_preregistration == ["plan.docx", "materials.xml"]
+
+
+def test_resolve_general_prereg_merges_additional_materials(tmp_path):
+    main = tmp_path / "prereg.txt"
+    main.write_text("Main preregistration body.", encoding="utf-8")
+    extra = tmp_path / "analysis_plan.txt"
+    extra.write_text("Additional analysis plan.", encoding="utf-8")
+
+    path, ext = cli._resolve_general_prereg(
+        SimpleNamespace(
+            osf_url=None,
+            preregistration=str(main),
+            additional_preregistration=[str(extra)],
+        )
+    )
+    assert ext == ".txt"
+    combined = open(path, encoding="utf-8").read()
+    # Same labelled-separator shape as the web app's multi-file upload.
+    assert "===== Document 1: prereg.txt =====" in combined
+    assert "===== Document 2: analysis_plan.txt =====" in combined
+    assert "Main preregistration body." in combined
+    assert "Additional analysis plan." in combined
+
+
+def test_resolve_general_prereg_missing_additional_material_fails(tmp_path):
+    main = tmp_path / "prereg.txt"
+    main.write_text("Main.", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="material not found"):
+        cli._resolve_general_prereg(
+            SimpleNamespace(
+                osf_url=None,
+                preregistration=str(main),
+                additional_preregistration=[str(tmp_path / "nope.pdf")],
+            )
+        )
+
+
+def test_batch_row_namespace_splits_additional_preregistration():
+    row = {
+        "preregistration": "p.pdf",
+        "paper": "a.pdf",
+        "additional_preregistration": "plan.docx; materials.xml",
+    }
+    ns = cli._batch_row_namespace(
+        SimpleNamespace(
+            client="openai",
+            parser_choice="pymupdf",
+            append_previous_output=False,
+            reasoning_effort="medium",
+            embedding_model=None,
+        ),
+        row,
+    )
+    assert ns.additional_preregistration == ["plan.docx", "materials.xml"]

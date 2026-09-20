@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+import xml.etree.ElementTree as ElementTree
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -14,6 +15,7 @@ __all__ = [
     "extract_text_from_docx",
     "extract_text_from_pdf",
     "extract_text_from_html",
+    "extract_text_from_xml",
     "convert_txt_to_pdf",
     "clean_document_text",
     "read_file",
@@ -150,6 +152,62 @@ def extract_text_from_html(file_path: str) -> str:
     return extractor.text()
 
 
+# Tags whose content flows inline with the surrounding sentence. Everything else
+# gets its own line, so unknown/JATS structural tags (<sec>, <title>, <abstract>,
+# <table-wrap>, …) become paragraph boundaries and _normalize_whitespace collapses
+# any excess. Covers JATS/PMC article XML plus common (X)HTML inline tags.
+_XML_INLINE_TAGS = {
+    "italic", "bold", "underline", "sup", "sub", "sc", "monospace", "roman",
+    "sans-serif", "strike", "overline", "xref", "ext-link", "uri", "email",
+    "named-content", "styled-content", "inline-formula", "inline-graphic",
+    "abbrev", "chem-struct", "milestone-start", "milestone-end", "break",
+    "a", "span", "em", "strong", "i", "b", "u", "small", "code",
+}
+
+
+def extract_text_from_xml(file_path: str) -> str:
+    """Extract readable text from an XML document (e.g. JATS/PMC article XML).
+
+    Parsed with the stdlib ElementTree (expat: no external-entity resolution, no
+    network fetches). Well-formed XML gets a structure-aware walk — non-inline
+    elements become paragraph boundaries; malformed XML falls back to the
+    tolerant HTML soup extractor so near-XML exports still yield their text.
+    """
+    try:
+        root = ElementTree.parse(file_path).getroot()
+    except ElementTree.ParseError:
+        markup = decode_bytes(Path(file_path).read_bytes())  # charset-robust (UTF-8 -> cp1252)
+        extractor = _HTMLTextExtractor()
+        extractor.feed(markup)
+        return extractor.text()
+
+    # Iterative walk (crafted deeply-nested XML must not hit the recursion limit).
+    parts: list[str] = []
+    stack: list[tuple[str, ElementTree.Element]] = [("start", root)]
+    while stack:
+        op, element = stack.pop()
+        if op == "tail":
+            if element.tail:
+                parts.append(element.tail)
+            continue
+        if op == "break":
+            parts.append("\n")
+            continue
+        tag = element.tag
+        if not isinstance(tag, str):  # comment/PI nodes from custom parsers
+            continue
+        block = tag.rsplit("}", 1)[-1].lower() not in _XML_INLINE_TAGS
+        if block:
+            parts.append("\n")
+            stack.append(("break", element))
+        for child in reversed(element):
+            stack.append(("tail", child))
+            stack.append(("start", child))
+        if element.text:
+            parts.append(element.text)
+    return "".join(parts)
+
+
 REFERENCE_PATTERN = re.compile(
     r"(?:^|\n)([A-Z\s]*\bReferences\b|Bibliography|Cited Works)[\s]*\n",
     re.IGNORECASE,
@@ -160,10 +218,18 @@ INTRODUCTION_PATTERN = re.compile(
 
 
 def remove_references(document_text: str) -> str:
-    """Remove trailing references sections from a document."""
-    match = REFERENCE_PATTERN.search(document_text)
-    if match:
-        return document_text[: match.start()]
+    """Remove a genuinely trailing references section from a document.
+
+    Cuts at the LAST heading match, and only when it falls in the final 40% of
+    the text. Cutting at the first match anywhere truncated OSF registrations
+    whose *description* contains an early "References" heading (e.g.
+    osf.io/v734e), silently discarding the registration form content after it.
+    """
+    matches = list(REFERENCE_PATTERN.finditer(document_text))
+    if matches:
+        start = matches[-1].start()
+        if start >= len(document_text) * 0.6:
+            return document_text[:start]
     return document_text
 
 
@@ -193,9 +259,11 @@ def read_file(file_path: str, file_extension: str) -> str:
         text = extract_text_from_pdf(file_path)
     elif file_extension in (".html", ".htm"):
         text = extract_text_from_html(file_path)
+    elif file_extension == ".xml":
+        text = extract_text_from_xml(file_path)
     else:
         raise ValueError(
-            f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, or HTML file."
+            f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, HTML, or XML file."
         )
     return clean_document_text(text)
 
@@ -205,7 +273,7 @@ def read_file_as_pdf(filename: str, file_extension: str) -> str:
     file_extension = file_extension.lower()
     if file_extension == ".txt":
         return convert_txt_to_pdf(filename)
-    if file_extension in (".docx", ".html", ".htm"):
+    if file_extension in (".docx", ".html", ".htm", ".xml"):
         # Text is extracted separately and re-rendered to PDF pages by the
         # evidence layer (build_file_evidence_source); keep the original file
         # so its bytes remain available for the "open original" fallback.
@@ -213,7 +281,7 @@ def read_file_as_pdf(filename: str, file_extension: str) -> str:
     if file_extension == ".pdf":
         return filename
     raise ValueError(
-        f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, or HTML file."
+        f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, HTML, or XML file."
     )
 
 

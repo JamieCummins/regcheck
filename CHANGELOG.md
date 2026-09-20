@@ -4,6 +4,48 @@ Notable changes to RegCheck. The application version lives in
 `APP_VERSION` in `backend/main.py` and is what `/openapi.json` reports.
 
 
+## Unreleased
+
+### Comparison engine
+- Fixed: multi-study runs now tell every per-dimension judgement which study
+  the registration belongs to (the label and any user note from the wizard's
+  "experiment" fields). The paper text was already isolated to that study
+  upstream, but the judge never knew: residual mentions of sibling studies
+  (introduction, joint method sections, general discussion, cross-references)
+  were read as ambiguity and produced "insufficient evidence — unclear which
+  study the registration refers to". The label is also passed when isolation
+  fails and the full paper is used, where it matters more.
+- Fixed: the targeted verification pass now loops. Previously only pass 1's
+  unlocated elements were searched; the re-judgement on augmented evidence
+  produced its own unlocated lists — the ones actually emitted — which went
+  unsearched, letting the final output claim elements as unlocated that are
+  verbatim in the document (validation article 43). Each judgement's new
+  unlocated elements are now searched and re-judged until convergence (each
+  element searched at most once; capped at 3 augmentation rounds).
+
+### Report viewer
+- Fixed: opening the Evidence view scrolled only the registration pane to its
+  quote; the paper pane stayed at the top. Both document panes now open on
+  their first located quote (clicking a quote still moves only its own pane).
+
+### Document intake
+- Fixed: references stripping no longer truncates a registration at an
+  *early* "References" heading (e.g. an OSF registration description citing
+  literature — osf.io/v734e lost 94% of its form content). Only a genuinely
+  trailing section (last heading match, in the final 40% of the text) is cut.
+- XML uploads (`.xml`) accepted everywhere documents are: web wizard, API,
+  OSF links, and CLI. Well-formed XML (e.g. JATS/PMC article XML) gets a
+  structure-aware stdlib parse (no external-entity resolution); malformed
+  XML falls back to the tolerant markup-soup extractor.
+
+### CLI
+- `--additional-preregistration PATH` (repeatable, `general` subcommand):
+  merge extra registered materials (analysis plans, appendices, amendments)
+  with the main preregistration, using the same labelled-separator
+  combination as the web app's multi-file upload. Batch manifests get the
+  matching `additional_preregistration` column (`;`-separated paths).
+
+
 ## 1.0.0 — 2026-07
 
 First stable release. Highlights relative to the public beta:

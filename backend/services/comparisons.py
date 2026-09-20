@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 from .documents import (
     extract_text_from_docx,
     extract_text_from_html,
+    extract_text_from_xml,
     read_file,
     read_file_as_pdf,
 )
@@ -380,6 +381,11 @@ def _reference_chunk_ids(corpus: "EmbeddingCorpus") -> set[str]:
 
 _UNLOCATED_SPLIT_RE = re.compile(r"[;\n]+")
 _SYNONYM_GROUP_RE = re.compile(r"\(([^)]*)\)")
+
+# Cap on augment→re-judge cycles in the targeted verification loop. Each round
+# only searches elements not already searched, so the loop converges as soon as
+# a judgement stops naming brand-new elements; the cap is a cost/runaway guard.
+_MAX_VERIFICATION_ROUNDS = 3
 
 
 def _split_unlocated(value: str | None, cap: int = 3) -> list[str]:
@@ -1000,10 +1006,12 @@ async def general_preregistration_comparison(
             extracted_paper_sections = reader(paper_input)
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".xml":
+            extracted_paper_sections = extract_text_from_xml(paper_path)
         elif paper_ext == ".txt":
             extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
-            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, HTML, or XML file.")
     except Exception as exc:
         if task_id and redis_client:
             await redis_client.hset(
@@ -1032,6 +1040,10 @@ async def general_preregistration_comparison(
         has_multiple_experiments = multiple_experiments.strip().lower() == "yes"
     else:
         has_multiple_experiments = bool(multiple_experiments)
+    # Told to every per-dimension judgement (also when isolation fails and the full
+    # paper is used) so the judge knows which study the registration belongs to.
+    target_study = experiment_label if (has_multiple_experiments and experiment_label) else None
+    target_study_note = experiment_note if target_study else None
 
     if has_multiple_experiments and experiment_label:
         if task_id and redis_client:
@@ -1294,6 +1306,8 @@ async def general_preregistration_comparison(
                     reasoning_effort=reasoning_effort,
                     evidence_manifest=evidence_manifest,
                     comparison_context=comparison_context,
+                    target_study=target_study,
+                    target_study_note=target_study_note,
                 )
             )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
@@ -1366,6 +1380,8 @@ async def general_preregistration_comparison(
                 previous_dimension_responses=previous_responses,
                 comparison_context=comparison_context,
                 evidence_manifest=evidence_manifest,
+                target_study=target_study,
+                target_study_note=target_study_note,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
@@ -1481,10 +1497,12 @@ async def clinical_trial_comparison(
             extracted_paper_sections = reader(paper_input)
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".xml":
+            extracted_paper_sections = extract_text_from_xml(paper_path)
         elif paper_ext == ".txt":
             extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
-            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, HTML, or XML file.")
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(
@@ -1723,10 +1741,12 @@ async def animals_trial_comparison(
             extracted_paper_sections = reader(paper_input)
         elif paper_ext in (".html", ".htm"):
             extracted_paper_sections = extract_text_from_html(paper_path)
+        elif paper_ext == ".xml":
+            extracted_paper_sections = extract_text_from_xml(paper_path)
         elif paper_ext == ".txt":
             extracted_paper_sections = decode_bytes(Path(paper_path).read_bytes())  # charset-robust
         else:
-            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, or HTML file.")
+            raise ValueError("Problem parsing paper input - try a PDF, DOCX, TXT, HTML, or XML file.")
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(
@@ -2247,6 +2267,8 @@ async def _run_strand_consensus(
     reasoning_effort: str | None,
     evidence_manifest: dict[str, Any] | None,
     comparison_context: ComparisonContext,
+    target_study: str | None = None,
+    target_study_note: str | None = None,
 ) -> list[ComparisonItem]:
     """Independent-voter ("strand") consensus for the preregistration flow.
 
@@ -2287,6 +2309,8 @@ async def _run_strand_consensus(
                 previous_dimension_responses=prev,
                 comparison_context=comparison_context,
                 evidence_manifest=manifest,
+                target_study=target_study,
+                target_study_note=target_study_note,
             )
             strand_items.append(comparison.items[0])
         return strand_items
@@ -2526,6 +2550,31 @@ def run_carried_forward_dimension(
     return result
 
 
+def _target_study_doctrine(target_study: str | None, target_study_note: str | None = None) -> str:
+    """Prompt paragraph telling the judge WHICH study of a multi-study paper the
+    registration corresponds to, so residual mentions of sibling studies are read as
+    context rather than as ambiguity or as deviations. Empty when not a multi-study run."""
+    label = (target_study or "").strip()
+    if not label:
+        return ""
+    label_txt = f"Study {label}" if label.isdigit() else label
+    note = (target_study_note or "").strip()
+    note_txt = f" The user described the target study as: {note}." if note and note != label else ""
+    return (
+        f"TARGET STUDY: the paper reports more than one study, and the registration under comparison "
+        f"corresponds to the study labelled '{label_txt}' ONLY.{note_txt} The paper excerpts have, where possible, "
+        f"been pre-filtered to '{label_txt}' together with material shared across the studies (the "
+        "introduction, general or joint method sections, transparency statements, and the general "
+        "discussion), so they may still name other studies or the series as a whole. The presence of "
+        "other studies is NOT ambiguity, NOT a deviation, and NOT grounds for 'missing': never report "
+        f"that it is unclear which study the registration refers to. Compare the registration against "
+        f"'{label_txt}' alone. Content that belongs to a different study is irrelevant unless the paper "
+        f"states that it also applies to '{label_txt}' (a shared procedure, a joint method section, or a "
+        f"cross-reference such as 'the same procedure as Study 1'); in that case treat it as '{label_txt}' "
+        "content.\n\n"
+    )
+
+
 def run_comparison(
     preregistration_input: str,
     extracted_paper_sections: str,
@@ -2543,6 +2592,8 @@ def run_comparison(
     query_embedding_cache: dict[str, Any] | None = None,
     dimension_keywords: list[str] | None = None,
     num_voters: int = 1,
+    target_study: str | None = None,
+    target_study_note: str | None = None,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -2723,6 +2774,13 @@ def run_comparison(
             "Critically compare the following clinical trial registration with content from its corresponding published paper based on the below-specified study dimension."
         )
 
+    # Multi-study papers: the paper text is (best-effort) pre-isolated to the target
+    # study upstream, but the judge never saw that happen. Without this block it reads
+    # the surviving mentions of sibling studies (introduction, shared method, general
+    # discussion, cross-references) as ambiguity and returns 'missing' with "unclear
+    # which study the registration refers to". Constant per-run, so cache-safe.
+    target_study_block = _target_study_doctrine(target_study, target_study_note)
+
     # Quotes-as-IDs (DEFAULT ON): the judge's emitted quote text is DISCARDED after
     # parsing (_judge_dimension_once always overwrites both quote fields with the
     # retrieved chunks), so having the model copy quotes verbatim paid output-token
@@ -2745,6 +2803,7 @@ def run_comparison(
     static_doctrine = (
         f"{intro_line}\n\n"
         f"{rr_definition}"
+        f"{target_study_block}"
         "You have two goals. First, identify and extract quotes from the sources that are relevant to the specified dimension from both the registration and the paper. You will also provide a concise summary of this information for both the registration and paper."
         " Second, make a three-way judgement on the specified dimension: the registration and paper deviate, are verifiably consistent, or provide insufficient evidence to judge."
         " You are looking closely for any deviation or divergence between the paper and the registration, of any kind or size.\n\n"
@@ -2814,37 +2873,53 @@ def run_comparison(
 
     voters = max(1, int(num_voters or 1))
 
-    # Targeted verification pass: one initial judgement; if it flags elements it
+    # Targeted verification loop: one initial judgement; if it flags elements it
     # could not find in either document's excerpts, search the FULL corpus for
     # each (semantic + literal, references excluded). New material → re-judge on
-    # the augmented prompt; nothing found → the initial verdict stands and the
+    # the augmented prompt — and because the re-judgement produces its OWN
+    # unlocated_in_* lists (which are what the emitted item carries), those are
+    # searched too, looping until a judgement's unlocated elements have all been
+    # searched or _MAX_VERIFICATION_ROUNDS augmentations. A single-shot pass let
+    # the re-judge assert elements as unlocated that are verbatim in the document
+    # (validation article 43: Gorilla.sc, headphone screening, the q17 oddity
+    # transform), contaminating rationales and verdicts. Elements are searched at
+    # most once per document; nothing found → the standing verdict holds and the
     # rationale records that a full-document search corroborated the absence.
     # In the common case (nothing flagged) this costs zero extra LLM calls: the
-    # initial judgement doubles as the single-judge verdict / first voter.
-    pass1 = _judge(messages)
+    # initial judgement doubles as the single-judge verdict / first voter — and
+    # after augmentation the converged probe judgement is reused the same way.
+    probe = _judge(messages)
+    probe_saw_current_prompt = True
     augmented = False
     searched: list[str] = []
-    if pass1 is not None:
+    searched_keys: set[tuple[str, str]] = set()
+    if probe is not None:
         shown_ids = _ids_in_prompt_blocks(prereg_prompt + paper_prompt)
-        extra_blocks: list[str] = []
-        for field_name, corpus, doc_label in (
-            ("unlocated_in_paper", paper_corpus, "paper"),
-            ("unlocated_in_registration", prereg_corpus, "registration"),
-        ):
-            for element in _split_unlocated(getattr(pass1, field_name, "")):
-                hits = _targeted_element_search(
-                    element, corpus, exclude_ids=shown_ids, embedding_model=embedding_model
-                )
-                searched.append(f"'{element}' ({doc_label})")
-                if hits:
-                    shown_ids.update(cid for cid, _t, _s in hits)
-                    labelled = " ".join(
-                        f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in hits
+        for round_number in range(1, _MAX_VERIFICATION_ROUNDS + 1):
+            extra_blocks: list[str] = []
+            for field_name, corpus, doc_label in (
+                ("unlocated_in_paper", paper_corpus, "paper"),
+                ("unlocated_in_registration", prereg_corpus, "registration"),
+            ):
+                for element in _split_unlocated(getattr(probe, field_name, "")):
+                    key = (doc_label, " ".join(element.casefold().split()))
+                    if key in searched_keys:
+                        continue  # already searched; a repeat listing adds no information
+                    searched_keys.add(key)
+                    hits = _targeted_element_search(
+                        element, corpus, exclude_ids=shown_ids, embedding_model=embedding_model
                     )
-                    extra_blocks.append(
-                        f"Additional targeted {doc_label} excerpts (found by a full-document search for: {element}):\n{labelled}"
-                    )
-        if extra_blocks:
+                    searched.append(f"'{element}' ({doc_label})")
+                    if hits:
+                        shown_ids.update(cid for cid, _t, _s in hits)
+                        labelled = " ".join(
+                            f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in hits
+                        )
+                        extra_blocks.append(
+                            f"Additional targeted {doc_label} excerpts (found by a full-document search for: {element}):\n{labelled}"
+                        )
+            if not extra_blocks:
+                break
             augmented = True
             messages = [
                 messages[0],
@@ -2852,20 +2927,33 @@ def run_comparison(
             ]
             logger.info(
                 "Verification pass augmented evidence",
-                extra={"dimension": dimension_query, "searched": searched, "blocks": len(extra_blocks)},
+                extra={
+                    "dimension": dimension_query,
+                    "searched": searched,
+                    "blocks": len(extra_blocks),
+                    "round": round_number,
+                },
             )
+            repass = _judge(messages)
+            if repass is None:
+                # Unparseable re-judgement: the augmented prompt stands and the
+                # voters below judge it fresh; the stale probe cannot be reused.
+                probe_saw_current_prompt = False
+                break
+            probe = repass
 
     # Consensus-vote: judge the IDENTICAL prompt N times (retrieval + prompt were assembled
     # once above, so only the stochastic judgement repeats), then aggregate by plurality.
     # num_voters == 1 is the unchanged single-judge path. _judge_dimension_once returns
     # None for an unparseable reply (a non-vote), so parse failures neither poison the
     # tally nor decide a dimension; we only fall back to the degraded item if EVERY
-    # judgement failed to parse. When the verification pass augmented the evidence,
-    # pass 1 saw different excerpts and cannot count as a voter.
-    if augmented:
-        judged = [_judge(messages) for _ in range(voters)]
+    # judgement failed to parse. The verification loop above always ends with a probe
+    # judged on the FINAL prompt (each augmentation is followed by a re-judgement), so
+    # the probe counts as the first voter — unless its re-judgement failed to parse.
+    if probe is not None and probe_saw_current_prompt:
+        judged = [probe] + [_judge(messages) for _ in range(voters - 1)]
     else:
-        judged = [pass1] + [_judge(messages) for _ in range(voters - 1)]
+        judged = [_judge(messages) for _ in range(voters)]
     genuine = [j for j in judged if j is not None]
     if not genuine:
         item = _degraded_item(dimension_query, paper_top, prereg_top)

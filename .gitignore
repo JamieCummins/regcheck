@@ -29,5 +29,8 @@ nltk_data/
 # Local fixtures / sample documents + curated ground-truth (not redistributed)
 test_materials/
 
+# Benchmarks (probe fixtures, generated corpora, evaluation runs): local only.
+benchmarks/
+
 # Native libraries
 *.dylib

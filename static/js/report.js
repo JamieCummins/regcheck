@@ -769,7 +769,29 @@
             refreshActiveHighlight();
             markUnlocatedQuotes();
             scrollActiveIntoView();
+            // The active quote lives in ONE document, so scrollActiveIntoView only
+            // moves that panel. On opening the view, also bring the other document
+            // to its first located quote so neither pane sits at the top.
+            scrollPanelToFirstQuote("reg", regQuotes);
+            if (!quality) scrollPanelToFirstQuote("ppr", pprQuotes);
         });
+    }
+
+    // Scroll a document panel to the first of `quotes` that was anchored inside it,
+    // unless the active quote already lives in that panel (it is handled by
+    // scrollActiveIntoView and must not be overridden).
+    function scrollPanelToFirstQuote(role, quotes) {
+        const scroll = els.viewDocuments.querySelector(`#docs-${role}-scroll`);
+        if (!scroll) return;
+        const activeEl = state.activeQuoteId ? document.getElementById(`docmark-${state.activeQuoteId}`) : null;
+        if (activeEl && scroll.contains(activeEl)) return;
+        for (const quote of quotes) {
+            const el = document.getElementById(`docmark-${quote.id}`);
+            if (el && scroll.contains(el)) {
+                centerInScroll(scroll, el);
+                return;
+            }
+        }
     }
 
     function renderMiddleQuotes(regQuotes, pprQuotes) {
