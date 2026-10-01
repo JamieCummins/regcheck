@@ -123,7 +123,19 @@ def test_openai_response_schema_excludes_chain_of_thought():
 # ── orchestrator cost attachment ───────────────────────────────────────────────
 
 
-def test_general_orchestrator_attaches_cost(tmp_path):
+def test_general_orchestrator_attaches_cost(tmp_path, monkeypatch):
+    # Keep the test offline: the orchestrator embeds both documents for the evidence
+    # index before calling the (faked) runner. Without this stub the test made a real
+    # OpenAI call locally (key from .env) and failed in CI (no key).
+    import numpy as np
+
+    from backend.services import embeddings
+
+    monkeypatch.setattr(
+        embeddings,
+        "openai_embed_segments",
+        lambda segments, *a, **k: np.ones((len(segments), 8), dtype=np.float32),
+    )
     reg = tmp_path / "r.txt"
     reg.write_text("We will recruit 300 participants.", encoding="utf-8")
     paper = tmp_path / "p.txt"

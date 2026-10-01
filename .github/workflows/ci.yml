@@ -37,4 +37,9 @@ jobs:
         run: alembic upgrade head
 
       - name: Dependency audit
-        run: pip-audit -r requirements.txt --no-deps
+        # PYSEC-2026-3740 (CVE-2026-81726): path traversal in NLTK's model save/load
+        # APIs (TransitionParser, AveragedPerceptron, PerceptronTagger, maxent params).
+        # No fixed release exists (3.10.3 is latest); RegCheck only uses NLTK's
+        # sentence tokenizer with a fixed data path, never those APIs. Drop the
+        # ignore once a fixed NLTK ships.
+        run: pip-audit -r requirements.txt --no-deps --ignore-vuln PYSEC-2026-3740

@@ -868,9 +868,9 @@ markupsafe==3.0.3 \
     # via
     #   jinja2
     #   mako
-nltk==3.10.0 \
-    --hash=sha256:4fbac1d98203cbcd1b5d94a2877fb822300072d80604a5e7fae49d2c5f84e8c1 \
-    --hash=sha256:54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf
+nltk==3.10.3 \
+    --hash=sha256:bb9327a461c3811c2fa4900e03840401f2126adfb30c0072827c433bd2444ea4 \
+    --hash=sha256:ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c
     # via -r requirements.txt
 numpy==1.26.4 \
     --hash=sha256:03a8c78d01d9781b28a6989f6fa1bb2c4f2d51201cf99d3dd875df6fbd96b23b \
