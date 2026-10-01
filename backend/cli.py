@@ -532,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     general.add_argument(
         "--parser-choice",
         default="pymupdf",
-        choices=["grobid", "dpt2", "pymupdf", "external"],
+        choices=["grobid", "dpt2", "pymupdf", "bibr", "external"],
         help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     general.add_argument(
@@ -637,7 +637,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument(
         "--parser-choice",
         default="pymupdf",
-        choices=["grobid", "dpt2", "pymupdf", "external"],
+        choices=["grobid", "dpt2", "pymupdf", "bibr", "external"],
         help="PDF parser for every row (default pymupdf).",
     )
     batch.add_argument("--append-previous-output", action="store_true")
@@ -686,7 +686,7 @@ def build_parser() -> argparse.ArgumentParser:
     clinical.add_argument(
         "--parser-choice",
         default="pymupdf",
-        choices=["grobid", "dpt2", "pymupdf", "external"],
+        choices=["grobid", "dpt2", "pymupdf", "bibr", "external"],
         help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     clinical.add_argument(
@@ -755,7 +755,7 @@ def build_parser() -> argparse.ArgumentParser:
     animals.add_argument(
         "--parser-choice",
         default="pymupdf",
-        choices=["grobid", "dpt2", "pymupdf", "external"],
+        choices=["grobid", "dpt2", "pymupdf", "bibr", "external"],
         help="PDF parser to extract paper text (default pymupdf, matching the web app/API).",
     )
     animals.add_argument(
@@ -810,7 +810,7 @@ def _apply_runtime_env(args) -> None:
         gpustack_key = (os.environ.get("GPUSTACK_API_KEY") or "").strip()
         if gpustack_key:
             os.environ.setdefault("EMBEDDINGS_API_KEY", gpustack_key)
-        if getattr(args, "parser_choice", None) in {"grobid", "dpt2", "external"}:
+        if getattr(args, "parser_choice", None) in {"grobid", "dpt2", "bibr", "external"}:
             print(
                 f"Note: --parser-choice {args.parser_choice} sends the PDF to a remote parser. "
                 "For a fully-local GPUStack pipeline use --parser-choice pymupdf "

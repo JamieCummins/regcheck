@@ -197,8 +197,8 @@ async def test_extract_pdf_text_rejects_unknown_parser(tmp_path):
         await extract_pdf_text(str(pdf), parser_choice="nope")
 
 
-def test_extract_external_text_reconstructs_sections_and_paragraphs():
-    from backend.services.pdf_parsers import extract_external_text
+def test_extract_bibr_text_reconstructs_sections_and_paragraphs():
+    from backend.services.pdf_parsers import extract_bibr_text
 
     payload = {
         "section": [
@@ -211,18 +211,155 @@ def test_extract_external_text_reconstructs_sections_and_paragraphs():
             {"text_id": 3, "section_id": 2, "paragraph_id": 2, "text": "The effect was significant."},
         ],
     }
-    out = extract_external_text(payload)
+    out = extract_bibr_text(payload)
     assert "Method" in out and "Results" in out
     # sentences in the same paragraph join on one line; paragraphs/sections separate
     assert "We recruited 200 people. Data collection stopped at 200." in out
     assert "The effect was significant." in out
-    assert extract_external_text({}) == ""
+    assert extract_bibr_text({}) == ""
+
+
+def test_extract_bibr_text_drops_references_keeps_notes_and_tables():
+    from backend.services.pdf_parsers import extract_bibr_text
+
+    payload = {
+        "section": [
+            {"section_id": 1, "header": "Method", "section_type": "method"},
+            {"section_id": 2, "header": "References", "section_type": "references"},
+        ],
+        "text": [
+            {"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "We recruited 200 people."},
+            {"text_id": 2, "section_id": 2, "paragraph_id": 2, "text": "Smith, J. (2020). A cited work."},
+            {"text_id": 3, "section_id": None, "paragraph_id": 3, "text": "3 We corrected a scoring error."},
+        ],
+        "table": [{"label": "1", "html": "<table><tr><td>Group</td><td>N</td></tr><tr><td>A</td><td>103</td></tr></table>"}],
+    }
+    out = extract_bibr_text(payload)
+    assert "We recruited 200 people." in out
+    assert "Smith, J." not in out and "References" not in out
+    assert "3 We corrected a scoring error." in out
+    assert "Table 1\nGroup | N\nA | 103" in out
+
+
+def test_extract_bibr_text_keeps_headings_of_sections_without_own_text():
+    from backend.services.pdf_parsers import extract_bibr_text
+
+    payload = {
+        "section": [
+            {"section_id": 1, "header": "Method"},
+            {"section_id": 2, "header": "Results"},  # parent: all its text is in 2.1
+            {"section_id": 3, "header": "Primary analyses"},
+        ],
+        "text": [
+            {"section_id": 1, "paragraph_id": 1, "text": "We did X."},
+            {"section_id": 3, "paragraph_id": 2, "text": "Effect found."},
+        ],
+    }
+    assert extract_bibr_text(payload) == "Method\n\nWe did X.\n\nResults\n\nPrimary analyses\n\nEffect found."
+
+
+def test_extract_bibr_text_tolerates_malformed_table_html_and_inline_latex():
+    from backend.services.pdf_parsers import extract_bibr_text
+
+    payload = {
+        "section": [{"section_id": 1, "header": "Results", "section_type": "results"}],
+        "text": [{"section_id": 1, "paragraph_id": 1, "text": r"All p \(\geq\) .05 (\(hat{α}\) = .8)."}],
+        "table": [
+            {
+                "label": "2",
+                # unclosed <br>, entity, inline LaTeX superscript, literal "\n"
+                "html": r"<table><tr><td>Switch Group\(^{a}\)<br>(n = 511)</td><td>A &amp; B\nC</td></tr></table>",
+            }
+        ],
+    }
+    out = extract_bibr_text(payload)
+    assert "All p ≥ .05 (α = .8)." in out
+    assert "Table 2\nSwitch Groupa (n = 511) | A & B C" in out
+    assert "<td>" not in out and "\\(" not in out
 
 
 @pytest.mark.asyncio
-async def test_extract_pdf_text_external_primary(tmp_path):
+async def test_pdf2bibr_submits_polls_and_fetches_result(tmp_path, monkeypatch):
+    import httpx
+
+    from backend.services import pdf_parsers
+
     pdf = tmp_path / "paper.pdf"
-    _make_text_pdf(str(pdf), "ignored — external parser is injected")
+    _make_text_pdf(str(pdf), "body")
+    calls: list[tuple[str, str, str]] = []
+    polls = iter(["running", "succeeded"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, request.headers.get("authorization", "")))
+        if request.method == "POST":
+            return httpx.Response(202, json={"job_id": "j1", "status": "queued"})
+        if request.url.path.endswith("/result"):
+            return httpx.Response(200, json={"text": [{"text": "ok", "section_id": 1, "paragraph_id": 1}]})
+        return httpx.Response(200, json={"job_id": "j1", "status": next(polls)})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        pdf_parsers.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    monkeypatch.setenv("BIBR_URL", "https://bibr.example/")
+    monkeypatch.setenv("BIBR_API_KEY", "tok")
+    monkeypatch.setenv("BIBR_POLL_SECONDS", "0")
+
+    payload = await pdf_parsers.pdf2bibr(str(pdf))
+    assert payload["text"][0]["text"] == "ok"
+    assert [c[:2] for c in calls] == [
+        ("POST", "/papers/jobs"),
+        ("GET", "/papers/jobs/j1"),
+        ("GET", "/papers/jobs/j1"),
+        ("GET", "/papers/jobs/j1/result"),
+    ]
+    assert all(c[2] == "Bearer tok" for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_pdf2bibr_failed_job_raises(tmp_path, monkeypatch):
+    import httpx
+
+    from backend.services import pdf_parsers
+
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "body")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json={"job_id": "j1", "status": "queued"})
+        return httpx.Response(200, json={"job_id": "j1", "status": "failed", "error": "ocr crashed"})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        pdf_parsers.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    monkeypatch.setenv("BIBR_URL", "https://bibr.example")
+    monkeypatch.setenv("BIBR_POLL_SECONDS", "0")
+    with pytest.raises(RuntimeError, match="ocr crashed"):
+        await pdf_parsers.pdf2bibr(str(pdf))
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_accepts_legacy_external_name(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "ignored")
+
+    async def fake_bibr(_path: str):
+        return {"text": [{"text": "From bibr.", "section_id": 1, "paragraph_id": 1}]}
+
+    text, used = await extract_pdf_text(str(pdf), parser_choice="external", bibr_parser=fake_bibr)
+    assert used == "bibr" and "From bibr." in text
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_bibr_primary(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    _make_text_pdf(str(pdf), "ignored — bibr parser is injected")
 
     async def fake_external(_path: str):
         return {
@@ -230,21 +367,21 @@ async def test_extract_pdf_text_external_primary(tmp_path):
             "text": [{"text_id": 1, "section_id": 1, "paragraph_id": 1, "text": "Hello from the parser."}],
         }
 
-    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=fake_external)
-    assert used == "external"
+    text, used = await extract_pdf_text(str(pdf), parser_choice="bibr", bibr_parser=fake_external)
+    assert used == "bibr"
     assert "Hello from the parser." in text
 
 
 @pytest.mark.asyncio
-async def test_extract_pdf_text_external_failure_falls_back(tmp_path, monkeypatch):
+async def test_extract_pdf_text_bibr_failure_falls_back(tmp_path, monkeypatch):
     pdf = tmp_path / "paper.pdf"
     _make_text_pdf(str(pdf), "Selectable body text for PyMuPDF fallback.")
 
     async def broken_external(_path: str):
-        raise RuntimeError("Missing EXTERNAL_PARSER_URL")
+        raise RuntimeError("Missing BIBR_URL")
 
     monkeypatch.setenv("PDF_PARSER_FALLBACKS", "pymupdf")
-    text, used = await extract_pdf_text(str(pdf), parser_choice="external", external_parser=broken_external)
+    text, used = await extract_pdf_text(str(pdf), parser_choice="bibr", bibr_parser=broken_external)
     assert used == "pymupdf_fallback"
     assert "Selectable body text" in text
 

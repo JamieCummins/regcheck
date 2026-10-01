@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import logging
+import re
+from html.parser import HTMLParser
 from typing import Any
 
 import httpx
@@ -253,49 +255,158 @@ def extract_dpt_text(payload: Any) -> str:
         return str(payload)
 
 
-async def pdf2external(
+def _bibr_settings() -> tuple[str, str]:
+    """Resolve the bibr service URL + token. Legacy EXTERNAL_PARSER_* names (from
+    when the connector was anonymised) are still honoured."""
+    base = (os.environ.get("BIBR_URL") or os.environ.get("EXTERNAL_PARSER_URL") or "").strip()
+    token = (
+        os.environ.get("BIBR_API_KEY")
+        or os.environ.get("BIBR_TOKEN")
+        or os.environ.get("EXTERNAL_PARSER_API_KEY")
+        or ""
+    ).strip()
+    return base, token
+
+
+async def pdf2bibr(
     filename: str,
     service_url: str | None = None,
 ) -> dict[str, Any]:
-    """Send a PDF to an optional external structured-parsing HTTP service and
-    return its JSON. The service runs its own extraction; we only call its HTTP
-    API (`POST /papers/extract`, multipart `file`), mirroring the GROBID/DPT clients."""
-    base = (service_url or os.environ.get("EXTERNAL_PARSER_URL") or "").strip()
+    """Parse a PDF with a bibr service and return its paper JSON.
+
+    Uses bibr's async jobs API: `POST /papers/jobs` (multipart `file`) → poll
+    `GET /papers/jobs/<id>` until `succeeded` → `GET /papers/jobs/<id>/result`.
+    bibr's OCR + LLM extraction runs on the service; we only call its HTTP API,
+    mirroring the GROBID/DPT clients."""
+    env_base, api_key = _bibr_settings()
+    base = (service_url or env_base).strip().rstrip("/")
     if not base:
-        raise RuntimeError("Missing EXTERNAL_PARSER_URL (external parser is not configured)")
-    endpoint = base.rstrip("/")
-    if not endpoint.endswith("/papers/extract"):
-        endpoint = f"{endpoint}/papers/extract"
-    api_key = (os.environ.get("EXTERNAL_PARSER_API_KEY") or "").strip()
+        raise RuntimeError("Missing BIBR_URL (bibr parser is not configured)")
+    for suffix in ("/papers/jobs", "/papers/extract"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    timeout_seconds = float(os.environ.get("EXTERNAL_PARSER_TIMEOUT_SECONDS", "300") or 300)
-    timeout = httpx.Timeout(timeout_seconds, read=timeout_seconds, connect=30.0)
+    timeout_seconds = float(
+        os.environ.get("BIBR_TIMEOUT_SECONDS")
+        or os.environ.get("EXTERNAL_PARSER_TIMEOUT_SECONDS")
+        or 300
+    )
+    poll_interval = float(os.environ.get("BIBR_POLL_SECONDS", "3") or 3)
+    request_timeout = httpx.Timeout(60.0, connect=30.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=request_timeout, headers=headers) as client:
             with open(filename, "rb") as document:
                 files = {"file": (os.path.basename(filename), document, "application/pdf")}
-                response = await client.post(endpoint, headers=headers, files=files)
-    except httpx.ReadTimeout as exc:
-        raise RuntimeError("External parser timed out; please retry or use another parser") from exc
+                response = await client.post(f"{base}/papers/jobs", files=files)
+            response.raise_for_status()
+            job = response.json()
+            job_id = job.get("job_id")
+            if not job_id:
+                raise RuntimeError(f"bibr returned no job_id: {job}")
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout_seconds
+            status = job.get("status")
+            while status not in ("succeeded", "failed", "error", "cancelled"):
+                if loop.time() > deadline:
+                    raise RuntimeError("bibr parsing timed out; please retry or use another parser")
+                await asyncio.sleep(poll_interval)
+                poll = await client.get(f"{base}/papers/jobs/{job_id}")
+                poll.raise_for_status()
+                job = poll.json()
+                status = job.get("status")
+            if status != "succeeded":
+                detail = job.get("error") or job.get("detail") or status
+                raise RuntimeError(f"bibr job {job_id} {status}: {detail}")
+
+            result = await client.get(f"{base}/papers/jobs/{job_id}/result")
+            result.raise_for_status()
+            return result.json()
     except httpx.HTTPError as exc:
-        raise RuntimeError(f"External parser failed: {exc}") from exc
-    response.raise_for_status()
-    return response.json()
+        raise RuntimeError(f"bibr parsing failed: {exc}") from exc
 
 
-def extract_external_text(payload: Any) -> str:
-    """Reconstruct readable full text from an external parser's JSON export.
+# Sections whose text is not paper body (the bibliography is parsed separately
+# into `bib`; matching GROBID's body-only output keeps references out of retrieval).
+_BIBR_SKIP_SECTION_TYPES = {"references"}
 
-    Joins the `text` segments in order, grouping by paragraph and inserting each
-    section's header, so the comparison model sees structured prose."""
+
+class _TableFlattener(HTMLParser):
+    """Collect table rows/cells from bibr's (not always well-formed) table HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        if tag == "tr":
+            self.rows.append([])
+        elif tag in ("td", "th"):
+            if not self.rows:
+                self.rows.append([])
+            self._cell = []
+        elif tag == "br" and self._cell is not None:
+            self._cell.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("td", "th") and self._cell is not None:
+            self.rows[-1].append(_clean_bibr_markup("".join(self._cell)))
+            self._cell = None
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell.append(data)
+
+
+_LATEX_SYMBOLS = {"dagger": "†", "ddagger": "‡", "circledR": "®", "geq": "≥", "leq": "≤", "times": "×", "pm": "±"}
+
+
+def _unlatex(inline: str) -> str:
+    inline = re.sub(r"\\?([A-Za-z]+)\{([^{}]*)\}", r"\2", inline)  # underline{x}, hat{α}, mathrm{x}
+    inline = re.sub(r"\\?([A-Za-z]+)", lambda m: _LATEX_SYMBOLS.get(m.group(1), m.group(1)), inline)
+    return inline.replace("^", "").replace("_", "").replace("{", "").replace("}", "").strip()
+
+
+def _clean_bibr_markup(text: str) -> str:
+    """bibr's OCR emits inline LaTeX for symbols/super-scripts (\\(^{a}\\), \\(≥\\)) and,
+    inside tables, literal "\\n"; reduce both to plain text."""
+    text = text.replace("\\n", " ")
+    text = re.sub(r"\\\((.*?)\\\)", lambda m: _unlatex(m.group(1)), text)
+    return " ".join(text.split())
+
+
+def _bibr_table_text(html: str) -> str:
+    """Flatten a bibr table's HTML into pipe-separated rows."""
+    parser = _TableFlattener()
+    parser.feed(html)
+    parser.close()
+    rows = [" | ".join(cells) for cells in parser.rows if any(cells)]
+    return "\n".join(rows)
+
+
+def extract_bibr_text(payload: Any) -> str:
+    """Reconstruct readable full text from a bibr paper JSON export.
+
+    Body: the `text` rows in order, grouped by paragraph, with each section's
+    header on its own line (so boundary-aware chunking sees the structure); the
+    references section is dropped. Rows bibr leaves unsectioned — figure/table
+    captions + notes and footnotes — are appended, followed by flattened tables,
+    because they often carry deviation-relevant detail (e.g. a footnote reporting
+    a scoring change, a table giving the final N)."""
     if not isinstance(payload, dict):
         return ""
-    headers: dict[Any, str] = {}
+    sections: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []  # document order of sections
     for section in payload.get("section") or []:
         if isinstance(section, dict) and section.get("section_id") is not None:
-            headers[section.get("section_id")] = (section.get("header") or "").strip()
+            sections[section.get("section_id")] = section
+            order.append(section.get("section_id"))
+    position = {sid: i for i, sid in enumerate(order)}
+    next_heading = 0  # index into `order` of the first heading not yet emitted
 
     blocks: list[str] = []
+    trailing: list[str] = []
     para_buf: list[str] = []
     cur_section: Any = object()
     cur_para: Any = object()
@@ -308,30 +419,51 @@ def extract_external_text(payload: Any) -> str:
     for row in payload.get("text") or []:
         if not isinstance(row, dict):
             continue
-        seg = (row.get("text") or "").strip()
+        seg = _clean_bibr_markup(row.get("text") or "")
         if not seg:
             continue
         section_id = row.get("section_id")
+        if section_id is None:
+            trailing.append(seg)
+            continue
+        section = sections.get(section_id) or {}
+        if section.get("section_type") in _BIBR_SKIP_SECTION_TYPES:
+            continue
         paragraph_id = row.get("paragraph_id")
         if section_id != cur_section:
             _flush()
             cur_section = section_id
             cur_para = object()
-            head = headers.get(section_id)
-            if head:
-                blocks.append(head)
+            # Emit this heading plus any skipped headings of sections with no text of
+            # their own (e.g. a "Results" parent whose content sits in subsections).
+            stop = position.get(section_id, -1)
+            heads = [sections[sid] for sid in order[next_heading : stop + 1]] if stop >= next_heading else [section]
+            next_heading = max(next_heading, stop + 1)
+            for sec in heads:
+                head = (sec.get("header") or "").strip()
+                if head and sec.get("section_type") not in _BIBR_SKIP_SECTION_TYPES:
+                    blocks.append(head)
         if paragraph_id != cur_para:
             _flush()
             cur_para = paragraph_id
         para_buf.append(seg)
     _flush()
 
+    blocks.extend(trailing)
+    for table in payload.get("table") or []:
+        if isinstance(table, dict) and table.get("html"):
+            flat = _bibr_table_text(str(table["html"]))
+            if flat:
+                label = str(table.get("label") or "").strip()
+                blocks.append((f"Table {label}\n" if label else "") + flat)
+
     text = "\n\n".join(block for block in blocks if block.strip()).strip()
     if text:
         return text
-    # Fallback to whatever scalar text the export carries.
-    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
-    parts = [str(info.get("title") or "").strip(), str(info.get("abstract") or "").strip()]
+    # Fallback to whatever scalar text the export carries (v10 used `info`).
+    meta = payload.get("metadata") or payload.get("info")
+    meta = meta if isinstance(meta, dict) else {}
+    parts = [str(meta.get("title") or "").strip(), str(meta.get("abstract") or "").strip()]
     return "\n\n".join(part for part in parts if part).strip()
 
 
@@ -363,14 +495,16 @@ async def extract_pdf_text(
     parser_choice: str = "grobid",
     pdf_parser: Any | None = None,
     dpt_parser: Any | None = None,
-    external_parser: Any | None = None,
+    bibr_parser: Any | None = None,
 ) -> tuple[str, str]:
     """Extract paper text from PDF; optionally fall back for scanned PDFs.
 
     Returns (extracted_text, used_parser_label).
     """
     normalized = (parser_choice or "grobid").strip().lower()
-    if normalized not in {"grobid", "dpt2", "pymupdf", "external"}:
+    if normalized == "external":  # legacy name for the bibr connector
+        normalized = "bibr"
+    if normalized not in {"grobid", "dpt2", "pymupdf", "bibr"}:
         raise ValueError(f"Unsupported parser choice: {parser_choice}")
 
     fallback_chain = [fb for fb in _fallback_chain() if fb != normalized]
@@ -407,18 +541,18 @@ async def extract_pdf_text(
             )
         return extracted, "pymupdf"
 
-    if normalized == "external":
-        parser_callable = external_parser or pdf2external
+    if normalized == "bibr":
+        parser_callable = bibr_parser or pdf2bibr
         try:
             payload = await parser_callable(filename)
-            extracted = extract_external_text(payload)
+            extracted = extract_bibr_text(payload)
             if not _has_usable_text(extracted):
-                raise ValueError("Parsed PDF but extracted no usable text (external parser).")
-            return extracted, "external"
+                raise ValueError("Parsed PDF but extracted no usable text (bibr).")
+            return extracted, "bibr"
         except Exception as exc:
             if fallback_chain:
                 logger.warning(
-                    "External parser failed; attempting fallbacks",
+                    "bibr parsing failed; attempting fallbacks",
                     extra={"pdf_path": filename, "error": str(exc)},
                 )
                 return await _run_fallback_chain(filename, fallback_chain, dpt_parser=dpt_parser)

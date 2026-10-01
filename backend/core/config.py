@@ -29,8 +29,8 @@ class Settings:
     orcid_client_secret: str
     orcid_sandbox: bool
     oauth_redirect_base_url: str
-    external_parser_url: str
-    external_parser_api_key: str
+    bibr_url: str
+    bibr_api_key: str
     is_production: bool
     @property
     def brand_name(self) -> str:
@@ -41,9 +41,9 @@ class Settings:
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
 
     @property
-    def external_parser_enabled(self) -> bool:
-        """The optional external structured parser is offered only when its service URL is set."""
-        return bool(self.external_parser_url)
+    def bibr_enabled(self) -> bool:
+        """The optional bibr parser is offered only when its service URL is set."""
+        return bool(self.bibr_url)
 
     @property
     def google_oauth_enabled(self) -> bool:
@@ -182,8 +182,8 @@ def get_settings() -> Settings:
         orcid_client_secret=_str_env("ORCID_CLIENT_SECRET"),
         orcid_sandbox=_bool_env("ORCID_SANDBOX"),
         oauth_redirect_base_url=_str_env("OAUTH_REDIRECT_BASE_URL"),
-        external_parser_url=_str_env("EXTERNAL_PARSER_URL"),
-        external_parser_api_key=_str_env("EXTERNAL_PARSER_API_KEY"),
+        bibr_url=_str_env("BIBR_URL") or _str_env("EXTERNAL_PARSER_URL"),
+        bibr_api_key=_str_env("BIBR_API_KEY") or _str_env("BIBR_TOKEN") or _str_env("EXTERNAL_PARSER_API_KEY"),
         is_production=is_production,
     )
     settings.ensure_directories()
