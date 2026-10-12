@@ -36,22 +36,28 @@ def parse_date(date_str: str | None) -> date | None:
     return None
 
 
-def fetch_latest_study(nct_id: str) -> Dict[str, Any]:
-    response = requests.get(V2_STUDY_URL.format(nct_id=nct_id), timeout=30)
+def fetch_latest_study(
+    nct_id: str, session: requests.Session | None = None
+) -> Dict[str, Any]:
+    response = (session or requests).get(V2_STUDY_URL.format(nct_id=nct_id), timeout=30)
     response.raise_for_status()
     return response.json()
 
 
-def fetch_history(nct_id: str) -> list[dict[str, Any]]:
-    response = requests.get(HISTORY_LIST_URL.format(nct_id=nct_id), timeout=30)
+def fetch_history(
+    nct_id: str, session: requests.Session | None = None
+) -> list[dict[str, Any]]:
+    response = (session or requests).get(HISTORY_LIST_URL.format(nct_id=nct_id), timeout=30)
     response.raise_for_status()
     payload = response.json()
     changes = payload.get("changes", [])
     return changes if isinstance(changes, list) else []
 
 
-def fetch_version(nct_id: str, version: int) -> Dict[str, Any]:
-    response = requests.get(
+def fetch_version(
+    nct_id: str, version: int, session: requests.Session | None = None
+) -> Dict[str, Any]:
+    response = (session or requests).get(
         HISTORY_VERSION_URL.format(nct_id=nct_id, version=version), timeout=30
     )
     response.raise_for_status()
@@ -98,7 +104,16 @@ def select_version_before_start(
 
 
 def fetch_trial_json_with_metadata(nct_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    latest = fetch_latest_study(nct_id)
+    # The history endpoints 403 without the ncbi_sid cookie set by the study
+    # request, so all three calls must share one session (issue #5).
+    with requests.Session() as session:
+        return _fetch_trial_json_with_metadata(nct_id, session)
+
+
+def _fetch_trial_json_with_metadata(
+    nct_id: str, session: requests.Session
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    latest = fetch_latest_study(nct_id, session)
     status = latest.get("protocolSection", {}).get("statusModule", {})
     start_date = parse_date((status.get("startDateStruct") or {}).get("date"))
 
@@ -118,7 +133,7 @@ def fetch_trial_json_with_metadata(nct_id: str) -> Tuple[Dict[str, Any], Dict[st
     if not start_date:
         return latest, metadata
 
-    history = fetch_history(nct_id)
+    history = fetch_history(nct_id, session)
     metadata["history_length"] = len(history)
 
     target_version, earliest_date, latest_date = select_version_before_start(history, start_date)
@@ -146,7 +161,7 @@ def fetch_trial_json_with_metadata(nct_id: str) -> Tuple[Dict[str, Any], Dict[st
         metadata["selected_version_date"] = metadata.get("latest_version_date")
         return latest, metadata
 
-    historical = fetch_version(nct_id, target_version)
+    historical = fetch_version(nct_id, target_version, session)
     if not historical:
         return latest, metadata
 
