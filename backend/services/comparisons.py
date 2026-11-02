@@ -1422,7 +1422,8 @@ async def general_preregistration_comparison(
                     "evidence_error": "",
                 },
             )
-        prereg_payload = build_file_evidence_source(
+        prereg_payload = await asyncio.to_thread(
+            build_file_evidence_source,
             source_id="registration",
             label="Preregistration",
             file_path=prereg_path,
@@ -1444,7 +1445,8 @@ async def general_preregistration_comparison(
                 raw_filename = paper_raw_path.name
             except Exception:
                 pass
-            paper_payload = build_text_evidence_source(
+            paper_payload = await asyncio.to_thread(
+                build_text_evidence_source,
                 source_id="paper",
                 label="Paper Evidence Text",
                 text=extracted_paper_sections,
@@ -1466,7 +1468,8 @@ async def general_preregistration_comparison(
                 embedding_model=_embedding_model(),
             )
         else:
-            paper_payload = build_file_evidence_source(
+            paper_payload = await asyncio.to_thread(
+                build_file_evidence_source,
                 source_id="paper",
                 label="Paper",
                 file_path=paper_input,
@@ -1479,13 +1482,15 @@ async def general_preregistration_comparison(
             )
         preregistration_input = prereg_payload.get("text") or preregistration_input
         extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="prereg",
             chunk_prefix="PREREG",
             source_payload=prereg_payload,
         )
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="paper",
             chunk_prefix="PAPER",
@@ -1840,7 +1845,8 @@ async def clinical_trial_comparison(
                 "evidence_error": "",
             },
         )
-        registration_payload = build_json_evidence_source(
+        registration_payload = await asyncio.to_thread(
+            build_json_evidence_source,
             source_id="registration",
             label="ClinicalTrials.gov Registration",
             data=nested_trial,
@@ -1849,7 +1855,8 @@ async def clinical_trial_comparison(
             max_chunk_tokens=_embedding_max_chunk_tokens(),
             embedding_model=_embedding_model(),
         )
-        paper_payload = build_file_evidence_source(
+        paper_payload = await asyncio.to_thread(
+            build_file_evidence_source,
             source_id="paper",
             label="Paper",
             file_path=paper_input,
@@ -1862,13 +1869,15 @@ async def clinical_trial_comparison(
         )
         prereg_text = registration_payload.get("text") or prereg_text
         extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="prereg",
             chunk_prefix="PREREG",
             source_payload=registration_payload,
         )
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="paper",
             chunk_prefix="PAPER",
@@ -2084,7 +2093,8 @@ async def animals_trial_comparison(
                 "evidence_error": "",
             },
         )
-        registration_payload = build_text_evidence_source(
+        registration_payload = await asyncio.to_thread(
+            build_text_evidence_source,
             source_id="registration",
             label="PCT Registration",
             text=prereg_text,
@@ -2097,7 +2107,8 @@ async def animals_trial_comparison(
             max_chunk_tokens=_embedding_max_chunk_tokens(),
             embedding_model=_embedding_model(),
         )
-        paper_payload = build_file_evidence_source(
+        paper_payload = await asyncio.to_thread(
+            build_file_evidence_source,
             source_id="paper",
             label="Paper",
             file_path=paper_input,
@@ -2110,13 +2121,15 @@ async def animals_trial_comparison(
         )
         prereg_text = registration_payload.get("text") or prereg_text
         extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="prereg",
             chunk_prefix="PREREG",
             source_payload=registration_payload,
         )
-        _add_evidence_corpus_to_cache(
+        await asyncio.to_thread(
+            _add_evidence_corpus_to_cache,
             corpus_cache,
             role="paper",
             chunk_prefix="PAPER",

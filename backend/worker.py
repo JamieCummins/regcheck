@@ -50,11 +50,20 @@ _MAX_INFLIGHT_JOBS = _int_env("MAX_CONCURRENT_COMPARISON_TASKS", 8)
 LEGACY_PROCESSING_KEY = "comparison:processing"
 _HEARTBEAT_PREFIX = "worker:heartbeat:"
 _PROCESSING_PREFIX = "comparison:processing:"
-# Heartbeat lives this long; refreshed every loop iteration (≤ the 5s BRPOPLPUSH
-# timeout), so a worker that dies stops being "alive" within one TTL. A peer only
-# reclaims another worker's in-flight jobs once that worker's heartbeat has lapsed,
-# which prevents deploy-overlap job theft (both dynos briefly alive).
+# Heartbeat lives this long; refreshed by a dedicated task every TTL/3 (independent
+# of the dequeue loop, which blocks while all job slots are busy), so a worker that
+# dies stops being "alive" within one TTL. A peer only reclaims another worker's
+# in-flight jobs once that worker's heartbeat has lapsed, which prevents
+# deploy-overlap and at-capacity job theft.
 WORKER_HEARTBEAT_TTL = _int_env("WORKER_HEARTBEAT_TTL", 30)
+
+
+async def _heartbeat_forever(refresh, interval: float) -> None:
+    """Refresh the worker heartbeat on a fixed cadence until cancelled. Runs as its
+    own task so liveness never depends on the dequeue loop making progress."""
+    while True:
+        await refresh()
+        await asyncio.sleep(interval)
 
 
 def _heartbeat_key(worker_id: str) -> str:
@@ -118,6 +127,8 @@ async def _recover_stalled_jobs(
             requeue.append(json.dumps(job))
 
     if requeue:
+        # Producers LPUSH and the worker pops the tail, so RPUSH puts reclaimed
+        # jobs (the oldest work in the system) next in line rather than last.
         await redis_client.rpush("comparison:queue", *requeue)
     await redis_client.delete(processing_key)
     return (len(requeue), dead)
@@ -447,13 +458,19 @@ async def worker_loop() -> None:
     # Claim the heartbeat before recovery so a peer can't mistake us for dead, then
     # reclaim jobs orphaned by workers that ARE dead (crash/restart/old deploy).
     await _refresh_heartbeat()
+    heartbeat_task = asyncio.create_task(
+        _heartbeat_forever(_refresh_heartbeat, max(1.0, WORKER_HEARTBEAT_TTL / 3))
+    )
     await _recover("boot")
 
     inflight = asyncio.Semaphore(_MAX_INFLIGHT_JOBS)
 
     while True:
+        if heartbeat_task.done():  # pragma: no cover - defensive; refresh never raises
+            heartbeat_task = asyncio.create_task(
+                _heartbeat_forever(_refresh_heartbeat, max(1.0, WORKER_HEARTBEAT_TTL / 3))
+            )
         now = time.time()
-        await _refresh_heartbeat()
         last_cleanup = getattr(worker_loop, "_last_report_cleanup", 0.0)
         if now - last_cleanup >= 60:
             setattr(worker_loop, "_last_report_cleanup", now)

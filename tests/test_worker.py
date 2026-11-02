@@ -241,3 +241,56 @@ def test_orphan_recovery_reclaims_legacy_shared_list():
     assert requeued == 1
     assert redis.lists.get("comparison:queue") == [json.dumps({"task_id": "legacy", "attempts": 1})]
     assert LEGACY_PROCESSING_KEY not in redis.lists
+
+
+def test_queue_is_fifo_and_recovered_jobs_run_next():
+    """Producers LPUSH, the worker pops the tail (BRPOPLPUSH): oldest first. Jobs
+    reclaimed from a dead worker are RPUSHed to the tail, so they run next."""
+    queue: list[str] = []
+    lpush = lambda v: queue.insert(0, v)      # routes/comparisons + reports
+    rpush = lambda v: queue.append(v)         # worker recovery
+    pop_tail = lambda: queue.pop()            # BRPOPLPUSH source end
+
+    for job in ("first", "second", "third"):
+        lpush(job)
+    assert pop_tail() == "first"
+    rpush("recovered")
+    assert [pop_tail() for _ in range(3)] == ["recovered", "second", "third"]
+
+
+def test_producers_enqueue_at_head():
+    import inspect
+
+    import backend.routes.comparisons as routes_cmp
+    import backend.routes.reports as routes_rep
+
+    for mod in (routes_cmp, routes_rep):
+        src = inspect.getsource(mod)
+        assert 'lpush("comparison:queue"' in src
+        assert 'rpush("comparison:queue"' not in src
+    assert 'brpoplpush("comparison:queue"' in inspect.getsource(worker_mod.worker_loop)
+
+
+def test_heartbeat_refreshes_independently_of_a_blocked_loop():
+    """The heartbeat task keeps refreshing while the dequeue loop is blocked (e.g.
+    on inflight.acquire() with every job slot busy)."""
+    refreshes: list[float] = []
+
+    async def refresh():
+        refreshes.append(asyncio.get_running_loop().time())
+
+    async def scenario():
+        blocked = asyncio.Semaphore(0)  # a loop stuck acquiring a full semaphore
+        task = asyncio.create_task(worker_mod._heartbeat_forever(refresh, 0.01))
+        try:
+            await asyncio.wait_for(blocked.acquire(), timeout=0.08)
+        except asyncio.TimeoutError:
+            pass
+        task.cancel()
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(scenario())
+    finally:
+        loop.close()
+    assert len(refreshes) >= 4

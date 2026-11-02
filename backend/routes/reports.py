@@ -246,5 +246,5 @@ async def report_regenerate(
             "evidence_error": "",
         },
     )
-    await redis_client.rpush("comparison:queue", payload)
+    await redis_client.lpush("comparison:queue", payload)  # FIFO: worker pops the tail
     return JSONResponse({"ok": True})

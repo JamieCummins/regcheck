@@ -677,7 +677,8 @@ async def _queue_comparison(
         logger.warning("Failed to persist regen job payload", exc_info=exc, extra={"task_id": task_id})
 
     try:
-        await redis_client.rpush("comparison:queue", json.dumps(job_payload))
+        # FIFO: enqueue at the head; the worker pops from the tail (BRPOPLPUSH).
+        await redis_client.lpush("comparison:queue", json.dumps(job_payload))
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Failed to enqueue comparison job", exc_info=exc, extra={"task_id": task_id})
         await redis_client.hset(

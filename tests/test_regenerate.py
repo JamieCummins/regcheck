@@ -39,8 +39,8 @@ class FakeRedis:
     async def srem(self, *a):
         pass
 
-    async def rpush(self, k, value):
-        self.queue.append(value)
+    async def lpush(self, k, value):
+        self.queue.insert(0, value)
 
     async def delete(self, *ks):
         for k in ks:
@@ -104,7 +104,7 @@ def test_regenerate_requeues_for_session_owner():
         assert resp.status_code == 200, resp.text
         assert resp.json()["ok"] is True
         # the job was re-queued verbatim and the task was reset to PENDING
-        assert app.state.redis.queue and json.loads(app.state.redis.queue[-1])["task_id"] == tid
+        assert app.state.redis.queue and json.loads(app.state.redis.queue[0])["task_id"] == tid
         assert app.state.redis.h[tid]["state"] == "PENDING"
         assert app.state.redis.h[tid]["evidence_status"] == "pending"
 
