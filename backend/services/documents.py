@@ -238,6 +238,11 @@ def extract_text_from_xml(file_path: str) -> str:
     return "".join(parts)
 
 
+# Labelled separator between merged documents ("===== Document 2: plan.docx =====",
+# "===== Supplementary material 1: s.pdf ====="). A section such as a paper's
+# reference list ends at the next separator: what follows is another document.
+DOCUMENT_SEPARATOR_RE = re.compile(r"^={3,}\s.*\S\s={3,}\s*$", re.MULTILINE)
+
 REFERENCE_PATTERN = re.compile(
     r"(?:^|\n)([A-Z\s]*\bReferences\b|Bibliography|Cited Works)[\s]*\n",
     re.IGNORECASE,

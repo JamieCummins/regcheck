@@ -2265,3 +2265,88 @@ def test_judgement_prompt_mentions_supplement_only_when_flagged(monkeypatch):
     )
     assert "supplementary material, which is NOT part of the input" not in prompts[0]
     assert "supplementary material, which is NOT part of the input" in prompts[1]
+
+
+# ── supplements after the reference list stay searchable ──
+
+
+def _paper_with_refs_then_supplement():
+    return (
+        "Method.\n\n" + ("We recruited adults and ran the task. " * 120)
+        + "\n\nReferences\n\nSmith, J. (2020). A cited paper.\n\n\n"
+        + "===== Supplementary material 1: s.txt =====\n\n"
+        + "Table S1: listwise deletion was used in MPLUS."
+    )
+
+
+def test_reference_flags_stop_at_supplement_separator():
+    import numpy as np
+
+    from backend.services.evidence import build_text_evidence_source
+
+    text = _paper_with_refs_then_supplement()
+    p = build_text_evidence_source(
+        source_id="paper", label="P", text=text, chunk_prefix="PAPER", max_chunk_tokens=120
+    )
+    segs, meta = p["segments"], p["metadata"]
+    refs = [s for s, m in zip(segs, meta) if m.get("in_references")]
+    assert any("Smith, J. (2020)" in s for s in refs)              # real references still flagged
+    supp = [m for s, m in zip(segs, meta) if "listwise deletion" in s]
+    assert supp and not any(m.get("in_references") for m in supp)  # supplement is not
+
+    # Heading-fallback path (plain corpora without build-time flags).
+    from backend.services.embeddings import EmbeddingCorpus, extract_chunks_tokens_with_spans
+
+    chunks = [c.text for c in extract_chunks_tokens_with_spans(text, max_chunk_tokens=120)]
+    assert any(c.startswith("===== Supplementary material 1") for c in chunks)  # own chunk
+    n = len(chunks)
+    corpus = EmbeddingCorpus(
+        segments=chunks, embeddings=np.ones((n, 2), dtype=np.float32),
+        chunk_ids=[f"PAPER_{i + 1:04d}" for i in range(n)], norms=np.ones(n, dtype=np.float32),
+        metadata=[{} for _ in range(n)],
+    )
+    excluded = comparisons._reference_chunk_ids(corpus)
+    assert any("Smith, J." in chunks[int(cid[-4:]) - 1] for cid in excluded)
+    assert not any("listwise deletion" in chunks[int(cid[-4:]) - 1] for cid in excluded)
+
+
+# ── label-not-found doctrine ──
+
+
+def test_label_not_found_doctrine_makes_no_multi_study_claim():
+    block = comparisons._target_study_doctrine("1", label_found=False)
+    assert "never uses that label" in block
+    assert "may report a single study" in block
+    assert "reports more than one study" not in block
+    assert "pre-filtered" not in block
+    assert "reports more than one study" in comparisons._target_study_doctrine("1")
+
+
+@pytest.mark.asyncio
+async def test_label_not_found_flag_reaches_runner(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 1.")
+    paper = tmp_path / "paper.txt"; paper.write_text("This study recruited 300 adults.")
+    seen: list[dict] = []
+    for label, paper_text, expected in (
+        ("Study 1", "This study recruited 300 adults.", False),
+        ("2", "Study 1 ... Study 2 recruited 300 adults.", True),
+    ):
+        paper.write_text(paper_text)
+        seen.clear()
+
+        async def iso(*a, **k):
+            return "Study 2 recruited 300 adults."
+
+        monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", iso)
+        await comparisons.general_preregistration_comparison(
+            str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+            selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
+            comparison_runner=_ok_runner(seen), multiple_experiments="yes", experiment_number=label)
+        assert seen[0]["target_study_label_found"] is expected

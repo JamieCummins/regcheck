@@ -215,6 +215,8 @@ def _is_heading_line(line: str, ignore: frozenset[str] | set[str] | None = None)
         return False
     if re.match(r"^#{1,6}\s+\S", s):  # markdown heading
         return True
+    if re.match(r"^={3,}\s.*\S\s={3,}$", s):  # merged-document separator (documents.DOCUMENT_SEPARATOR_RE)
+        return True
     words = s.split()
     if len(words) > 10:
         return False

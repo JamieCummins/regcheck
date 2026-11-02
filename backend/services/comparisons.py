@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError, field_validator
 
 from .documents import (
+    DOCUMENT_SEPARATOR_RE,
     extract_text_from_docx,
     extract_text_from_html,
     extract_text_from_xml,
@@ -377,7 +378,9 @@ def _reference_chunk_ids(corpus: "EmbeddingCorpus") -> set[str]:
     absence-check could 'find' a registered element inside a citation. Detected via
     build-time metadata flags (evidence payloads tag by char span) or, failing that,
     a standalone heading line inside a segment (raw-text corpora keep newlines);
-    heading matches in the first 30% of the document are ignored (prose, TOCs)."""
+    heading matches in the first 30% of the document are ignored (prose, TOCs).
+    The heading fallback stops at the next merged-document separator, so material
+    appended after the reference list (e.g. --supplement) stays searchable."""
     flagged = {
         cid
         for cid, meta in zip(corpus.chunk_ids, corpus.metadata or [])
@@ -388,7 +391,11 @@ def _reference_chunk_ids(corpus: "EmbeddingCorpus") -> set[str]:
     segments = corpus.segments or []
     for i, seg in enumerate(segments):
         if _REFERENCE_HEADING_RE.search(seg or "") and i >= max(1, int(len(segments) * 0.3)):
-            return set(corpus.chunk_ids[i:])
+            end = next(
+                (j for j in range(i + 1, len(segments)) if DOCUMENT_SEPARATOR_RE.search(segments[j] or "")),
+                len(segments),
+            )
+            return set(corpus.chunk_ids[i:end])
     return set()
 
 
@@ -1255,6 +1262,7 @@ async def general_preregistration_comparison(
     # it, so the targeted verification pass can reach content isolation dropped
     # (footnotes, table notes, other sections). None = the corpus already is the paper.
     full_paper_text: str | None = None
+    target_study_label_found = True
 
     if has_multiple_experiments and experiment_label:
         if task_id and redis_client:
@@ -1288,6 +1296,7 @@ async def general_preregistration_comparison(
             # named only by the registration of a single-study paper) invites a
             # refusal from the isolation model. Skip the call and use the full paper.
             isolation_status = "label_not_found_full_text"
+            target_study_label_found = False
             isolation_error = (
                 f'The label "{experiment_label}" does not occur in the paper text; '
                 "isolation was skipped and the full paper was used"
@@ -1587,6 +1596,7 @@ async def general_preregistration_comparison(
                     target_study_note=target_study_note,
                     full_paper_text=full_paper_text,
                     paper_references_supplement=flag_missing_supplement,
+                    target_study_label_found=target_study_label_found,
                 )
             )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
@@ -1663,6 +1673,7 @@ async def general_preregistration_comparison(
                 target_study_note=target_study_note,
                 full_paper_text=full_paper_text,
                 paper_references_supplement=flag_missing_supplement,
+                target_study_label_found=target_study_label_found,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
@@ -2552,6 +2563,7 @@ async def _run_strand_consensus(
     target_study_note: str | None = None,
     full_paper_text: str | None = None,
     paper_references_supplement: bool = False,
+    target_study_label_found: bool = True,
 ) -> list[ComparisonItem]:
     """Independent-voter ("strand") consensus for the preregistration flow.
 
@@ -2596,6 +2608,7 @@ async def _run_strand_consensus(
                 target_study_note=target_study_note,
                 full_paper_text=full_paper_text,
                 paper_references_supplement=paper_references_supplement,
+                target_study_label_found=target_study_label_found,
             )
             strand_items.append(comparison.items[0])
         return strand_items
@@ -2835,16 +2848,32 @@ def run_carried_forward_dimension(
     return result
 
 
-def _target_study_doctrine(target_study: str | None, target_study_note: str | None = None) -> str:
+def _target_study_doctrine(
+    target_study: str | None,
+    target_study_note: str | None = None,
+    label_found: bool = True,
+) -> str:
     """Prompt paragraph telling the judge WHICH study of a multi-study paper the
     registration corresponds to, so residual mentions of sibling studies are read as
-    context rather than as ambiguity or as deviations. Empty when not a multi-study run."""
+    context rather than as ambiguity or as deviations. Empty when not a multi-study run.
+    With ``label_found=False`` (the label never occurs in the paper, so isolation was
+    skipped) it makes no claim that the paper has several studies or was pre-filtered."""
     label = (target_study or "").strip()
     if not label:
         return ""
     label_txt = f"Study {label}" if label.isdigit() else label
     note = (target_study_note or "").strip()
     note_txt = f" The user described the target study as: {note}." if note and note != label else ""
+    if not label_found:
+        return (
+            f"TARGET STUDY: the user indicated that the registration corresponds to the study labelled "
+            f"'{label_txt}', but the paper never uses that label.{note_txt} The paper may report a single "
+            "study, or label its studies differently. The paper excerpts come from the full, unfiltered "
+            "paper. If the paper reports one study, compare the registration against that study. If it "
+            "reports several, compare against the one that corresponds to the registration and treat the "
+            "others as context. The missing label is NOT a deviation and NOT grounds for 'missing': never "
+            "report that it is unclear which study the registration refers to.\n\n"
+        )
     return (
         f"TARGET STUDY: the paper reports more than one study, and the registration under comparison "
         f"corresponds to the study labelled '{label_txt}' ONLY.{note_txt} The paper excerpts have, where possible, "
@@ -2881,6 +2910,7 @@ def run_comparison(
     target_study_note: str | None = None,
     full_paper_text: str | None = None,
     paper_references_supplement: bool = False,
+    target_study_label_found: bool = True,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -3090,7 +3120,9 @@ def run_comparison(
     # the surviving mentions of sibling studies (introduction, shared method, general
     # discussion, cross-references) as ambiguity and returns 'missing' with "unclear
     # which study the registration refers to". Constant per-run, so cache-safe.
-    target_study_block = _target_study_doctrine(target_study, target_study_note)
+    target_study_block = _target_study_doctrine(
+        target_study, target_study_note, label_found=target_study_label_found
+    )
 
     # Quotes-as-IDs (DEFAULT ON): the judge's emitted quote text is DISCARDED after
     # parsing (_judge_dimension_once always overwrites both quote fields with the

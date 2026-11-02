@@ -27,19 +27,27 @@ def _chunk_id(prefix: str, index: int) -> str:
     return f"{prefix.upper()}_{index:04d}"
 
 
-def _references_start_offset(text: str) -> int | None:
-    """Char offset where the terminal references/bibliography section begins, or
-    None. Chunks past this offset get flagged ``in_references`` so retrieval and
-    the targeted verification search can skip citation lists (a cited title is
-    not evidence that an element was reported). Matches in the first 30% of the
-    document are ignored (prose mentions, tables of contents)."""
-    from .documents import REFERENCE_PATTERN
+def _references_span(text: str) -> tuple[int, int] | None:
+    """Char span ``[start, end)`` of the references/bibliography section, or None.
+    Chunks starting inside it get flagged ``in_references`` so retrieval and the
+    targeted verification search can skip citation lists (a cited title is not
+    evidence that an element was reported). Matches in the first 30% of the
+    document are ignored (prose mentions, tables of contents). The section ends at
+    the next merged-document separator, so supplementary material appended after
+    a paper's reference list is not mistaken for references."""
+    from .documents import DOCUMENT_SEPARATOR_RE, REFERENCE_PATTERN
 
     haystack = text or ""
     match = REFERENCE_PATTERN.search(haystack)
-    if match and match.start() > len(haystack) * 0.3:
-        return match.start()
-    return None
+    if not match or match.start() <= len(haystack) * 0.3:
+        return None
+    start = match.start()
+    separator = DOCUMENT_SEPARATOR_RE.search(haystack, match.end())
+    return start, separator.start() if separator else len(haystack)
+
+
+def _in_span(offset: int, span: tuple[int, int] | None) -> bool:
+    return span is not None and span[0] <= offset < span[1]
 
 
 def _content_type_for_path(path: str) -> str:
@@ -216,7 +224,7 @@ def build_text_evidence_source(
         encoding_name=embedding_model,
     )
     segments = [disp(chunk.text) for chunk in chunks]
-    refs_offset = _references_start_offset(text or "")
+    refs_span = _references_span(text or "")
     chunk_metadata: list[dict[str, Any]] = []
     manifest_chunks: dict[str, dict[str, Any]] = {}
     for index, chunk in enumerate(chunks, start=1):
@@ -235,7 +243,7 @@ def build_text_evidence_source(
             "locations": [location],
             "relevance_scores_by_dimension": {},
         }
-        if refs_offset is not None and chunk.start >= refs_offset:
+        if _in_span(chunk.start, refs_span):
             item["in_references"] = True
         manifest_chunks[cid] = item
         chunk_metadata.append(item)
@@ -521,7 +529,7 @@ def build_pdf_evidence_source(
             encoding_name=embedding_model,
         )
         segments = [_display_text(chunk.text) for chunk in chunks]
-        refs_offset = _references_start_offset(source_text)
+        refs_span = _references_span(source_text)
         chunk_metadata: list[dict[str, Any]] = []
         manifest_chunks: dict[str, dict[str, Any]] = {}
         for index, chunk in enumerate(chunks, start=1):
@@ -541,7 +549,7 @@ def build_pdf_evidence_source(
                 "locations": locations,
                 "relevance_scores_by_dimension": {},
             }
-            if refs_offset is not None and chunk.start >= refs_offset:
+            if _in_span(chunk.start, refs_span):
                 item["in_references"] = True
             manifest_chunks[cid] = item
             chunk_metadata.append(item)
