@@ -219,3 +219,16 @@ def test_orchestrator_records_isolation_method(tmp_path, monkeypatch):
     assert res.multi_study_isolation == "ok"
     assert res.multi_study_isolation_method == "labels"
     assert "Two hundred adults" in seen[0] and "t(98) = 2.5" not in seen[0]
+
+
+def test_resolve_target_with_titled_study_labels():
+    # Real gpt-5.5 output on Yu et al. (2024): labels carry the study title.
+    labels = {"studies": [
+        {"id": "S1", "label": "Study 1: Thanking in Real Award Acceptance Speeches"},
+        {"id": "S4", "label": "Study 4: Feeling Gratitude Toward Close Versus Distant Others"},
+        {"id": "S10", "label": "Study 10: A Final Replication"},
+    ]}
+    assert sl.resolve_target(labels, "Study 4") == "S4"
+    assert sl.resolve_target(labels, "4") == "S4"
+    assert sl.resolve_target(labels, "Experiment 1") == "S1"   # never "Study 10"
+    assert sl.resolve_target(labels, "Study 2") is None

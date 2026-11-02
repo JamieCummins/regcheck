@@ -190,11 +190,16 @@ def validate_labels(paras: list[Para], labels: Any) -> list[str]:
 
 # ── target resolution ────────────────────────────────────────────────────────
 
+_NUMBERED_RE = re.compile(r"\b(?:stud(?:y|ies)|experiments?|exp\.)\s*(\d+[a-z]?|[a-z])\b", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"(\d+[a-z]?|\b[a-z])\s*$", re.IGNORECASE)
 
 
 def _label_token(label: str) -> str | None:
-    match = _TOKEN_RE.search(" ".join((label or "").split()))
+    """The study's number/letter: from "Study 4" / "Experiment 3a" anywhere in the label
+    (labellers often append the title: "Study 4: Feeling Gratitude ..."), else a bare
+    trailing token ("4", "3a")."""
+    text = " ".join((label or "").split())
+    match = _NUMBERED_RE.search(text) or _TOKEN_RE.search(text)
     return match.group(1).lower() if match else None
 
 
