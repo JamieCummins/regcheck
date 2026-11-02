@@ -167,3 +167,29 @@ def test_convert_txt_to_pdf_handles_unicode(tmp_path):
     # ASCII content always survives; this also proves no encoding crash occurred.
     assert "Effect of treatment" in rendered
     assert "blinded" in rendered
+
+
+def test_extract_text_from_xml_keeps_table_rows_readable(tmp_path):
+    # JATS <table-wrap>: one line per <tr>, cells joined with " | ", label and
+    # caption kept just before the table body, footnotes kept after it.
+    xml = """<article><body><sec><title>Results</title><p>See Table 1.</p>
+    <table-wrap id="t1"><label>Table 1</label>
+      <caption><title>Sample sizes by wave</title></caption>
+      <table>
+        <thead><tr><th>Wave</th><th>N</th></tr></thead>
+        <tbody>
+          <tr><td>Time 3 (2018)</td><td><p>701</p></td></tr>
+          <tr><td><bold>Time 4</bold> (2019)</td><td>633</td></tr>
+        </tbody>
+      </table>
+      <table-wrap-foot><fn><p>Note. Attrition from Time 3.</p></fn></table-wrap-foot>
+    </table-wrap>
+    <p>After the table.</p></sec></body></article>"""
+    path = _write(tmp_path / "t.xml", xml)
+    lines = [line.strip() for line in read_file(path, ".xml").splitlines() if line.strip()]
+    assert "Wave | N" in lines
+    assert "Time 3 (2018) | 701" in lines      # <p> inside a cell doesn't break the row
+    assert "Time 4 (2019) | 633" in lines      # inline <bold> stays within the cell
+    i = lines.index
+    assert i("Table 1") < i("Sample sizes by wave") < i("Wave | N") < i("Note. Attrition from Time 3.")
+    assert "Time 3 (2018)701" not in " ".join(lines)

@@ -743,7 +743,7 @@ async def _evidence_success_fields(
 
 
 # Bump when the isolation prompt below changes so any cached extractions auto-invalidate.
-_ISOLATION_PROMPT_VERSION = "2026-11-02.1"
+_ISOLATION_PROMPT_VERSION = "2026-11-02.2"
 
 
 def _isolation_model_tag(client_choice: str, reasoning_effort: str | None) -> str:
@@ -923,6 +923,9 @@ async def extract_experiment_specific_paper_text(
         'Rules:\n'
         '- Preserve original wording and section headings. Do not paraphrase, summarise,\n'
         '  comment, re-order, or invent.\n'
+        '- Retain footnotes, table notes, figure/table captions, table contents, and author\n'
+        '  notes attached to any content you include (e.g. a footnote on a sentence in the\n'
+        '  target study\'s method or results, or a note under one of its tables), verbatim.\n'
         '- If a requested section is absent, omit it — never fabricate content.\n'
         '- EXCLUDE content that belongs specifically to a DIFFERENT study/experiment than\n'
         '  the target: that other study\'s own hypotheses, predictions, manipulations,\n'

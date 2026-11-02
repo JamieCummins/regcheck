@@ -165,6 +165,16 @@ _XML_INLINE_TAGS = {
 }
 
 
+_XML_TABLE_CELL_TAGS = {"td", "th"}
+_XML_TABLE_STRUCT_TAGS = {"table", "thead", "tbody", "tfoot", "tr", "colgroup", "col"}
+
+
+def _xml_local(element: ElementTree.Element) -> str:
+    """Lower-cased local tag name ('' for comment/PI nodes)."""
+    tag = element.tag
+    return tag.rsplit("}", 1)[-1].lower() if isinstance(tag, str) else ""
+
+
 def extract_text_from_xml(file_path: str) -> str:
     """Extract readable text from an XML document (e.g. JATS/PMC article XML).
 
@@ -182,8 +192,12 @@ def extract_text_from_xml(file_path: str) -> str:
         return extractor.text()
 
     # Iterative walk (crafted deeply-nested XML must not hit the recursion limit).
+    # Table rows (<tr>) get their own line with cells joined by " | ", so a row such
+    # as "Time 4 (2019) | 633" stays readable instead of running cells together.
+    # Inside a cell, block tags (e.g. <p>) become spaces so the row stays one line.
     parts: list[str] = []
-    stack: list[tuple[str, ElementTree.Element]] = [("start", root)]
+    stack: list[tuple[str, ElementTree.Element | None]] = [("start", root)]
+    cell_depth = 0
     while stack:
         op, element = stack.pop()
         if op == "tail":
@@ -191,20 +205,36 @@ def extract_text_from_xml(file_path: str) -> str:
                 parts.append(element.tail)
             continue
         if op == "break":
-            parts.append("\n")
+            parts.append(" " if cell_depth else "\n")
+            continue
+        if op == "cellsep":
+            parts.append(" | ")
+            continue
+        if op == "leave_cell":
+            cell_depth -= 1
             continue
         tag = element.tag
         if not isinstance(tag, str):  # comment/PI nodes from custom parsers
             continue
-        block = tag.rsplit("}", 1)[-1].lower() not in _XML_INLINE_TAGS
-        if block:
-            parts.append("\n")
+        local = _xml_local(element)
+        if local in _XML_TABLE_CELL_TAGS:
+            cell_depth += 1
+            stack.append(("leave_cell", element))
+        elif local not in _XML_INLINE_TAGS:
+            parts.append(" " if cell_depth else "\n")
             stack.append(("break", element))
-        for child in reversed(element):
-            stack.append(("tail", child))
-            stack.append(("start", child))
+        is_row = local == "tr"
+        children = list(element)
+        cells = [i for i, child in enumerate(children) if _xml_local(child) in _XML_TABLE_CELL_TAGS]
+        for i in range(len(children) - 1, -1, -1):
+            stack.append(("tail", children[i]))
+            stack.append(("start", children[i]))
+            if is_row and i in cells and i != cells[0]:
+                stack.append(("cellsep", None))  # popped before the cell: " | " separator
         if element.text:
-            parts.append(element.text)
+            # Whitespace-only text between <tr>/<td> elements is layout, not content.
+            if local not in _XML_TABLE_STRUCT_TAGS or element.text.strip():
+                parts.append(element.text)
     return "".join(parts)
 
 

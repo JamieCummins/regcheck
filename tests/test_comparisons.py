@@ -2178,3 +2178,17 @@ def test_judgement_prompt_asks_for_alternatives(monkeypatch):
     comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
     assert "most likely ALTERNATIVES" in captured["prompt"]
     assert "pairwise deletion (listwise deletion, complete-case analysis)" in captured["prompt"]
+
+
+def test_isolation_prompt_retains_footnotes_and_table_notes(monkeypatch):
+    seen = {}
+
+    def fake_claude(**kw):
+        seen["prompt"] = kw["messages"][-1]["content"]
+        return "## Study 2\nIsolated."
+
+    monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
+    _run_coro(comparisons.extract_experiment_specific_paper_text(
+        "Study 2 text.", "2", client_choice="claude"))
+    assert "Retain footnotes, table notes" in seen["prompt"]
+    assert comparisons._ISOLATION_PROMPT_VERSION == "2026-11-02.2"
