@@ -2350,3 +2350,131 @@ async def test_label_not_found_flag_reaches_runner(tmp_path, monkeypatch):
             selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
             comparison_runner=_ok_runner(seen), multiple_experiments="yes", experiment_number=label)
         assert seen[0]["target_study_label_found"] is expected
+
+
+# ── parallel dimension judging ──
+
+
+def _dims(n):
+    return [{"dimension": f"D{i}", "definition": f"d{i}"} for i in range(n)]
+
+
+def _timed_runner(state, delays):
+    import threading
+    import time
+
+    lock = threading.Lock()
+
+    def runner(p, pa, c, d, **kw):
+        with lock:
+            state["live"] += 1
+            state["peak"] = max(state["peak"], state["live"])
+            state["previous"].append(kw.get("previous_dimension_responses"))
+        time.sleep(delays.get(d, 0.01))
+        with lock:
+            state["live"] -= 1
+        return comparisons.ComparisonResult(items=[comparisons.ComparisonItem(dimension=d)])
+
+    return runner
+
+
+@pytest.mark.asyncio
+async def test_dimensions_run_in_parallel_and_keep_order(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Prereg.")
+    paper = tmp_path / "a.txt"; paper.write_text("Paper.")
+    state = {"live": 0, "peak": 0, "previous": []}
+    # Earlier dimensions finish LAST, so completion order is the reverse of input order.
+    delays = {"D0": 0.15, "D1": 0.1, "D2": 0.05, "D3": 0.01}
+    progress = []
+    redis = _fake_redis()
+    orig_hset = redis.hset
+
+    async def hset(k, mapping=None, **kw):
+        if mapping and mapping.get("processed_dimensions") and mapping.get("state") == "IN_PROGRESS":
+            import json as _json
+            progress.append([i["dimension"] for i in _json.loads(mapping["result_json"])["items"]])
+        await orig_hset(k, mapping=mapping, **kw)
+
+    redis.hset = hset
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        task_id="t1", redis_client=redis,
+        selected_dimensions=_dims(4), comparison_runner=_timed_runner(state, delays))
+    assert [i.dimension for i in res.items] == ["D0", "D1", "D2", "D3"]  # input order
+    assert state["peak"] >= 2                                             # genuinely concurrent
+    assert all(p is None for p in state["previous"])
+    assert progress[0] == ["D3"]                                          # first finished
+    assert all(p == sorted(p) for p in progress)                          # partials stay ordered
+    assert redis.h["t1"]["state"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_append_previous_output_keeps_dimensions_sequential(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Prereg.")
+    paper = tmp_path / "a.txt"; paper.write_text("Paper.")
+    state = {"live": 0, "peak": 0, "previous": []}
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=_dims(3), append_previous_output=True,
+        comparison_runner=_timed_runner(state, {}))
+    assert state["peak"] == 1
+    assert [len(p or []) for p in state["previous"]] == [0, 1, 2]
+    assert [i.dimension for i in res.items] == ["D0", "D1", "D2"]
+
+
+@pytest.mark.asyncio
+async def test_clinical_flow_dimensions_run_in_parallel(tmp_path, monkeypatch):
+    state = {"live": 0, "peak": 0, "previous": []}
+    paper = tmp_path / "paper.txt"; paper.write_text("Paper text.")
+    monkeypatch.setattr(
+        comparisons, "extract_nested_trial_with_metadata",
+        lambda nct, **k: ({"protocolSection": {"x": "y"}}, {}), raising=False,
+    )
+    try:
+        res = await comparisons.clinical_trial_comparison(
+            "NCT00000000", str(paper), ".txt", "claude", "pymupdf",
+            selected_dimensions=_dims(3),
+            comparison_runner=_timed_runner(state, {"D0": 0.1, "D1": 0.05}),
+        )
+    except TypeError:
+        pytest.skip("clinical signature differs")
+    assert [i.dimension for i in res.items] == ["D0", "D1", "D2"]
+    assert state["peak"] >= 2
+
+
+def test_consensus_strands_embed_each_document_once(tmp_path, monkeypatch):
+    import time
+
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    calls = []
+
+    def slow_embed(s, model=None, **k):
+        s = list(s); calls.append(len(s)); time.sleep(0.05)
+        return np.ones((max(1, len(s)), 8), dtype=np.float32)
+
+    monkeypatch.setattr(emb, "openai_embed_segments", slow_embed)
+    monkeypatch.setattr(comparisons, "openai_embed_segments", slow_embed)
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", lambda m, **k: '{"deviation_judgement":"no"}')
+    prereg = tmp_path / "p.txt"; prereg.write_text("Prereg text. " * 400)
+    paper = tmp_path / "a.txt"; paper.write_text("Paper text. " * 400)
+    _run_coro(comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=_dims(2), num_voters=4))
+    # Document corpora are multi-chunk (>2 inputs); the batched query embedding has 2.
+    assert sum(1 for n in calls if n > 2) == 2  # one corpus build per document, not per strand

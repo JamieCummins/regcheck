@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import threading
 from collections import Counter
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, TypeVar
@@ -445,6 +446,9 @@ def _verification_sim_threshold() -> float:
 # targeted verification pass; distinct from PAPER_ so IDs never collide with the
 # isolated corpus's evidence IDs (and never resolve to a displayed quote card).
 _FULL_PAPER_CHUNK_PREFIX = "FULLPAPER"
+# Serialises lazy corpus builds inside run_comparison, which parallel dimensions
+# call from several threads at once.
+_LAZY_CORPUS_LOCK = threading.Lock()
 # Judge-prompt line for papers that point to supplementary material the run lacks
 # (constant per run, so it stays inside the cacheable static prefix).
 _SUPPLEMENT_NOTE = (
@@ -1581,6 +1585,11 @@ async def general_preregistration_comparison(
             query_embedding_cache = await _prebuild_query_embeddings(
                 dimensions_to_compare, embedding_model=_embedding_model()
             )
+            await _ensure_text_corpora(
+                corpus_cache,
+                ("prereg", "PREREG", preregistration_input),
+                ("paper", "PAPER", extracted_paper_sections),
+            )
         if num_voters > 1:
             # Strand-based consensus: independent voters, each with its own append chain.
             result_obj.items.extend(
@@ -1604,101 +1613,88 @@ async def general_preregistration_comparison(
                     target_study_label_found=target_study_label_found,
                 )
             )
-        for index, dimension_info in enumerate(dimensions_to_compare, start=1):
-            if num_voters > 1:
-                break  # strand consensus (above) already produced every dimension's item
-            if not isinstance(dimension_info, dict):
-                continue
-            dimension_name = (dimension_info.get("dimension") or dimension_info.get("name") or "").strip()
-            if not dimension_name:
-                continue
-            dimension_definition = (dimension_info.get("definition") or "").strip()
-            previous_responses: list[ComparisonItem] | None = None
-            if append_previous_output and result_obj.items:
-                previous_responses = list(result_obj.items)
+        else:
+
+            async def _judge_one(dim: dict[str, Any], previous: list[ComparisonItem] | None) -> ComparisonResult:
+                name = (dim.get("dimension") or dim.get("name") or "").strip()
+                definition = (dim.get("definition") or "").strip()
                 logger.info(
-                    "Appending %d prior dimension responses for '%s' in preregistration flow",
-                    len(previous_responses),
-                    dimension_name,
+                    "general_preregistration_comparison running dimension",
+                    extra={"dimension": name, "reasoning_effort": reasoning_effort},
                 )
-            logger.info(
-                "general_preregistration_comparison running dimension",
-                extra={
-                    "dimension": dimension_name,
-                    "reasoning_effort": reasoning_effort,
-                },
-            )
-            if task_id and redis_client:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Embedding and retrieving for '{dimension_name}'"},
-                )
-            if (
-                dimension_name == CARRIED_FORWARD_DIMENSION
-                and comparison_context == "registered_report"
-                and runner is run_comparison
-            ):
-                comparison = await asyncio.to_thread(
-                    run_carried_forward_dimension,
+                if (
+                    name == CARRIED_FORWARD_DIMENSION
+                    and comparison_context == "registered_report"
+                    and runner is run_comparison
+                ):
+                    return await asyncio.to_thread(
+                        run_carried_forward_dimension,
+                        preregistration_input,
+                        extracted_paper_sections,
+                        client_choice,
+                        reasoning_effort=reasoning_effort,
+                        num_voters=num_voters,
+                        definition=definition,
+                    )
+                return await asyncio.to_thread(
+                    runner,
                     preregistration_input,
                     extracted_paper_sections,
                     client_choice,
-                    reasoning_effort=reasoning_effort,
+                    name,
+                    dimension_definition=definition,
+                    dimension_keywords=dim.get("keywords") or [],
                     num_voters=num_voters,
-                    definition=dimension_definition,
+                    corpus_cache=corpus_cache,
+                    query_embedding_cache=query_embedding_cache,
+                    reasoning_effort=reasoning_effort,
+                    previous_dimension_responses=previous,
+                    comparison_context=comparison_context,
+                    evidence_manifest=evidence_manifest,
+                    target_study=target_study,
+                    target_study_note=target_study_note,
+                    full_paper_text=full_paper_text,
+                    paper_references_supplement=flag_missing_supplement,
+                    target_study_label_found=target_study_label_found,
                 )
-                result_obj.items.extend(comparison.items)
-                processed_count = index
+
+            async def _started(name: str) -> None:
+                if task_id and redis_client:
+                    await redis_client.hset(
+                        task_id, mapping={"status": f"Embedding and retrieving for '{name}'"}
+                    )
+
+            async def _done(count: int, name: str) -> None:
+                nonlocal processed_count
+                processed_count = count
+                if append_previous_output:
+                    # Sequential run: safe to persist the manifest's growing scores as we go.
+                    await _persist_evidence_manifest(
+                        redis_client, task_id, evidence_manifest, evidence_ttl_seconds
+                    )
                 if task_id and redis_client:
                     await redis_client.hset(
                         task_id,
                         mapping={
+                            "state": "IN_PROGRESS",
                             "result_json": _result_json_with_cost(result_obj),
-                            "processed_dimensions": index,
-                            "status": f"Processed {index}/{total_dimensions}: {dimension_name}",
+                            "processed_dimensions": count,
+                            "total_dimensions": total_dimensions,
+                            "status": f"Processed {count}/{total_dimensions}: {name}",
                         },
                     )
-                continue
-            comparison = await asyncio.to_thread(
-                runner,
-                preregistration_input,
-                extracted_paper_sections,
-                client_choice,
-                dimension_name,
-                dimension_definition=dimension_definition,
-                dimension_keywords=dimension_info.get("keywords") or [],
-                num_voters=num_voters,
-                corpus_cache=corpus_cache,
-                query_embedding_cache=query_embedding_cache,
-                reasoning_effort=reasoning_effort,
-                previous_dimension_responses=previous_responses,
-                comparison_context=comparison_context,
-                evidence_manifest=evidence_manifest,
-                target_study=target_study,
-                target_study_note=target_study_note,
-                full_paper_text=full_paper_text,
-                paper_references_supplement=flag_missing_supplement,
-                target_study_label_found=target_study_label_found,
+
+            await _judge_dimensions(
+                dimensions_to_compare,
+                result_obj=result_obj,
+                append_previous_output=append_previous_output,
+                judge_one=_judge_one,
+                on_started=_started,
+                on_done=_done,
             )
-            result_obj.items.extend(comparison.items)
-            processed_count = index
-            await _persist_evidence_manifest(
-                redis_client,
-                task_id,
-                evidence_manifest,
-                evidence_ttl_seconds,
-            )
-            if task_id and redis_client:
-                await redis_client.hset(
-                    task_id,
-                    mapping={
-                        "state": "IN_PROGRESS",
-                        "result_json": _result_json_with_cost(result_obj),
-                        "processed_dimensions": index,
-                        "total_dimensions": total_dimensions,
-                        "status": f"Processed {index}/{total_dimensions}: {dimension_name}",
-                    },
-                )
+        # Parallel dimensions write relevance scores into the shared manifest from
+        # worker threads, so it is persisted once, after they have all finished.
+        await _persist_evidence_manifest(redis_client, task_id, evidence_manifest, evidence_ttl_seconds)
     except Exception as exc:
         if task_id and redis_client:
             await redis_client.hset(
@@ -1896,59 +1892,67 @@ async def clinical_trial_comparison(
             query_embedding_cache = await _prebuild_query_embeddings(
                 dimensions_to_compare, embedding_model=_embedding_model()
             )
-        for index, dimension_info in enumerate(dimensions_to_compare, start=1):
-            dimension = dimension_info.get("dimension", "").strip()
-            if not dimension:
-                continue
-            dimension_definition = (dimension_info.get("definition") or "").strip()
-            previous_responses: list[ComparisonItem] | None = None
-            if append_previous_output and result_obj.items:
-                previous_responses = list(result_obj.items)
-                logger.info(
-                    "Appending %d prior dimension responses for '%s' in clinical trial flow",
-                    len(previous_responses),
-                    dimension,
-                )
-            if redis_client and task_id:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Embedding and retrieving for '{dimension}'"},
-                )
-            comparison = await asyncio.to_thread(
+            await _ensure_text_corpora(
+                corpus_cache,
+                ("prereg", "PREREG", prereg_text),
+                ("paper", "PAPER", extracted_paper_sections),
+            )
+
+        async def _judge_one(dim: dict[str, Any], previous: list[ComparisonItem] | None) -> ComparisonResult:
+            return await asyncio.to_thread(
                 runner,
                 prereg_text,
                 extracted_paper_sections,
                 client_choice,
-                dimension,
-                dimension_definition=dimension_definition,
-                dimension_keywords=dimension_info.get("keywords") or [],
+                dim.get("dimension", "").strip(),
+                dimension_definition=(dim.get("definition") or "").strip(),
+                dimension_keywords=dim.get("keywords") or [],
                 num_voters=num_voters,
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
-                previous_dimension_responses=previous_responses,
+                previous_dimension_responses=previous,
                 comparison_context="clinical_trial",
                 evidence_manifest=evidence_manifest,
             )
-            result_obj.items.extend(comparison.items)
-            processed_count = index
-            await _persist_evidence_manifest(
-                redis_client,
-                task_id,
-                evidence_manifest,
-                evidence_ttl_seconds,
-            )
+
+        async def _started(name: str) -> None:
+            if redis_client and task_id:
+                await redis_client.hset(
+                    task_id, mapping={"status": f"Embedding and retrieving for '{name}'"}
+                )
+
+        async def _done(count: int, name: str) -> None:
+            nonlocal processed_count
+            processed_count = count
+            if append_previous_output:
+                # Sequential run: safe to persist the manifest's growing scores as we go.
+                await _persist_evidence_manifest(
+                    redis_client, task_id, evidence_manifest, evidence_ttl_seconds
+                )
             if redis_client and task_id:
                 await redis_client.hset(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
                         "result_json": _result_json_with_cost(result_obj),
-                        "processed_dimensions": index,
+                        "processed_dimensions": count,
                         "total_dimensions": total_dimensions,
-                        "status": f"LLM judgement complete for '{dimension}' ({index}/{total_dimensions})",
+                        "status": f"LLM judgement complete for '{name}' ({count}/{total_dimensions})",
                     },
                 )
+
+        await _judge_dimensions(
+            dimensions_to_compare,
+            result_obj=result_obj,
+            append_previous_output=append_previous_output,
+            judge_one=_judge_one,
+            on_started=_started,
+            on_done=_done,
+        )
+        # Parallel dimensions write relevance scores into the shared manifest from
+        # worker threads, so it is persisted once, after they have all finished.
+        await _persist_evidence_manifest(redis_client, task_id, evidence_manifest, evidence_ttl_seconds)
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(
@@ -2148,59 +2152,67 @@ async def animals_trial_comparison(
             query_embedding_cache = await _prebuild_query_embeddings(
                 dimensions_to_compare, embedding_model=_embedding_model()
             )
-        for index, dimension_info in enumerate(dimensions_to_compare, start=1):
-            dimension = dimension_info.get("dimension", "").strip()
-            if not dimension:
-                continue
-            dimension_definition = (dimension_info.get("definition") or "").strip()
-            previous_responses: list[ComparisonItem] | None = None
-            if append_previous_output and result_obj.items:
-                previous_responses = list(result_obj.items)
-                logger.info(
-                    "Appending %d prior dimension responses for '%s' in animals trial flow",
-                    len(previous_responses),
-                    dimension,
-                )
-            if redis_client and task_id:
-                await redis_client.hset(
-                    task_id,
-                    mapping={"status": f"Embedding and retrieving for '{dimension}'"},
-                )
-            comparison = await asyncio.to_thread(
+            await _ensure_text_corpora(
+                corpus_cache,
+                ("prereg", "PREREG", prereg_text),
+                ("paper", "PAPER", extracted_paper_sections),
+            )
+
+        async def _judge_one(dim: dict[str, Any], previous: list[ComparisonItem] | None) -> ComparisonResult:
+            return await asyncio.to_thread(
                 runner,
                 prereg_text,
                 extracted_paper_sections,
                 client_choice,
-                dimension,
-                dimension_definition=dimension_definition,
-                dimension_keywords=dimension_info.get("keywords") or [],
+                dim.get("dimension", "").strip(),
+                dimension_definition=(dim.get("definition") or "").strip(),
+                dimension_keywords=dim.get("keywords") or [],
                 num_voters=num_voters,
                 corpus_cache=corpus_cache,
                 query_embedding_cache=query_embedding_cache,
                 reasoning_effort=reasoning_effort,
-                previous_dimension_responses=previous_responses,
+                previous_dimension_responses=previous,
                 comparison_context="preclinical",
                 evidence_manifest=evidence_manifest,
             )
-            result_obj.items.extend(comparison.items)
-            processed_count = index
-            await _persist_evidence_manifest(
-                redis_client,
-                task_id,
-                evidence_manifest,
-                evidence_ttl_seconds,
-            )
+
+        async def _started(name: str) -> None:
+            if redis_client and task_id:
+                await redis_client.hset(
+                    task_id, mapping={"status": f"Embedding and retrieving for '{name}'"}
+                )
+
+        async def _done(count: int, name: str) -> None:
+            nonlocal processed_count
+            processed_count = count
+            if append_previous_output:
+                # Sequential run: safe to persist the manifest's growing scores as we go.
+                await _persist_evidence_manifest(
+                    redis_client, task_id, evidence_manifest, evidence_ttl_seconds
+                )
             if redis_client and task_id:
                 await redis_client.hset(
                     task_id,
                     mapping={
                         "state": "IN_PROGRESS",
                         "result_json": _result_json_with_cost(result_obj),
-                        "processed_dimensions": index,
+                        "processed_dimensions": count,
                         "total_dimensions": total_dimensions,
-                        "status": f"LLM judgement complete for '{dimension}' ({index}/{total_dimensions})",
+                        "status": f"LLM judgement complete for '{name}' ({count}/{total_dimensions})",
                     },
                 )
+
+        await _judge_dimensions(
+            dimensions_to_compare,
+            result_obj=result_obj,
+            append_previous_output=append_previous_output,
+            judge_one=_judge_one,
+            on_started=_started,
+            on_done=_done,
+        )
+        # Parallel dimensions write relevance scores into the shared manifest from
+        # worker threads, so it is persisted once, after they have all finished.
+        await _persist_evidence_manifest(redis_client, task_id, evidence_manifest, evidence_ttl_seconds)
     except Exception as exc:
         if redis_client and task_id:
             await redis_client.hset(
@@ -2233,6 +2245,90 @@ async def animals_trial_comparison(
     if tracker is not None:
         result_obj.cost = tracker.snapshot()
     return result_obj
+
+
+def _dimension_concurrency() -> int:
+    """How many dimensions of ONE job are judged at once (when no append chain links
+    them). Bounded per job; the worker separately bounds concurrent jobs."""
+    return max(1, _env_int("DIMENSION_CONCURRENCY", 4))
+
+
+async def _ensure_text_corpora(
+    corpus_cache: dict[str, EmbeddingCorpus], *docs: tuple[str, str, str]
+) -> None:
+    """Build (role, chunk_prefix, text) corpora into the cache under the keys
+    run_comparison looks up, once, before dimensions fan out. Without this, parallel
+    dimensions (or consensus strands) each saw an empty cache and embedded the same
+    documents concurrently. Already-cached corpora (e.g. from the evidence builder)
+    are left alone."""
+    for role, prefix, text in docs:
+        key = _corpus_cache_key(role, text)
+        if key in corpus_cache:
+            continue
+        corpus_cache[key] = await asyncio.to_thread(
+            build_corpus,
+            text,
+            model=_embedding_model(),
+            chunk_prefix=prefix,
+            max_segments=_max_embedding_segments(),
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+        )
+
+
+async def _judge_dimensions(
+    dimensions: list[dict[str, Any]],
+    *,
+    result_obj: "ComparisonResult",
+    append_previous_output: bool,
+    judge_one: Callable[[dict[str, Any], list["ComparisonItem"] | None], Awaitable["ComparisonResult"]],
+    on_started: Callable[[str], Awaitable[None]] | None = None,
+    on_done: Callable[[int, str], Awaitable[None]] | None = None,
+) -> None:
+    """Judge every dimension, appending items to ``result_obj`` in DIMENSION order.
+
+    With ``append_previous_output`` each judgement sees the items before it, so the
+    dimensions run strictly in sequence (unchanged behaviour). Otherwise they are
+    independent and run concurrently, up to ``_dimension_concurrency()`` at a time;
+    ``result_obj.items`` is rebuilt in dimension order as each finishes, so partial
+    results stay ordered. ``on_done(completed_count, name)`` fires after each one."""
+    named = [
+        (d, (d.get("dimension") or d.get("name") or "").strip())
+        for d in dimensions
+        if isinstance(d, dict) and (d.get("dimension") or d.get("name") or "").strip()
+    ]
+    if append_previous_output or len(named) <= 1:
+        for count, (dim, name) in enumerate(named, start=1):
+            previous = list(result_obj.items) if (append_previous_output and result_obj.items) else None
+            if previous:
+                logger.info(
+                    "Appending %d prior dimension responses for '%s'", len(previous), name
+                )
+            if on_started is not None:
+                await on_started(name)
+            comparison = await judge_one(dim, previous)
+            result_obj.items.extend(comparison.items)
+            if on_done is not None:
+                await on_done(count, name)
+        return
+
+    base = list(result_obj.items)
+    slots: list[list[ComparisonItem] | None] = [None] * len(named)
+    gate = asyncio.Semaphore(_dimension_concurrency())
+    completed = 0
+
+    async def _one(index: int, dim: dict[str, Any], name: str) -> None:
+        nonlocal completed
+        async with gate:
+            if on_started is not None:
+                await on_started(name)
+            comparison = await judge_one(dim, None)
+        slots[index] = list(comparison.items)
+        result_obj.items = base + [item for slot in slots if slot for item in slot]
+        completed += 1
+        if on_done is not None:
+            await on_done(completed, name)
+
+    await asyncio.gather(*(_one(i, dim, name) for i, (dim, name) in enumerate(named)))
 
 
 def _normalize_comparison_payload(payload: Any) -> dict[str, Any]:
@@ -2982,15 +3078,19 @@ def run_comparison(
         if full_paper_key is None:
             return None
         corpus = cache.get(full_paper_key)
-        if corpus is None:
-            corpus = build_corpus(
-                full_paper_text,
-                model=embedding_model,
-                chunk_prefix=_FULL_PAPER_CHUNK_PREFIX,
-                max_segments=max_segments,
-                max_chunk_tokens=max_chunk_tokens,
-            )
-            cache[full_paper_key] = corpus
+        if corpus is not None:
+            return corpus
+        with _LAZY_CORPUS_LOCK:  # parallel dimensions: build it once, not once per thread
+            corpus = cache.get(full_paper_key)
+            if corpus is None:
+                corpus = build_corpus(
+                    full_paper_text,
+                    model=embedding_model,
+                    chunk_prefix=_FULL_PAPER_CHUNK_PREFIX,
+                    max_segments=max_segments,
+                    max_chunk_tokens=max_chunk_tokens,
+                )
+                cache[full_paper_key] = corpus
         return corpus
 
     # Drop references to large raw texts once corpora are built to ease memory pressure on small dynos.
