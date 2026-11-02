@@ -386,8 +386,11 @@ def _reference_chunk_ids(corpus: "EmbeddingCorpus") -> set[str]:
     return set()
 
 
-_UNLOCATED_SPLIT_RE = re.compile(r"[;\n]+")
+# Split on ';'/newlines only OUTSIDE parentheses, so a judge writing
+# "pairwise deletion (listwise deletion; complete-case)" keeps one element.
+_UNLOCATED_SPLIT_RE = re.compile(r"(?:[;\n](?![^()]*\)))+")
 _SYNONYM_GROUP_RE = re.compile(r"\(([^)]*)\)")
+_SYNONYM_SEP_RE = re.compile(r"[,;]|\s+or\s+")  # not "/": it occurs inside terms (-1000/RT)
 
 # Cap on augment→re-judge cycles in the targeted verification loop. Each round
 # only searches elements not already searched, so the loop converges as soon as
@@ -402,12 +405,20 @@ def _split_unlocated(value: str | None, cap: int = 3) -> list[str]:
 
 
 def _element_search_terms(element: str) -> list[str]:
-    """The element's name plus any parenthesised synonyms, for the literal scan."""
+    """The element's name plus any parenthesised synonyms/alternatives, for the
+    literal scan. The judge names, in parentheses, both synonyms AND the likely
+    alternatives a deviating document would state instead (pairwise → listwise),
+    since the alternative is often the strongest evidence of a deviation."""
     name = _SYNONYM_GROUP_RE.sub("", element).strip(" ;,.")
     terms = [name] if name else []
     for group in _SYNONYM_GROUP_RE.findall(element):
-        terms.extend(t.strip() for t in group.split(",") if t.strip())
+        terms.extend(t.strip(" .") for t in _SYNONYM_SEP_RE.split(group) if t.strip(" ."))
     return [t for t in terms if len(t) >= 3]
+
+
+def _literal_norm(text: str) -> str:
+    """Fold case, hyphens and whitespace so 'complete-case' matches 'complete case'."""
+    return " ".join((text or "").casefold().replace("-", " ").replace("\u2010", " ").split())
 
 
 def _verification_sim_threshold() -> float:
@@ -453,26 +464,45 @@ def _targeted_element_search(
             for cid, seg in zip(corpus.chunk_ids, corpus.segments)
             if _containment_norm(seg) and _containment_norm(seg) in exclude_contained_in
         }
-    rows: dict[str, tuple[str, str, float]] = {}
+    semantic: list[tuple[str, str, float]] = []
     try:
         qvec = get_embedding(element, model=embedding_model)
-        for cid, text, sim in retrieve_relevant_chunks(
-            qvec, corpus, top_k=max_hits * 3, threshold=_verification_sim_threshold()
-        ):
-            if cid not in excluded:
-                rows.setdefault(cid, (cid, text, sim))
+        semantic = [
+            row
+            for row in retrieve_relevant_chunks(qvec, corpus, top_k=len(corpus.segments))
+            if row[0] not in excluded
+        ]
     except Exception as exc:  # pragma: no cover - search degrades to the literal scan
         logger.warning("Targeted semantic search failed for %r", element, exc_info=exc)
-    terms = [t.lower() for t in _element_search_terms(element)]
+    threshold = _verification_sim_threshold()
+    rows: dict[str, tuple[str, str, float]] = {
+        row[0]: row for row in semantic[: max_hits * 3] if row[2] >= threshold
+    }
+    literal: dict[str, tuple[str, str, float]] = {}
+    terms = [_literal_norm(t) for t in _element_search_terms(element)]
+    terms = [t for t in terms if t]
     if terms:
         for cid, seg in zip(corpus.chunk_ids, corpus.segments):
             if cid in excluded or cid in rows:
                 continue
-            hay = (seg or "").lower()
+            hay = _literal_norm(seg)
             if any(t in hay for t in terms):
-                rows[cid] = (cid, seg, 0.0)
+                literal[cid] = (cid, seg, 0.0)
+    if not literal:
+        # Floor of evidence beats silence: with no literal match, hand the judge the
+        # best semantic candidates even below the threshold (sim > 0 guards degenerate
+        # zero vectors); the judge decides whether they bear on the element.
+        for row in semantic[:max_hits]:
+            if row[2] > 0:
+                rows.setdefault(row[0], row)
+    # Literal hits carry no similarity score, so a plain score sort would let
+    # above-threshold semantic hits crowd out the literal (often alternative-term)
+    # match: reserve half the slots for literal hits, fill the rest by score.
+    reserved = list(literal.values())[: max(1, max_hits // 2)]
     ranked = sorted(rows.values(), key=lambda r: -r[2])
-    return ranked[:max_hits]
+    chosen = reserved + [r for r in ranked if r[0] not in literal]
+    chosen += [r for r in literal.values() if r not in reserved]
+    return chosen[:max_hits]
 
 
 def _ids_in_prompt_blocks(blocks: list[str]) -> set[str]:
@@ -3023,13 +3053,13 @@ def run_comparison(
         f"{quotes_bullet}"
         "- For 'paper_content_summary' and 'registration_content_summary', write a SHORT prose summary of that document's content on this dimension: aim for about 50 words (roughly one to three sentences) and do not exceed it. Use plain prose, not bullet points or headings, and cite the evidence IDs you relied upon.\n"
         "- For 'deviation_information', also cite the evidence IDs you relied upon.\n"
-        "- 'unlocated_in_paper' and 'unlocated_in_registration': elements you looked for but could not find in that document's excerpts, as a short semicolon-separated list, naming each element together with any synonyms or abbreviations it might appear under (in parentheses). Use an empty string when there are none.\n"
+        "- 'unlocated_in_paper' and 'unlocated_in_registration': elements you looked for but could not find in that document's excerpts, as a short semicolon-separated list, naming each element followed, in parentheses and comma-separated, by any synonyms or abbreviations it might appear under AND the most likely ALTERNATIVES that document would state instead if it deviated (e.g. 'pairwise deletion (listwise deletion, complete-case analysis)', 'Prolific (MTurk, Amazon Mechanical Turk)'). Use an empty string when there are none.\n"
         "- 'deviation_judgement' must be exactly 'yes', 'no', or 'missing'. Apply these rules in strict order of precedence:\n"
         "  1. 'yes' — a deviation (as defined above) exists on this dimension. This verdict dominates: it applies even if other aspects of the dimension are unverifiable.\n"
         "  2. 'missing' — no deviation is evident, but a materially relevant element that the REGISTRATION specifies for this dimension cannot be verified in the paper (e.g. an ethics approval number recorded in the registration but never echoed in the paper: the paper's silence breaks no registered plan, but consistency cannot be verified) — or the registration itself provides nothing usable on this dimension, so there is nothing to judge against. Mutual silence is NEVER consistency: if neither document provides usable material, the verdict is 'missing', not 'no'. Do NOT return 'missing' because a peripheral or UNREGISTERED detail cannot be verified: verification is owed to what the registration specifies, nothing more.\n"
         "  3. 'no' — every element the registration specifies for this dimension is affirmatively present in the paper and consistent with it in substance. If that holds, return 'no' even when unregistered or peripheral details cannot be verified (but as an important exception: if the paper ADDS unregistered content on this dimension, that is a deviation under rule 1). 'no' is a positive verification of the registered elements, not a default; never return 'no' merely because you found no difference.\n"
         "Materiality guard for rule 2 only (it never weakens rule 1): An unverifiable registered element triggers 'missing' only if it is materially relevant to this dimension as defined; a real difference is 'yes' no matter how minor.\n"
-        "Omission and addition claims: you see only retrieved excerpts, never the full documents. If a registered element does not appear in the provided paper excerpts (or paper content appears to be unregistered), phrase this in 'deviation_information' as 'not found in the provided excerpts' — never assert it is absent from the document — and list the element in 'unlocated_in_paper' (or 'unlocated_in_registration'), naming it together with any synonyms or abbreviations it might appear under. Then still return your best verdict on the evidence you have: a registered element that is conspicuously absent where the paper covers this ground is a deviation; if you genuinely cannot judge, return 'missing'. RegCheck will run a targeted search of the full document for every element you list and re-invoke you with anything it finds, so do not soften a verdict because you suspect a retrieval gap — flag the element instead.\n"
+        "Omission and addition claims: you see only retrieved excerpts, never the full documents. If a registered element does not appear in the provided paper excerpts (or paper content appears to be unregistered), phrase this in 'deviation_information' as 'not found in the provided excerpts' — never assert it is absent from the document — and list the element in 'unlocated_in_paper' (or 'unlocated_in_registration'), naming it together with any synonyms, abbreviations, and likely alternatives (what the document would say instead if it deviated) in parentheses. Then still return your best verdict on the evidence you have: a registered element that is conspicuously absent where the paper covers this ground is a deviation; if you genuinely cannot judge, return 'missing'. RegCheck will run a targeted search of the full document for every element you list and re-invoke you with anything it finds, so do not soften a verdict because you suspect a retrieval gap — flag the element instead.\n"
         "When the verdict is 'missing', name in 'deviation_information' the feature(s) that could not be verified and which document is silent.\n"
     )
     variable_part = (

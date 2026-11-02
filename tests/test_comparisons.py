@@ -2081,3 +2081,100 @@ async def test_full_paper_text_reaches_runner_only_after_isolation(tmp_path, mon
         str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
         selected_dimensions=dims, comparison_runner=_ok_runner(seen))
     assert seen[0]["full_paper_text"] is None
+
+
+# ── alternative-phrasing expansion + semantic floor ──
+
+
+def test_element_search_terms_include_alternatives():
+    from backend.services.comparisons import _element_search_terms, _split_unlocated
+
+    assert _element_search_terms("pairwise deletion (listwise deletion, complete-case)") == [
+        "pairwise deletion", "listwise deletion", "complete-case",
+    ]
+    assert _element_search_terms("Prolific (MTurk; Amazon Mechanical Turk or CloudResearch)") == [
+        "Prolific", "MTurk", "Amazon Mechanical Turk", "CloudResearch",
+    ]
+    assert _element_search_terms("-1000/RT transform (+1000/RT or inverse RT)") == [
+        "-1000/RT transform", "+1000/RT", "inverse RT",
+    ]
+    # Semicolons inside a parenthesised group don't split the element.
+    assert _split_unlocated("pairwise deletion (listwise; complete-case); Prolific (MTurk)") == [
+        "pairwise deletion (listwise; complete-case)", "Prolific (MTurk)",
+    ]
+
+
+def _search_corpus(segments, vecs):
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    n = len(segments)
+    arr = np.array(vecs, dtype=np.float32)
+    return EmbeddingCorpus(
+        segments=segments, embeddings=arr,
+        chunk_ids=[f"PAPER_{i + 1:04d}" for i in range(n)],
+        norms=np.linalg.norm(arr, axis=1), metadata=[{} for _ in range(n)],
+    )
+
+
+def test_literal_scan_finds_antonym_alternative(monkeypatch):
+    import numpy as np
+
+    corpus = _search_corpus(
+        ["Participants were recruited online.", "We used complete case analysis (listwise)."],
+        [[1.0, 0.0], [1.0, 0.0]],
+    )
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.zeros(2, dtype=np.float32))
+    hits = comparisons._targeted_element_search(
+        "pairwise deletion (complete-case)", corpus, exclude_ids=set(), embedding_model="m")
+    # Registered term absent; the hyphen-folded alternative matches literally.
+    assert [cid for cid, _t, _s in hits] == ["PAPER_0002"]
+
+
+def test_literal_hit_is_not_crowded_out_by_semantic_hits(monkeypatch):
+    import numpy as np
+
+    segs = [f"semantic neighbour {i}" for i in range(6)] + ["Data were collected on MTurk."]
+    corpus = _search_corpus(segs, [[1.0, 0.0]] * 6 + [[0.0, 1.0]])
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.array([1.0, 0.0], dtype=np.float32))
+    hits = comparisons._targeted_element_search(
+        "Prolific (MTurk)", corpus, exclude_ids=set(), embedding_model="m")
+    assert len(hits) == 4
+    assert "PAPER_0007" in {cid for cid, _t, _s in hits}
+
+
+def test_semantic_floor_returns_top_hits_below_threshold_when_no_literal(monkeypatch):
+    import numpy as np
+
+    corpus = _search_corpus(
+        ["weakly related a", "weakly related b", "weakly related c"],
+        [[0.1, 1.0], [0.05, 1.0], [0.0, 1.0]],
+    )
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.array([1.0, 0.0], dtype=np.float32))
+    hits = comparisons._targeted_element_search(
+        "gamma stopping rule", corpus, exclude_ids={"PAPER_0001"}, embedding_model="m", max_hits=4)
+    # All below the 0.25 threshold, nothing literal → best semantic candidates
+    # (excluding shown chunks and zero-similarity ones) are still returned.
+    assert [cid for cid, _t, _s in hits] == ["PAPER_0002"]
+
+    # With a literal hit, below-threshold semantic rows are NOT added.
+    corpus2 = _search_corpus(["weakly related", "the gamma stopping rule applied"], [[0.1, 1.0], [0.0, 1.0]])
+    hits2 = comparisons._targeted_element_search(
+        "gamma stopping rule", corpus2, exclude_ids=set(), embedding_model="m")
+    assert [cid for cid, _t, _s in hits2] == ["PAPER_0002"]
+
+
+def test_judgement_prompt_asks_for_alternatives(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(messages, **kw):
+        captured["prompt"] = messages[-1]["content"]
+        return _verif_reply()
+
+    import numpy as np
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.array([1.0, 0.0], dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", fake_dispatch)
+    comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    assert "most likely ALTERNATIVES" in captured["prompt"]
+    assert "pairwise deletion (listwise deletion, complete-case analysis)" in captured["prompt"]
