@@ -236,3 +236,88 @@ async def test_offline_bundle_strips_urls_and_collects_render_data():
     assert render_data["prereg"] == {"kind": "text", "text": "hello world"}  # render inlined
     assert out_manifest["chunks"]["PREREG_0001"]["text"] == "hello world"   # chunks preserved
     assert "_artifacts" in manifest["sources"]["prereg"]            # input not mutated (deepcopy)
+
+
+# ── canonical text: the parser's output, placed on the PDF by word alignment ──
+
+
+def _two_page_pdf(path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    p1 = doc.new_page()
+    p1.insert_text((72, 40), "JOURNAL OF TESTS  RUNNING HEAD")  # running head, PDF-only
+    p1.insert_text((72, 100), "Participants were recruited through Prolific and paid")
+    p1.insert_text((72, 114), "two pounds for a fifteen minute session online.")
+    p1.insert_text((72, 700), "12")                               # page number, PDF-only
+    p2 = doc.new_page()
+    p2.insert_text((72, 40), "JOURNAL OF TESTS  RUNNING HEAD")
+    p2.insert_text((72, 100), "Missing data were handled with listwise deletion in MPLUS")
+    p2.insert_text((72, 114), "for all regression analyses reported below.")
+    doc.save(path)
+    doc.close()
+
+
+def test_pdf_source_chunks_parser_text_and_places_it_on_pages(tmp_path):
+    from backend.services.evidence import build_pdf_evidence_source
+
+    pdf = tmp_path / "paper.pdf"
+    _two_page_pdf(pdf)
+    # The parser's output differs from the text layer: no running heads or page
+    # numbers, and the paragraph runs across the page break.
+    parser_text = (
+        "Participants were recruited through Prolific and paid two pounds for a fifteen "
+        "minute session online. Missing data were handled with listwise deletion in MPLUS "
+        "for all regression analyses reported below."
+    )
+    payload = build_pdf_evidence_source(
+        source_id="paper", label="Paper", pdf_path=str(pdf), chunk_prefix="PAPER",
+        fallback_text=parser_text, max_chunk_tokens=200,
+    )
+    assert payload["text"] == parser_text                       # canonical = parser output
+    assert "RUNNING HEAD" not in " ".join(payload["segments"])
+    chunk = next(iter(payload["chunks"].values()))
+    pages = {loc["page"] for loc in chunk["locations"] if loc["kind"] == "pdf"}
+    assert pages == {1, 2}                                      # spans the page break
+    assert all(loc["rects"] for loc in chunk["locations"])
+    assert payload["source"]["render_mode"] == "pdf"
+    assert "RUNNING HEAD" in payload["render_data"]["text"]       # page offsets: text layer
+    assert "Prolific" in payload["render_data"]["display_text"]
+
+
+def test_pdf_source_unplaceable_chunk_has_no_misleading_offsets(tmp_path):
+    from backend.services.evidence import build_pdf_evidence_source
+
+    pdf = tmp_path / "paper.pdf"
+    _two_page_pdf(pdf)
+    payload = build_pdf_evidence_source(
+        source_id="paper", label="Paper", pdf_path=str(pdf), chunk_prefix="PAPER",
+        fallback_text="Entirely different OCR text that the page layer does not contain at all.",
+    )
+    chunk = next(iter(payload["chunks"].values()))
+    assert chunk["locations"] == []
+
+
+def test_pdf_source_without_parser_text_keeps_text_layer(tmp_path):
+    from backend.services.evidence import build_pdf_evidence_source
+
+    pdf = tmp_path / "paper.pdf"
+    _two_page_pdf(pdf)
+    payload = build_pdf_evidence_source(
+        source_id="paper", label="Paper", pdf_path=str(pdf), chunk_prefix="PAPER"
+    )
+    assert "Prolific" in payload["text"] and "RUNNING HEAD" in payload["text"]
+
+
+def test_corpus_segments_match_evidence_segments():
+    from backend.services.evidence import build_text_evidence_source, corpus_segments
+
+    text = "Method\n\nWe recruited  300 adults — all “naive”.\nThey were paid.\n\nReferences\n\nSmith (2020)."
+    text = "Intro text. " * 40 + text
+    payload = build_text_evidence_source(
+        source_id="p", label="P", text=text, chunk_prefix="PAPER", max_chunk_tokens=60
+    )
+    segments, metadata = corpus_segments(text, max_chunk_tokens=60, embedding_model="text-embedding-3-large")
+    assert segments == payload["segments"]
+    assert [bool(m.get("in_references")) for m in metadata] == [
+        bool(m.get("in_references")) for m in payload["metadata"]
+    ]

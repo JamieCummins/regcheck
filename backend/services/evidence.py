@@ -23,6 +23,22 @@ def _display_text(text: str) -> str:
     return reflow_text(normalize_text(text))
 
 
+def corpus_segments(
+    text: str, *, max_chunk_tokens: int, embedding_model: str
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """The segments (display-normalised chunks of ``text``) and per-segment metadata
+    (``in_references`` flags) that EVERY retrieval corpus over a document embeds. The
+    evidence builders produce exactly these, so runs with and without the evidence
+    viewer retrieve over identical text."""
+    chunks = extract_chunks_tokens_with_spans(
+        text or "", max_chunk_tokens=max_chunk_tokens, encoding_name=embedding_model
+    )
+    refs_span = _references_span(text or "")
+    segments = [_display_text(chunk.text) for chunk in chunks]
+    metadata = [{"in_references": True} if _in_span(chunk.start, refs_span) else {} for chunk in chunks]
+    return segments, metadata
+
+
 def _chunk_id(prefix: str, index: int) -> str:
     return f"{prefix.upper()}_{index:04d}"
 
@@ -442,6 +458,106 @@ def _search_page_rects(page, text: str) -> list[dict[str, float]]:
     return []
 
 
+class _DocumentWords:
+    """Every word of a PDF in reading order, normalised for matching, so a chunk of
+    ANOTHER text (the parser's canonical output) can be placed on the pages: the
+    chunk's words are aligned to this stream, tolerating words the PDF has and the
+    canonical text lacks (running heads, page numbers, footnote marks at page breaks)
+    and a minority of mismatched words. Built once per document."""
+
+    _LOOKAHEAD = 15  # PDF-only words skipped between two matched chunk words
+    _MAX_CANDIDATES = 40
+
+    def __init__(self, doc) -> None:
+        self.tokens: list[str] = []
+        self.words: list[tuple[int, tuple]] = []  # (page_index, PyMuPDF word tuple)
+        self.positions: dict[str, list[int]] = {}
+        self.page_sizes: list[tuple[float, float]] = []
+        for page_index in range(len(doc)):
+            page = doc.load_page(page_index)
+            self.page_sizes.append((float(page.rect.width), float(page.rect.height)))
+            try:
+                words = page.get_text("words")
+            except Exception:
+                words = []
+            for word in words:
+                norm = _norm_match_token(word[4])
+                if norm:
+                    self.positions.setdefault(norm, []).append(len(self.tokens))
+                    self.tokens.append(norm)
+                    self.words.append((page_index, word))
+
+    def _walk(self, needle: list[str], start: int) -> list[int]:
+        matched: list[int] = []
+        pos, misses = start, 0
+        max_misses = int(len(needle) * 0.3) + 1
+        n = len(self.tokens)
+        for token in needle:
+            limit = min(n, pos + self._LOOKAHEAD)
+            j = pos
+            while j < limit and self.tokens[j] != token:
+                j += 1
+            if j < limit:
+                matched.append(j)
+                pos = j + 1
+            else:
+                misses += 1
+                if misses > max_misses:
+                    break
+        return matched
+
+    def align(self, text: str, near: int = 0) -> list[int] | None:
+        """Indices of the PDF words matching ``text`` (>= 70% of its words), searching
+        candidate starts nearest to ``near`` first; None when it can't be placed."""
+        needle = [t for t in (_norm_match_token(w) for w in (text or "").split()) if t]
+        if not needle:
+            return None
+        best: list[int] = []
+        for skip in range(min(3, len(needle))):  # tolerate a mismatched first word or two
+            starts = sorted(
+                self.positions.get(needle[skip], []),
+                key=lambda i: (i < near, abs(i - near)),
+            )[: self._MAX_CANDIDATES]
+            for start in starts:
+                matched = self._walk(needle[skip:], start)
+                if len(matched) > len(best):
+                    best = matched
+                    if len(best) >= 0.95 * len(needle):
+                        break
+            if len(best) >= 0.7 * len(needle):
+                break
+        return best if len(best) >= max(1, int(0.7 * len(needle))) else None
+
+    def locations(self, indices: list[int]) -> list[dict[str, Any]]:
+        """Per-page rect locations (one rect per text line) for matched word indices."""
+        pages: dict[int, dict[tuple[int, int], list[float]]] = {}
+        for index in indices:
+            page_index, word = self.words[index]
+            lines = pages.setdefault(page_index, {})
+            key = (int(word[5]), int(word[6]))
+            box = lines.get(key)
+            if box is None:
+                lines[key] = [float(word[0]), float(word[1]), float(word[2]), float(word[3])]
+            else:
+                box[0], box[1] = min(box[0], float(word[0])), min(box[1], float(word[1]))
+                box[2], box[3] = max(box[2], float(word[2])), max(box[3], float(word[3]))
+        out = []
+        for page_index in sorted(pages):
+            width, height = self.page_sizes[page_index]
+            out.append(
+                {
+                    "kind": "pdf",
+                    "page": page_index + 1,
+                    "page_width": width,
+                    "page_height": height,
+                    "rects": [
+                        {"x0": b[0], "y0": b[1], "x1": b[2], "y1": b[3]} for b in pages[page_index].values()
+                    ],
+                }
+            )
+        return out
+
+
 def _pdf_locations_for_chunk(doc, full_text: str, chunk_start: int, chunk_end: int, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     locations: list[dict[str, Any]] = []
     for page_info in pages:
@@ -521,8 +637,15 @@ def build_pdf_evidence_source(
     try:
         pdf_text, pages = _pdf_page_text_and_offsets(doc)
         use_pdf_text = bool((pdf_text or "").strip())
-        source_text = pdf_text if use_pdf_text else (fallback_text or "")
+        # The CANONICAL text is the selected parser's output (``fallback_text``), so
+        # the judge, retrieval, and every run path read the same text; the PDF's own
+        # text layer supplies page geometry only. Without parser text (direct
+        # callers), the text layer is canonical as before.
+        canonical_is_pdf = not (fallback_text or "").strip()
+        source_text = pdf_text if canonical_is_pdf else (fallback_text or "")
         render_mode = "pdf" if use_pdf_text else "text"
+        word_index = _DocumentWords(doc) if (use_pdf_text and not canonical_is_pdf) else None
+        cursor = 0
         chunks = extract_chunks_tokens_with_spans(
             source_text,
             max_chunk_tokens=max_chunk_tokens,
@@ -534,7 +657,15 @@ def build_pdf_evidence_source(
         manifest_chunks: dict[str, dict[str, Any]] = {}
         for index, chunk in enumerate(chunks, start=1):
             cid = _chunk_id(chunk_prefix, index)
-            if use_pdf_text:
+            if word_index is not None:
+                # Parser text: place the chunk by aligning its words to the PDF's. An
+                # unplaceable chunk carries no offsets (they'd index a different text);
+                # the viewer then finds it by searching the page text.
+                matched = word_index.align(chunk.text, near=cursor)
+                locations = word_index.locations(matched) if matched else []
+                if matched:
+                    cursor = matched[0]
+            elif use_pdf_text:
                 locations = _pdf_locations_for_chunk(doc, source_text, chunk.start, chunk.end, pages)
                 if not locations:
                     locations = [{"kind": "text", "start": chunk.start, "end": chunk.end}]
@@ -579,7 +710,9 @@ def build_pdf_evidence_source(
             # `display_text` (reflowed — PDF hard line-wraps collapsed, paragraph
             # breaks kept), which matches the reflowed chunk text the locator
             # matches against. Text-mode fallback keeps both fields reflowed.
-            "text": _display_text(source_text) if render_mode == "text" else source_text,
+            # (Offsets/pages index the PDF text layer; the text pane shows the
+            # canonical text the judge read.)
+            "text": _display_text(source_text) if render_mode == "text" else pdf_text,
             "display_text": _display_text(source_text),
             "pages": source["pages"],
             "metadata": metadata or {},

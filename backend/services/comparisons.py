@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from .documents import (
     DOCUMENT_SEPARATOR_RE,
+    clean_document_text,
     extract_text_from_docx,
     extract_text_from_html,
     extract_text_from_xml,
@@ -37,6 +38,7 @@ from .embeddings import (
 )
 from .evidence import (
     build_file_evidence_source,
+    corpus_segments,
     build_json_evidence_source,
     build_text_evidence_source,
 )
@@ -1157,6 +1159,8 @@ async def general_preregistration_comparison(
                 pdf_parser=pdf_parser,
                 dpt_parser=dpt_parser,
             )
+            # Same cleaning as every other registration format (read_file).
+            preregistration_input = clean_document_text(preregistration_input, from_pdf=True)
             if task_id and redis_client:
                 fields: dict[str, str] = {"prereg_parser_used": prereg_parser_used}
                 if prereg_parser_used != (parser_choice or "grobid").lower():
@@ -2253,6 +2257,22 @@ def _dimension_concurrency() -> int:
     return max(1, _env_int("DIMENSION_CONCURRENCY", 4))
 
 
+def _build_text_corpus(text: str, chunk_prefix: str) -> EmbeddingCorpus:
+    """Embedding corpus over ``text`` with exactly the segments (and reference flags)
+    the evidence builder would produce, so a run without the evidence viewer (plain
+    CLI, evaluation scripts) retrieves over the same text as the web app."""
+    segments, metadata = corpus_segments(
+        text, max_chunk_tokens=_embedding_max_chunk_tokens(), embedding_model=_embedding_model()
+    )
+    return build_corpus_from_segments(
+        segments,
+        model=_embedding_model(),
+        chunk_prefix=chunk_prefix,
+        max_segments=_max_embedding_segments(),
+        metadata=metadata,
+    )
+
+
 async def _ensure_text_corpora(
     corpus_cache: dict[str, EmbeddingCorpus], *docs: tuple[str, str, str]
 ) -> None:
@@ -2265,14 +2285,7 @@ async def _ensure_text_corpora(
         key = _corpus_cache_key(role, text)
         if key in corpus_cache:
             continue
-        corpus_cache[key] = await asyncio.to_thread(
-            build_corpus,
-            text,
-            model=_embedding_model(),
-            chunk_prefix=prefix,
-            max_segments=_max_embedding_segments(),
-            max_chunk_tokens=_embedding_max_chunk_tokens(),
-        )
+        corpus_cache[key] = await asyncio.to_thread(_build_text_corpus, text, prefix)
 
 
 async def _judge_dimensions(
@@ -3041,29 +3054,29 @@ def run_comparison(
     embedding_model = _embedding_model()
     max_chunk_tokens = _embedding_max_chunk_tokens()
 
-    prereg_corpus = cache.get(prereg_key)
-    if prereg_corpus is None:
-        prereg_corpus = build_corpus(
-            preregistration_input,
-            model=embedding_model,
-            embeddings_path=prereg_path,
-            chunk_prefix="PREREG",
-            max_segments=max_segments,
-            max_chunk_tokens=max_chunk_tokens,
-        )
-        cache[prereg_key] = prereg_corpus
+    def _lazy_corpus(key: str, text: str, prefix: str, pickle_path: str | None) -> EmbeddingCorpus:
+        corpus = cache.get(key)
+        if corpus is not None:
+            return corpus
+        with _LAZY_CORPUS_LOCK:  # parallel dimensions: build each corpus once
+            corpus = cache.get(key)
+            if corpus is None:
+                if pickle_path:  # legacy on-disk embedding cache (embeddings_prefix)
+                    corpus = build_corpus(
+                        text,
+                        model=embedding_model,
+                        embeddings_path=pickle_path,
+                        chunk_prefix=prefix,
+                        max_segments=max_segments,
+                        max_chunk_tokens=max_chunk_tokens,
+                    )
+                else:
+                    corpus = _build_text_corpus(text, prefix)
+                cache[key] = corpus
+        return corpus
 
-    paper_corpus = cache.get(paper_key)
-    if paper_corpus is None:
-        paper_corpus = build_corpus(
-            extracted_paper_sections,
-            model=embedding_model,
-            embeddings_path=paper_path,
-            chunk_prefix="PAPER",
-            max_segments=max_segments,
-            max_chunk_tokens=max_chunk_tokens,
-        )
-        cache[paper_key] = paper_corpus
+    prereg_corpus = _lazy_corpus(prereg_key, preregistration_input, "PREREG", prereg_path)
+    paper_corpus = _lazy_corpus(paper_key, extracted_paper_sections, "PAPER", paper_path)
 
     # Full-paper corpus for the targeted verification pass only (multi-study runs whose
     # isolation trimmed the paper). Built lazily — most dimensions never flag a paper
@@ -3083,13 +3096,7 @@ def run_comparison(
         with _LAZY_CORPUS_LOCK:  # parallel dimensions: build it once, not once per thread
             corpus = cache.get(full_paper_key)
             if corpus is None:
-                corpus = build_corpus(
-                    full_paper_text,
-                    model=embedding_model,
-                    chunk_prefix=_FULL_PAPER_CHUNK_PREFIX,
-                    max_segments=max_segments,
-                    max_chunk_tokens=max_chunk_tokens,
-                )
+                corpus = _build_text_corpus(full_paper_text, _FULL_PAPER_CHUNK_PREFIX)
                 cache[full_paper_key] = corpus
         return corpus
 

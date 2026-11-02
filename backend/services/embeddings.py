@@ -543,6 +543,13 @@ def build_corpus(
             embeddings = embeddings[:min_rows]
 
     if max_segments is not None and max_segments > 0 and len(segments) > max_segments:
+        logger.warning(
+            "Corpus truncated to MAX_EMBEDDING_SEGMENTS: the document's last %d of %d chunks "
+            "are not retrievable",
+            len(segments) - max_segments,
+            len(segments),
+            extra={"chunk_prefix": chunk_prefix},
+        )
         segments = segments[:max_segments]
         embeddings = embeddings[: max_segments]
     if embeddings_path and not os.path.exists(embeddings_path):
@@ -586,6 +593,13 @@ def build_corpus_from_segments(
     limited_segments = list(segments)
     limited_metadata = list(metadata or [])
     if max_segments is not None and max_segments > 0 and len(limited_segments) > max_segments:
+        logger.warning(
+            "Corpus truncated to MAX_EMBEDDING_SEGMENTS: the document's last %d of %d chunks "
+            "are not retrievable",
+            len(limited_segments) - max_segments,
+            len(limited_segments),
+            extra={"chunk_prefix": chunk_prefix},
+        )
         limited_segments = limited_segments[:max_segments]
         limited_metadata = limited_metadata[:max_segments]
 

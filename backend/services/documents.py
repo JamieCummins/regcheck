@@ -268,14 +268,18 @@ def remove_references(document_text: str) -> str:
     return document_text
 
 
-def clean_document_text(document_text: str) -> str:
+def clean_document_text(document_text: str, *, from_pdf: bool = False) -> str:
     """Trim boilerplate sections from parsed documents.
 
     Deliberately does NOT cut content before an "Introduction" heading: this is
     applied to registrations (papers keep their parser's full text), and the
     front matter of a registration carries evidence-relevant metadata such as
-    registration IDs, timestamps, and ethics numbers."""
-    document_text = _normalize_whitespace(document_text)
+    registration IDs, timestamps, and ethics numbers.
+
+    ``from_pdf`` enables dropping number-only lines (PDF page numbers). For other
+    formats a number on its own line is content (an OSF answer such as "300", a
+    table cell), so it is kept."""
+    document_text = _normalize_whitespace(document_text, drop_page_numbers=from_pdf)
     return remove_references(document_text)
 
 
@@ -300,7 +304,7 @@ def read_file(file_path: str, file_extension: str) -> str:
         raise ValueError(
             f"Unsupported file type '{file_extension}'. Please upload a PDF, DOCX, TXT, HTML, or XML file."
         )
-    return clean_document_text(text)
+    return clean_document_text(text, from_pdf=file_extension == ".pdf")
 
 
 def read_file_as_pdf(filename: str, file_extension: str) -> str:
@@ -320,13 +324,14 @@ def read_file_as_pdf(filename: str, file_extension: str) -> str:
     )
 
 
-def _normalize_whitespace(text: str) -> str:
+def _normalize_whitespace(text: str, *, drop_page_numbers: bool = True) -> str:
     """Normalize whitespace to reduce mid-quote line breaks without losing content."""
     if not isinstance(text, str):
         return text
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Drop standalone page numbers (lines that are only digits)
-    text = re.sub(r"^\s*\d+\s*$", "", text, flags=re.MULTILINE)
+    if drop_page_numbers:
+        # Drop standalone page numbers (lines that are only digits)
+        text = re.sub(r"^\s*\d+\s*$", "", text, flags=re.MULTILINE)
     # Collapse consecutive blank lines to a single blank line
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)

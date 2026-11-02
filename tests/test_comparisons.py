@@ -2478,3 +2478,52 @@ def test_consensus_strands_embed_each_document_once(tmp_path, monkeypatch):
         selected_dimensions=_dims(2), num_voters=4))
     # Document corpora are multi-chunk (>2 inputs); the batched query embedding has 2.
     assert sum(1 for n in calls if n > 2) == 2  # one corpus build per document, not per strand
+
+
+# ── one canonical text ──
+
+
+@pytest.mark.asyncio
+async def test_judge_reads_parser_text_with_and_without_evidence(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    fitz = pytest.importorskip("fitz")
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    doc = fitz.open(); pg = doc.new_page(); pg.insert_text((72, 72), "TEXT LAYER about the sample.")
+    doc.save(tmp_path / "paper.pdf"); doc.close()
+    (tmp_path / "p.txt").write_text("Prereg.")
+
+    async def parser(path):
+        return ('<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><div>'
+                "<p>PARSER TEXT about the sample.</p></div></body></text></TEI>")
+
+    for evidence in (None, {}):
+        seen: list[dict] = []
+        await comparisons.general_preregistration_comparison(
+            str(tmp_path / "p.txt"), ".txt", str(tmp_path / "paper.pdf"), ".pdf", "claude", "grobid",
+            selected_dimensions=[{"dimension": "N", "definition": "n"}],
+            comparison_runner=_ok_runner(seen), pdf_parser=parser, evidence_out=evidence)
+        assert "PARSER TEXT" in seen[0]["paper"], evidence
+
+
+def test_corpus_without_evidence_uses_evidence_segments(monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+    from backend.services.evidence import build_text_evidence_source
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    text = "Participants were  paid “two pounds”.\nThey ran online.\n\n" * 30
+    corpus = comparisons._build_text_corpus(text, "PAPER")
+    payload = build_text_evidence_source(
+        source_id="paper", label="P", text=text, chunk_prefix="PAPER",
+        max_chunk_tokens=comparisons._embedding_max_chunk_tokens(),
+        embedding_model=comparisons._embedding_model(),
+    )
+    assert corpus.segments == payload["segments"]

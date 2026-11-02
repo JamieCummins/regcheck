@@ -193,3 +193,11 @@ def test_extract_text_from_xml_keeps_table_rows_readable(tmp_path):
     i = lines.index
     assert i("Table 1") < i("Sample sizes by wave") < i("Wave | N") < i("Note. Attrition from Time 3.")
     assert "Time 3 (2018)701" not in " ".join(lines)
+
+
+def test_number_only_lines_kept_outside_pdf_text(tmp_path):
+    from backend.services.documents import clean_document_text
+
+    path = _write(tmp_path / "p.txt", "Planned sample size:\n300\nPower: 0.9")
+    assert "300" in read_file(path, ".txt")
+    assert "300" not in clean_document_text("Body text.\n12\nMore body.", from_pdf=True)
