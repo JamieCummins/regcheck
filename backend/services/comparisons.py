@@ -23,6 +23,7 @@ from .documents import (
     extract_text_from_xml,
     read_file,
     read_file_as_pdf,
+    remove_references,
 )
 from .embeddings import (
     EmbeddingCorpus,
@@ -239,6 +240,11 @@ class ComparisonResult(BaseModel):
     # None when isolation was not requested.
     multi_study_isolation: str | None = None
     multi_study_isolation_error: str | None = None
+    # Whether the paper text points to supplementary material (which is not part of
+    # the input unless supplied, e.g. via the CLI's --supplement), plus up to three
+    # short matched snippets. None for flows that don't run the detection.
+    paper_references_supplement: bool | None = None
+    paper_supplement_mentions: list[str] | None = None
 
 
 class _ComparisonResponseSchema(BaseModel):
@@ -432,6 +438,14 @@ def _verification_sim_threshold() -> float:
 # targeted verification pass; distinct from PAPER_ so IDs never collide with the
 # isolated corpus's evidence IDs (and never resolve to a displayed quote card).
 _FULL_PAPER_CHUNK_PREFIX = "FULLPAPER"
+# Judge-prompt line for papers that point to supplementary material the run lacks
+# (constant per run, so it stays inside the cacheable static prefix).
+_SUPPLEMENT_NOTE = (
+    "The paper refers to supplementary material, which is NOT part of the input. When a "
+    "registered element cannot be located in the paper, say so in 'deviation_information' "
+    "(e.g. 'the paper refers to supplementary material, which is not part of the input; the "
+    "element may be reported there').\n"
+)
 _OUTSIDE_ISOLATION_MARK = "[outside the isolated target-study text]"
 
 
@@ -801,6 +815,43 @@ def _union_isolations(drafts: list[str]) -> str:
     )
 
 
+_SUPPLEMENT_REF_RE = re.compile(
+    r"\bsupplement(?:al|ary|s)?\b|\bsupporting information\b|\bonline materials?\b",
+    re.IGNORECASE,
+)
+
+
+def detect_supplement_references(text: str, *, max_samples: int = 3) -> list[str]:
+    """Short snippets where the paper refers to supplementary material ("see the
+    Supplement", "Supplementary Table S2", "Supporting Information", "online
+    material"). The trailing references section is ignored (journal "Suppl." issues
+    and citation titles are not pointers to this paper's supplement). Empty = none."""
+    body = remove_references(text or "")
+    samples: list[str] = []
+    for match in _SUPPLEMENT_REF_RE.finditer(body):
+        start = max(0, match.start() - 50)
+        snippet = " ".join(body[start : match.end() + 50].split())
+        samples.append(("…" if start else "") + snippet + "…")
+        if len(samples) >= max_samples:
+            break
+    return samples
+
+
+def _read_supplements(paths: list[str]) -> str:
+    """Parse supplement files and join them with labelled separators (the paper-side
+    mirror of the CLI's --additional-preregistration merge)."""
+    parts: list[str] = []
+    for index, path in enumerate(paths, start=1):
+        source = Path(path)
+        if not source.exists():
+            raise FileNotFoundError(f"Supplementary material not found: {path}")
+        text = read_file(str(source), source.suffix.lower())
+        parts.append(
+            f"===== Supplementary material {index}: {source.name} =====\n\n{(text or '').strip()}"
+        )
+    return "\n\n\n".join(parts)
+
+
 class IsolationRejected(ValueError):
     """The isolation model's output failed the quality gate (a refusal or a
     near-empty extraction); the caller falls back to the full paper text."""
@@ -1083,6 +1134,7 @@ async def general_preregistration_comparison(
     isolation_cache_dir: str | None = None,
     isolation_passes: int = 1,
     comparison_context: ComparisonContext = "preregistration",
+    supplement_paths: list[str] | None = None,
 ) -> ComparisonResult:
     cost_tracking.start_run()  # live per-run token/cost accounting
     processed_count = 0
@@ -1173,6 +1225,13 @@ async def general_preregistration_comparison(
         raise
 
     result_obj = ComparisonResult(items=[])
+    # Detected on the paper itself, before any supplied supplement is appended.
+    supplement_mentions = detect_supplement_references(extracted_paper_sections)
+    result_obj.paper_references_supplement = bool(supplement_mentions)
+    result_obj.paper_supplement_mentions = supplement_mentions or None
+    supplement_text = _read_supplements(list(supplement_paths)) if supplement_paths else ""
+    # The judge is told the paper points elsewhere only when that material is absent.
+    flag_missing_supplement = bool(supplement_mentions) and not supplement_text
     dimensions_to_compare = _resolve_dimensions(selected_dimensions)
     if comparison_context == "registered_report":
         # RR runs get the add-on dimensions (e.g. outcome-neutral quality checks)
@@ -1331,6 +1390,13 @@ async def general_preregistration_comparison(
         result_obj.multi_study_isolation = isolation_status
         result_obj.multi_study_isolation_error = isolation_error[:300] or None
 
+    if supplement_text:
+        # Appended AFTER isolation so the isolation model can't drop user-supplied
+        # supplements; the full-paper verification corpus gets them too.
+        extracted_paper_sections = f"{extracted_paper_sections.rstrip()}\n\n\n{supplement_text}"
+        if full_paper_text is not None:
+            full_paper_text = f"{full_paper_text.rstrip()}\n\n\n{supplement_text}"
+
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
     query_embedding_cache: dict[str, Any] = {}
@@ -1358,7 +1424,7 @@ async def general_preregistration_comparison(
             max_chunk_tokens=_embedding_max_chunk_tokens(),
             embedding_model=_embedding_model(),
         )
-        if has_multiple_experiments and experiment_label:
+        if (has_multiple_experiments and experiment_label) or supplement_text:
             raw_bytes = None
             raw_content_type = None
             raw_filename = None
@@ -1378,7 +1444,11 @@ async def general_preregistration_comparison(
                 metadata={
                     "role": "paper",
                     "comparison_type": "general_preregistration",
-                    "fallback_reason": "Experiment-specific text was isolated before embedding",
+                    "fallback_reason": (
+                        "Experiment-specific text was isolated before embedding"
+                        if has_multiple_experiments and experiment_label
+                        else "Supplementary material was appended to the paper text"
+                    ),
                 },
                 raw_bytes=raw_bytes,
                 raw_content_type=raw_content_type,
@@ -1516,6 +1586,7 @@ async def general_preregistration_comparison(
                     target_study=target_study,
                     target_study_note=target_study_note,
                     full_paper_text=full_paper_text,
+                    paper_references_supplement=flag_missing_supplement,
                 )
             )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
@@ -1591,6 +1662,7 @@ async def general_preregistration_comparison(
                 target_study=target_study,
                 target_study_note=target_study_note,
                 full_paper_text=full_paper_text,
+                paper_references_supplement=flag_missing_supplement,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
@@ -2479,6 +2551,7 @@ async def _run_strand_consensus(
     target_study: str | None = None,
     target_study_note: str | None = None,
     full_paper_text: str | None = None,
+    paper_references_supplement: bool = False,
 ) -> list[ComparisonItem]:
     """Independent-voter ("strand") consensus for the preregistration flow.
 
@@ -2522,6 +2595,7 @@ async def _run_strand_consensus(
                 target_study=target_study,
                 target_study_note=target_study_note,
                 full_paper_text=full_paper_text,
+                paper_references_supplement=paper_references_supplement,
             )
             strand_items.append(comparison.items[0])
         return strand_items
@@ -2806,6 +2880,7 @@ def run_comparison(
     target_study: str | None = None,
     target_study_note: str | None = None,
     full_paper_text: str | None = None,
+    paper_references_supplement: bool = False,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -3064,6 +3139,7 @@ def run_comparison(
         "Materiality guard for rule 2 only (it never weakens rule 1): An unverifiable registered element triggers 'missing' only if it is materially relevant to this dimension as defined; a real difference is 'yes' no matter how minor.\n"
         "Omission and addition claims: you see only retrieved excerpts, never the full documents. If a registered element does not appear in the provided paper excerpts (or paper content appears to be unregistered), phrase this in 'deviation_information' as 'not found in the provided excerpts' — never assert it is absent from the document — and list the element in 'unlocated_in_paper' (or 'unlocated_in_registration'), naming it together with any synonyms, abbreviations, and likely alternatives (what the document would say instead if it deviated) in parentheses. Then still return your best verdict on the evidence you have: a registered element that is conspicuously absent where the paper covers this ground is a deviation; if you genuinely cannot judge, return 'missing'. RegCheck will run a targeted search of the full document for every element you list and re-invoke you with anything it finds, so do not soften a verdict because you suspect a retrieval gap — flag the element instead.\n"
         "When the verdict is 'missing', name in 'deviation_information' the feature(s) that could not be verified and which document is silent.\n"
+        f"{_SUPPLEMENT_NOTE if paper_references_supplement else ''}"
     )
     variable_part = (
         f"The dimension along which you should compare the registration and paper is: '{dimension_query}'; this is defined as "

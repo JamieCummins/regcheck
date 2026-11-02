@@ -190,3 +190,70 @@ def test_batch_row_namespace_splits_additional_preregistration():
         row,
     )
     assert ns.additional_preregistration == ["plan.docx", "materials.xml"]
+
+
+def test_supplement_flag_is_repeatable_and_documented(capsys):
+    args = cli.build_parser().parse_args(
+        [
+            "general",
+            "--preregistration", "p.pdf",
+            "--paper", "a.pdf",
+            "--dimension-set", "psychology",
+            "--supplement", "s1.pdf",
+            "--supplement", "s2.docx",
+        ]
+    )
+    assert args.supplement == ["s1.pdf", "s2.docx"]
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["general", "--help"])
+    assert "--supplement PATH" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_supplement_paths_are_merged_into_the_paper(tmp_path, monkeypatch):
+    import numpy as np
+
+    import backend.services.comparisons as comparisons
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    seen: list[dict] = []
+
+    def fake_runner(p, pa, c, d, **kw):
+        seen.append({"paper": pa, **kw})
+        return comparisons.ComparisonResult(items=[comparisons.ComparisonItem(
+            dimension=d, deviation_judgement="no", deviation_information="ok")])
+
+    monkeypatch.setattr(comparisons, "run_comparison", fake_runner)
+    prereg = tmp_path / "p.txt"; prereg.write_text("Pairwise deletion for all analyses.")
+    paper = tmp_path / "paper.txt"; paper.write_text("Results. See the Supplementary Materials for models.")
+    s1 = tmp_path / "supp_a.txt"; s1.write_text("Table S1: listwise deletion in MPLUS.")
+    s2 = tmp_path / "supp_b.txt"; s2.write_text("Figure S2 notes.")
+    args = cli.build_parser().parse_args([
+        "general", "--preregistration", str(prereg), "--paper", str(paper),
+        "--dimension-set", "psychology", "--client", "claude",
+        "--supplement", str(s1), "--supplement", str(s2),
+    ])
+    payload = await cli._run_general(args)
+    merged = seen[0]["paper"]
+    assert "See the Supplementary Materials" in merged
+    assert "===== Supplementary material 1: supp_a.txt =====" in merged
+    assert "listwise deletion in MPLUS" in merged
+    assert merged.index("supp_a.txt") < merged.index("===== Supplementary material 2: supp_b.txt =====")
+    # The paper still references a supplement, but it was supplied: no judge note.
+    assert payload["paper_references_supplement"] is True
+    assert all(kw["paper_references_supplement"] is False for kw in seen)
+
+
+def test_batch_row_namespace_splits_supplements():
+    ns = cli._batch_row_namespace(
+        SimpleNamespace(
+            client="openai", parser_choice="pymupdf", append_previous_output=False,
+            reasoning_effort="medium", embedding_model=None,
+        ),
+        {"preregistration": "p.pdf", "paper": "a.pdf", "supplement": "s1.pdf; s2.pdf"},
+    )
+    assert ns.supplement == ["s1.pdf", "s2.pdf"]

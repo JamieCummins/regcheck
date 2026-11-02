@@ -183,6 +183,7 @@ async def _run_general(args) -> dict:
         num_voters=_resolve_num_voters(args),
         isolation_cache_dir=_resolve_isolation_cache_dir(args),
         isolation_passes=args.isolation_passes,
+        supplement_paths=[p for p in (getattr(args, "supplement", None) or []) if p] or None,
         comparison_context=(
             "registered_report"
             if getattr(args, "comparison_type", "preregistration") == "registered-report"
@@ -273,9 +274,11 @@ def _batch_row_namespace(args, row: dict[str, str]) -> argparse.Namespace:
         for p in (get("additional_preregistration") or "").split(";")
         if p.strip()
     ]
+    supplements = [p.strip() for p in (get("supplement") or "").split(";") if p.strip()]
     return argparse.Namespace(
         preregistration=get("preregistration"),
         additional_preregistration=additional or None,
+        supplement=supplements or None,
         osf_url=get("osf_url"),
         paper=get("paper"),
         registration_id=get("registration_id"),
@@ -303,7 +306,8 @@ async def _run_batch(args) -> dict:
     """Batch processing: one manifest CSV row per run. Columns: ``type``
     (general|clinical), ``preregistration``/``osf_url``, ``paper``,
     ``registration_id``, optional ``additional_preregistration``
-    (';'-separated paths of extra registered materials),
+    (';'-separated paths of extra registered materials), optional ``supplement``
+    (';'-separated paths of the paper's supplementary material),
     ``dimensions_csv``/``dimension_set`` and ``label``. Per-row results are written to --output-dir; failures are
     recorded and the batch continues (use --stop-on-error to abort instead)."""
     manifest_path = Path(args.manifest)
@@ -338,6 +342,7 @@ async def _run_batch(args) -> dict:
                     "dimensions": len(payload.get("items", [])),
                     "cost_usd": (payload.get("cost") or {}).get("total_usd"),
                     "multi_study_isolation": payload.get("multi_study_isolation"),
+                    "paper_references_supplement": payload.get("paper_references_supplement"),
                 }
             )
         except Exception as exc:
@@ -506,6 +511,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the published paper file (.pdf/.docx/.txt/.html/.xml).",
     )
     general.add_argument(
+        "--supplement",
+        action="append",
+        metavar="PATH",
+        help=(
+            "Path to the paper's supplementary material (.pdf/.docx/.txt/.html/.xml). Repeat "
+            "the flag for several files. Each is extracted to text and appended to the paper "
+            "under a labelled '===== Supplementary material N: <file> =====' separator "
+            "(after any multi-study isolation, so it is never trimmed away)."
+        ),
+    )
+    general.add_argument(
         "--dimensions-csv",
         help="CSV file with columns 'dimension' and optional 'definition'. Or use --dimension-set.",
     )
@@ -624,7 +640,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     batch = subparsers.add_parser(
         "batch",
-        help="Run many comparisons from a manifest CSV (columns: type, preregistration, additional_preregistration (';'-separated paths), osf_url, paper, registration_id, dimensions_csv, dimension_set, experiment_number, label).",
+        help="Run many comparisons from a manifest CSV (columns: type, preregistration, additional_preregistration (';'-separated paths), osf_url, paper, supplement (';'-separated paths), registration_id, dimensions_csv, dimension_set, experiment_number, label).",
     )
     batch.add_argument("--manifest", required=True, help="CSV manifest, one run per row.")
     batch.add_argument("--output-dir", required=True, help="Directory for per-row outputs + batch_summary.json.")

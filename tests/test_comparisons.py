@@ -2192,3 +2192,76 @@ def test_isolation_prompt_retains_footnotes_and_table_notes(monkeypatch):
         "Study 2 text.", "2", client_choice="claude"))
     assert "Retain footnotes, table notes" in seen["prompt"]
     assert comparisons._ISOLATION_PROMPT_VERSION == "2026-11-02.2"
+
+
+# ── supplementary-material references ──
+
+
+def test_detect_supplement_references():
+    from backend.services.comparisons import detect_supplement_references
+
+    text = (
+        "Introduction. Method. Full models appear in the Supplementary Materials (Table S3). "
+        "See Supporting Information for item wording. Data are in the online material. "
+        + "Body text. " * 50
+        + "\nReferences\nSmith, J. (2020). Journal, 12(Suppl 2), supplement issue.\n"
+    )
+    hits = detect_supplement_references(text)
+    assert len(hits) == 3
+    assert "Supplementary Materials" in hits[0]
+    assert detect_supplement_references("The model was supplemented with priors.") == []
+    # Mentions only inside the trailing references section don't count.
+    tail_only = "Body. " * 200 + "\nReferences\nDoe (2019). Sleep supplement trial.\n"
+    assert detect_supplement_references(tail_only) == []
+
+
+@pytest.mark.asyncio
+async def test_supplement_flag_set_and_forwarded_to_judge(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Pairwise deletion.")
+    paper = tmp_path / "paper.txt"; paper.write_text("Analyses are reported in the supplemental material.")
+    seen: list[dict] = []
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=[{"dimension": "Analyses", "definition": "a"}],
+        comparison_runner=_ok_runner(seen))
+    assert res.paper_references_supplement is True
+    assert "supplemental material" in res.paper_supplement_mentions[0]
+    assert seen[0]["paper_references_supplement"] is True
+    dumped = res.model_dump()
+    assert dumped["paper_references_supplement"] is True
+
+    paper.write_text("Analyses are reported below.")
+    seen.clear()
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=[{"dimension": "Analyses", "definition": "a"}],
+        comparison_runner=_ok_runner(seen))
+    assert res.paper_references_supplement is False
+    assert seen[0]["paper_references_supplement"] is False
+
+
+def test_judgement_prompt_mentions_supplement_only_when_flagged(monkeypatch):
+    import numpy as np
+
+    prompts = []
+
+    def fake_dispatch(messages, **kw):
+        prompts.append(messages[-1]["content"])
+        return _verif_reply()
+
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.array([1.0, 0.0], dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", fake_dispatch)
+    comparisons.run_comparison("p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1)
+    comparisons.run_comparison(
+        "p", "x", "claude", "Sample size", corpus_cache=_verif_corpora(), top_k=1,
+        paper_references_supplement=True,
+    )
+    assert "supplementary material, which is NOT part of the input" not in prompts[0]
+    assert "supplementary material, which is NOT part of the input" in prompts[1]
