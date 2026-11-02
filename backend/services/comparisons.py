@@ -929,6 +929,13 @@ def _study_label_in_text(label: str, text: str) -> bool:
     tail = r"(?![A-Za-z0-9])"
     variants = [r"(?<![A-Za-z0-9])" + re.escape(label).replace(r"\ ", r"\s+") + tail]
     token = _LABEL_TOKEN_RE.search(label)
+    if token is None:
+        # A trailing parenthetical ("Experiment 2 (Sample 1)") hides the study token
+        # from the end-anchored regex: match on the bare label as well.
+        base = re.sub(r"\s*\([^()]*\)$", "", label)
+        if base and base != label:
+            variants.append(r"(?<![A-Za-z0-9])" + re.escape(base).replace(r"\ ", r"\s+") + tail)
+            token = _LABEL_TOKEN_RE.search(base)
     if token:
         tok = re.escape(token.group(1))
         variants.append(rf"\b(?:stud(?:y|ies)|experiments?)\s+{tok}{tail}")

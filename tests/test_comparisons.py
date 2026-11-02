@@ -1876,6 +1876,9 @@ def test_isolation_prompt_version_bumped():
         ("Experiment 1b", "Experiment 1b used ...", True),
         ("the online replication", "We ran the online replication on Prolific.", True),
         ("the online replication", "We ran a lab study.", False),
+        ("Experiment 2 (Sample 1)", "In Experiment 2 we ...", True),
+        ("Experiment 2 (Sample 1)", "Study 2 tested ...", True),
+        ("Experiment 2 (Sample 1)", "Experiment 20 used ...", False),
     ],
 )
 def test_study_label_in_text_variants(label, text, expected):
