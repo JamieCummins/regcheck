@@ -711,7 +711,7 @@ async def test_qwen_routes_through_groq_openai_with_requested_params(monkeypatch
     out = await comparisons.extract_experiment_specific_paper_text(
         "Full paper text spanning several experiments.",
         "2",
-        client_choice="qwen",
+        client_choice="qwen", method="generative"
     )
 
     assert "EXPERIMENT 2" in out
@@ -787,7 +787,7 @@ async def test_gpustack_routes_through_gpustack_endpoint(monkeypatch):
     out = await comparisons.extract_experiment_specific_paper_text(
         "Full paper text spanning several experiments.",
         "2",
-        client_choice="gpustack",
+        client_choice="gpustack", method="generative"
     )
 
     assert "EXPERIMENT 2" in out
@@ -1204,7 +1204,7 @@ def test_isolation_cache_reuses_extraction(tmp_path, monkeypatch):
 
     monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
     paper = "Experiment 1 ...\nExperiment 3a ...\nGeneral Discussion ..."
-    run = lambda **kw: _run_coro(comparisons.extract_experiment_specific_paper_text(paper, **kw))
+    run = lambda **kw: _run_coro(comparisons.extract_experiment_specific_paper_text(paper, method="generative", **kw))
 
     out1 = run(experiment_label="3a", client_choice="claude", cache_dir=str(tmp_path))
     out2 = run(experiment_label="3a", client_choice="claude", cache_dir=str(tmp_path))
@@ -1236,7 +1236,7 @@ def test_isolation_union_ensemble_recovers_dropped_spans(monkeypatch):
     monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
     out = _run_coro(comparisons.extract_experiment_specific_paper_text(
         "Experiment 3a paper text ...", experiment_label="3a",
-        client_choice="claude", isolation_passes=3))
+        client_choice="claude", isolation_passes=3, method="generative"))
     assert calls["n"] == 3                                       # three parallel passes
     assert "twelve participants were excluded" in out.lower()    # recovered from pass 2
     assert "same coding and analytical approach" in out.lower()  # recovered from pass 3
@@ -1845,7 +1845,7 @@ def test_isolation_refusal_is_rejected_and_never_cached(tmp_path, monkeypatch):
     paper = "Study 1 method. " * 1000
     with pytest.raises(comparisons.IsolationRejected):
         _run_coro(comparisons.extract_experiment_specific_paper_text(
-            paper, "1", client_choice="claude", cache_dir=str(tmp_path)))
+            paper, "1", client_choice="claude", cache_dir=str(tmp_path), method="generative"))
     assert not list(tmp_path.glob("isolation_*.txt"))  # refusal never cached
 
 
@@ -1854,7 +1854,7 @@ def test_isolation_ensemble_drops_refusal_drafts(monkeypatch):
     drafts = iter([good, "I cannot find a study labelled 3a in this text."])
     monkeypatch.setattr(comparisons, "_claude_chat", lambda **kw: next(drafts))
     out = _run_coro(comparisons.extract_experiment_specific_paper_text(
-        "Study 3a " + "x" * 4000, "3a", client_choice="claude", isolation_passes=2))
+        "Study 3a " + "x" * 4000, "3a", client_choice="claude", isolation_passes=2, method="generative"))
     assert "cannot find" not in out
     assert out.startswith("## Study 3a")
 
@@ -2189,7 +2189,7 @@ def test_isolation_prompt_retains_footnotes_and_table_notes(monkeypatch):
 
     monkeypatch.setattr(comparisons, "_claude_chat", fake_claude)
     _run_coro(comparisons.extract_experiment_specific_paper_text(
-        "Study 2 text.", "2", client_choice="claude"))
+        "Study 2 text.", "2", client_choice="claude", method="generative"))
     assert "Retain footnotes, table notes" in seen["prompt"]
     assert comparisons._ISOLATION_PROMPT_VERSION == "2026-11-02.2"
 

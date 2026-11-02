@@ -87,7 +87,7 @@ from .llm import (
     get_groq_openai_client,
     get_openai_client,
 )
-from . import cost_tracking
+from . import cost_tracking, study_labels
 from .dimensions import (
     CLINICAL_DEFAULT_DIMENSIONS,
     PRECLINICAL_DEFAULT_DIMENSIONS,
@@ -244,6 +244,8 @@ class ComparisonResult(BaseModel):
     # None when isolation was not requested.
     multi_study_isolation: str | None = None
     multi_study_isolation_error: str | None = None
+    # Which isolation method produced the text when it succeeded: "labels" or "generative".
+    multi_study_isolation_method: str | None = None
     # Whether the paper text points to supplementary material (which is not part of
     # the input unless supplied, e.g. via the CLI's --supplement), plus up to three
     # short matched snippets. None for flows that don't run the detection.
@@ -933,10 +935,201 @@ def _study_label_in_text(label: str, text: str) -> bool:
     return any(re.search(v, text, re.IGNORECASE) for v in variants)
 
 
+def _isolation_llm_text(
+    messages: list[dict[str, str]],
+    *,
+    client_choice: str,
+    reasoning_effort: str | None,
+    max_tokens: int = 32000,
+) -> str:
+    """One free-text call to the provider's EXPERIMENT model (isolation and study
+    labelling), on the given messages. Returns the reply text."""
+    if client_choice in _OPENAI_CLIENTS:
+        openai_client = get_openai_client()
+        model = _openai_family_model(client_choice, experiment=True)
+        normalized_effort = _normalize_reasoning_effort_value(
+            reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "medium")
+        )
+        return _openai_chat_text(
+            openai_client,
+            model=model,
+            messages=messages,
+            reasoning_effort=normalized_effort,
+        )
+    if client_choice == "deepseek":
+        deepseek_client = get_deepseek_client()
+        response = deepseek_client.chat.completions.create(
+            model=_deepseek_model(),
+            messages=messages,
+            temperature=0,
+        )
+        cost_tracking.record_llm_usage(_deepseek_model(), getattr(response, "usage", None))
+        raw_content = _message_content_to_text(response.choices[0].message)
+        return _strip_deepseek_reasoning(raw_content)
+    if client_choice == "qwen":
+        # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
+        return _qwen_chat(messages)
+    if client_choice == "gpustack":
+        # gpt-oss-120b via Uni Bern GPUStack (reachable only inside the Bern network).
+        return _gpustack_chat(messages)
+    if client_choice == "claude":
+        # Long extraction output; allow a larger token budget than the comparison call.
+        return _claude_chat(
+            model=_claude_model(),
+            messages=messages,
+            max_tokens=_claude_max_tokens(max_tokens),
+        )
+    raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
+
+
+def _isolation_method() -> str:
+    """Default multi-study isolation method: "labels" (label the paper's units, filter
+    deterministically) or "generative" (the model rewrites the study text). Env
+    ISOLATION_METHOD overrides."""
+    method = (os.environ.get("ISOLATION_METHOD") or "labels").strip().lower()
+    return method if method in {"labels", "generative"} else "labels"
+
+
 async def extract_experiment_specific_paper_text(
     full_paper_text: str,
     experiment_label: str,
     experiment_note: str | None = None,
+    client_choice: str = "openai",
+    reasoning_effort: str | None = None,
+    cache_dir: str | None = None,
+    isolation_passes: int = 1,
+    method: str | None = None,
+    outcome: dict[str, Any] | None = None,
+) -> str:
+    """Isolate the text needed to evaluate one target study of a multi-study paper.
+
+    ``method="labels"`` (default): one call labels every paragraph/sentence of the paper
+    by study, and the target's text is assembled deterministically from the paper's own
+    sentences (see ``study_labels``). If labelling fails (unparseable or unusable labels,
+    target not identifiable, quality gate), it falls back to ``"generative"`` isolation.
+    ``outcome`` (optional dict) receives ``method`` (the one that produced the text) and
+    ``fallback_reason``. Raises like the generative path when both fail."""
+    chosen = (method or _isolation_method()).lower()
+    if outcome is not None:
+        outcome.clear()
+    if chosen == "labels" and full_paper_text.strip() and experiment_label.strip():
+        try:
+            text = await _label_based_study_text(
+                full_paper_text,
+                experiment_label,
+                client_choice=client_choice,
+                reasoning_effort=reasoning_effort,
+                cache_dir=cache_dir,
+            )
+            if outcome is not None:
+                outcome["method"] = "labels"
+            return text
+        except Exception as exc:
+            logger.warning(
+                "Label-based isolation failed (%s: %s); falling back to generative isolation",
+                type(exc).__name__,
+                exc,
+                extra={"study_label": experiment_label},
+            )
+            if outcome is not None:
+                outcome["fallback_reason"] = f"{type(exc).__name__}: {exc}"[:300]
+    text = await _generative_study_text(
+        full_paper_text,
+        experiment_label,
+        experiment_note,
+        client_choice=client_choice,
+        reasoning_effort=reasoning_effort,
+        cache_dir=cache_dir,
+        isolation_passes=isolation_passes,
+    )
+    if outcome is not None:
+        outcome["method"] = "generative"
+    return text
+
+
+async def _label_based_study_text(
+    full_paper_text: str,
+    experiment_label: str,
+    *,
+    client_choice: str,
+    reasoning_effort: str | None,
+    cache_dir: str | None,
+) -> str:
+    """Label-based isolation: segment the paper, have the experiment model return
+    labels only (cached per paper on the CLI: one label set serves every study), then
+    filter deterministically to shared + target units. Raises IsolationRejected when
+    the labels are unusable, the target can't be identified, or the result fails the
+    quality gate."""
+    paras = study_labels.segment(full_paper_text)
+    if not paras:
+        raise IsolationRejected("paper text has no labellable units")
+    rendered = study_labels.render_for_labeller(paras)
+    cache_path: Path | None = None
+    labels: Any = None
+    if cache_dir:
+        tag = _isolation_model_tag(client_choice, reasoning_effort)
+        key = hashlib.sha256(
+            f"{study_labels.LABEL_PROMPT_VERSION}\x00{tag}\x00{rendered}".encode("utf-8")
+        ).hexdigest()
+        cache_path = Path(cache_dir) / f"study_labels_{key}.json"
+        if cache_path.exists():
+            try:
+                labels = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                logger.warning("Could not read study-label cache; relabelling", exc_info=True)
+                labels = None
+            if labels is not None and study_labels.validate_labels(paras, labels):
+                labels = None
+    if labels is None:
+        messages = [
+            {"role": "system", "content": study_labels.LABEL_PROMPT},
+            {"role": "user", "content": "Label this paper and return the JSON.\n\n" + rendered},
+        ]
+        raw = await asyncio.to_thread(
+            _isolation_llm_text,
+            messages,
+            client_choice=client_choice,
+            reasoning_effort=reasoning_effort,
+            max_tokens=16000,
+        )
+        try:
+            labels = json.loads(_extract_json_payload(raw or "") or "")
+        except ValueError as exc:
+            raise IsolationRejected(f"study labels were not valid JSON ({exc})") from exc
+        problems = study_labels.validate_labels(paras, labels)
+        if problems:
+            raise IsolationRejected("unusable study labels: " + "; ".join(problems))
+        if cache_path is not None:
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(labels), encoding="utf-8")
+            except OSError:
+                logger.warning("Could not write study-label cache", exc_info=True)
+    target = study_labels.resolve_target(labels, experiment_label)
+    if target is None:
+        found = ", ".join(str(s.get("label") or s.get("id")) for s in labels.get("studies") or [])
+        raise IsolationRejected(f'"{experiment_label}" did not match a labelled study ({found})')
+    isolated, stats = study_labels.isolate(paras, labels, target)
+    if stats["problems"]:
+        logger.info("Study-label isolation notes: %s", stats["problems"][:10])
+    rejection = _isolation_rejection_reason(isolated, full_paper_text)
+    if rejection:
+        raise IsolationRejected(rejection)
+    logger.info(
+        "Label-based isolation kept %d/%d sentences (+%d cross-referenced)",
+        stats["kept_sentences"],
+        stats["total_sentences"],
+        stats["imported_ref_sentences"],
+        extra={"study_label": experiment_label, "target_id": target},
+    )
+    return isolated
+
+
+async def _generative_study_text(
+    full_paper_text: str,
+    experiment_label: str,
+    experiment_note: str | None = None,
+    *,
     client_choice: str = "openai",
     reasoning_effort: str | None = None,
     cache_dir: str | None = None,
@@ -1021,42 +1214,7 @@ async def extract_experiment_specific_paper_text(
             },
             {"role": "user", "content": user_prompt},
         ]
-        if client_choice in _OPENAI_CLIENTS:
-            openai_client = get_openai_client()
-            model = _openai_family_model(client_choice, experiment=True)
-            normalized_effort = _normalize_reasoning_effort_value(
-                reasoning_effort or _env_str("OPENAI_EXPERIMENT_REASONING_EFFORT", "medium")
-            )
-            return _openai_chat_text(
-                openai_client,
-                model=model,
-                messages=messages,
-                reasoning_effort=normalized_effort,
-            )
-        if client_choice == "deepseek":
-            deepseek_client = get_deepseek_client()
-            response = deepseek_client.chat.completions.create(
-                model=_deepseek_model(),
-                messages=messages,
-                temperature=0,
-            )
-            cost_tracking.record_llm_usage(_deepseek_model(), getattr(response, "usage", None))
-            raw_content = _message_content_to_text(response.choices[0].message)
-            return _strip_deepseek_reasoning(raw_content)
-        if client_choice == "qwen":
-            # Qwen 3.6 27B (open-weight) via Groq's OpenAI-compatible endpoint.
-            return _qwen_chat(messages)
-        if client_choice == "gpustack":
-            # gpt-oss-120b via Uni Bern GPUStack (reachable only inside the Bern network).
-            return _gpustack_chat(messages)
-        if client_choice == "claude":
-            # Long extraction output; allow a larger token budget than the comparison call.
-            return _claude_chat(
-                model=_claude_model(),
-                messages=messages,
-                max_tokens=_claude_max_tokens(32000),
-            )
-        raise ValueError(f"Invalid client selection for experiment extraction: {client_choice}")
+        return _isolation_llm_text(messages, client_choice=client_choice, reasoning_effort=reasoning_effort)
 
     # Optional, opt-in (CLI-only) isolation cache: the worker/web path passes no cache_dir,
     # so it always re-extracts fresh per job (no cross-job/cross-user reuse). The CLI passes
@@ -1271,6 +1429,7 @@ async def general_preregistration_comparison(
     # (footnotes, table notes, other sections). None = the corpus already is the paper.
     full_paper_text: str | None = None
     target_study_label_found = True
+    isolation_status: str | None = None
 
     if has_multiple_experiments and experiment_label:
         if task_id and redis_client:
@@ -1326,6 +1485,7 @@ async def general_preregistration_comparison(
                 )
         if isolation_status == "pending":
             try:
+                isolation_outcome: dict[str, Any] = {}
                 canonical_paper_text = await extract_experiment_specific_paper_text(
                     extracted_paper_sections,
                     experiment_label=experiment_label,
@@ -1334,10 +1494,17 @@ async def general_preregistration_comparison(
                     reasoning_effort=reasoning_effort,
                     cache_dir=isolation_cache_dir,
                     isolation_passes=isolation_passes,
+                    outcome=isolation_outcome,
                 )
                 full_paper_text = extracted_paper_sections
                 extracted_paper_sections = canonical_paper_text
                 isolation_status = "ok"
+                result_obj.multi_study_isolation_method = isolation_outcome.get("method") or None
+                if isolation_outcome.get("fallback_reason"):
+                    # Labelling failed and generative isolation stood in: worth knowing in batch runs.
+                    isolation_error = "Label-based isolation failed; used generative isolation ({})".format(
+                        isolation_outcome["fallback_reason"]
+                    )
                 logger.info(
                     "Study-specific extraction succeeded",
                     extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
@@ -1352,6 +1519,8 @@ async def general_preregistration_comparison(
                             "processed_dimensions": 0,
                             "dimensions": json.dumps(dimension_names),
                             "multi_study_isolation": "ok",
+                            "multi_study_isolation_method": result_obj.multi_study_isolation_method or "",
+                            "multi_study_isolation_error": isolation_error[:300],
                             "status": (
                                 f"Study {experiment_label} isolated; embedding preregistration and paper"
                             ),
@@ -1442,52 +1611,27 @@ async def general_preregistration_comparison(
             max_chunk_tokens=_embedding_max_chunk_tokens(),
             embedding_model=_embedding_model(),
         )
-        if (has_multiple_experiments and experiment_label) or supplement_text:
-            raw_bytes = None
-            raw_content_type = None
-            raw_filename = None
-            try:
-                paper_raw_path = Path(paper_path)
-                raw_bytes = paper_raw_path.read_bytes()
-                raw_content_type = "application/pdf" if paper_ext == ".pdf" else None
-                raw_filename = paper_raw_path.name
-            except Exception:
-                pass
-            paper_payload = await asyncio.to_thread(
-                build_text_evidence_source,
-                source_id="paper",
-                label="Paper Evidence Text",
-                text=extracted_paper_sections,
-                chunk_prefix="PAPER",
-                kind="text",
-                metadata={
-                    "role": "paper",
-                    "comparison_type": "general_preregistration",
-                    "fallback_reason": (
-                        "Experiment-specific text was isolated before embedding"
-                        if has_multiple_experiments and experiment_label
-                        else "Supplementary material was appended to the paper text"
-                    ),
-                },
-                raw_bytes=raw_bytes,
-                raw_content_type=raw_content_type,
-                raw_filename=raw_filename,
-                max_chunk_tokens=_embedding_max_chunk_tokens(),
-                embedding_model=_embedding_model(),
-            )
-        else:
-            paper_payload = await asyncio.to_thread(
-                build_file_evidence_source,
-                source_id="paper",
-                label="Paper",
-                file_path=paper_input,
-                file_ext=paper_ext,
-                text=extracted_paper_sections,
-                chunk_prefix="PAPER",
-                metadata={"role": "paper", "comparison_type": "general_preregistration"},
-                max_chunk_tokens=_embedding_max_chunk_tokens(),
-                embedding_model=_embedding_model(),
-            )
+        # Always the original document: its canonical text (isolated and/or with
+        # supplements appended) is chunked, and for a PDF each chunk is placed on the
+        # original pages by word alignment; chunks that aren't on the pages (e.g.
+        # appended supplements) are found by the viewer's text search instead.
+        paper_metadata: dict[str, Any] = {"role": "paper", "comparison_type": "general_preregistration"}
+        if isolation_status == "ok":
+            paper_metadata["isolated_study"] = experiment_label
+        if supplement_text:
+            paper_metadata["supplements_appended"] = True
+        paper_payload = await asyncio.to_thread(
+            build_file_evidence_source,
+            source_id="paper",
+            label="Paper",
+            file_path=paper_input,
+            file_ext=paper_ext,
+            text=extracted_paper_sections,
+            chunk_prefix="PAPER",
+            metadata=paper_metadata,
+            max_chunk_tokens=_embedding_max_chunk_tokens(),
+            embedding_model=_embedding_model(),
+        )
         preregistration_input = prereg_payload.get("text") or preregistration_input
         extracted_paper_sections = paper_payload.get("text") or extracted_paper_sections
         await asyncio.to_thread(
@@ -3007,7 +3151,10 @@ def _target_study_doctrine(
         f"'{label_txt}' alone. Content that belongs to a different study is irrelevant unless the paper "
         f"states that it also applies to '{label_txt}' (a shared procedure, a joint method section, or a "
         f"cross-reference such as 'the same procedure as Study 1'); in that case treat it as '{label_txt}' "
-        "content.\n\n"
+        "content. Excerpt lines that begin '[From <another study>, cited for: <aspect>]' were imported "
+        f"because '{label_txt}' defers to that study for that aspect: treat them as '{label_txt}' content "
+        f"for that aspect ONLY, and wherever '{label_txt}''s own text states something different, its own "
+        "text takes precedence over the imported line.\n\n"
     )
 
 

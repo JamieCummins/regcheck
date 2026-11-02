@@ -604,7 +604,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help=(
-            "Run the multi-study isolation N times in parallel and UNION the extracted "
+            "Generative isolation only (ISOLATION_METHOD=generative, or the fallback when "
+            "labelling fails): run it N times in parallel and UNION the extracted "
             "spans (default 1). The single pass varies ~20%% on deviation-relevant content "
             "(exclusions, analyses, sample tables); N>=3 recovers a span unless every pass "
             "drops it. Only used with --multiple-experiments."
