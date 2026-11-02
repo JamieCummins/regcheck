@@ -1968,3 +1968,116 @@ async def test_label_not_found_skips_isolation(tmp_path, monkeypatch):
     assert res.multi_study_isolation == "label_not_found_full_text"
     assert "recruited 300 adults" in seen[0]["paper"]
     assert seen[0]["target_study"] == "Study 1"                    # judge still told the label
+
+
+# ── full-document targeted search (pre-isolation corpus) ──
+
+
+def _footnote_corpora(full_text):
+    import hashlib
+
+    import numpy as np
+
+    from backend.services.embeddings import EmbeddingCorpus
+
+    def _corpus(prefix, segments):
+        n = len(segments)
+        vecs = [[1.0, 0.0]] + [[0.9701, -0.2425]] * (n - 1)
+        return EmbeddingCorpus(
+            segments=segments,
+            embeddings=np.array(vecs, dtype=np.float32),
+            chunk_ids=[f"{prefix}_{i + 1:04d}" for i in range(n)],
+            norms=np.ones(n, dtype=np.float32),
+            metadata=[{} for _ in range(n)],
+        )
+
+    prereg = _corpus("PREREG", ["Missing data: pairwise deletion for all analyses."])
+    isolated = _corpus("PAPER", ["Study 1 analysed missing data as registered."])
+    full = _corpus("FULLPAPER", [
+        "Study 1 analysed missing data as registered.",
+        "1 Listwise deletion was used for regression analyses in MPLUS.",
+    ])
+    return {
+        f"prereg:{hashlib.sha256(b'p').hexdigest()}": prereg,
+        f"paper:{hashlib.sha256(b'x').hexdigest()}": isolated,
+        comparisons._corpus_cache_key("fullpaper", full_text): full,
+    }
+
+
+def test_targeted_search_reaches_footnote_dropped_by_isolation(monkeypatch):
+    import numpy as np
+
+    full_text = "Study 1 analysed missing data as registered.\n\n1 Listwise deletion was used ..."
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        if len(calls) == 1:
+            return _verif_reply(verdict="missing", unlocated_paper="pairwise deletion (listwise deletion, complete-case)")
+        return _verif_reply(verdict="yes", info="listwise, not pairwise")
+
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.zeros(2, dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+
+    result = comparisons.run_comparison(
+        "p", "x", "claude", "Missing data", corpus_cache=_footnote_corpora(full_text),
+        top_k=1, full_paper_text=full_text,
+    )
+    assert len(calls) == 2
+    augmented = calls[1]
+    assert "FULLPAPER_0002" in augmented
+    assert "[outside the isolated target-study text] 1 Listwise deletion" in augmented
+    assert "use them only where they apply to the target study" in augmented
+    # The chunk the judge already saw (also in the isolated text) is not re-sent.
+    assert "FULLPAPER_0001" not in augmented
+    assert _normalize_verdict(result.items[0].deviation_judgement) == "yes"
+
+
+def test_targeted_search_without_full_text_uses_isolated_corpus(monkeypatch):
+    import numpy as np
+
+    calls = []
+
+    def _dispatch(messages, **_kw):
+        calls.append(messages[-1]["content"])
+        return _verif_reply(verdict="missing", unlocated_paper="pairwise deletion (listwise deletion)")
+
+    monkeypatch.setattr(comparisons, "get_embedding", lambda t, model=None: np.zeros(2, dtype=np.float32))
+    monkeypatch.setattr(comparisons, "_dispatch_judgement", _dispatch)
+    comparisons.run_comparison(
+        "p", "x", "claude", "Missing data", corpus_cache=_footnote_corpora("unused"), top_k=1,
+    )
+    assert len(calls) == 1  # the footnote lives only in the full corpus: nothing found
+
+
+@pytest.mark.asyncio
+async def test_full_paper_text_reaches_runner_only_after_isolation(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 2.")
+    full = "Intro. Study 1. Study 2 results. Discussion. Footnote: listwise deletion."
+    paper = tmp_path / "paper.txt"; paper.write_text(full)
+
+    async def ok_isolation(*a, **k):
+        return "Intro. Study 2 results. Discussion."
+
+    monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", ok_isolation)
+    dims = [{"dimension": "Missing data", "definition": "m"}]
+    seen: list[dict] = []
+    await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=dims, comparison_runner=_ok_runner(seen),
+        multiple_experiments="yes", experiment_number="2")
+    assert "listwise deletion" in seen[0]["full_paper_text"]
+    assert "listwise deletion" not in seen[0]["paper"]
+
+    seen.clear()
+    await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        selected_dimensions=dims, comparison_runner=_ok_runner(seen))
+    assert seen[0]["full_paper_text"] is None

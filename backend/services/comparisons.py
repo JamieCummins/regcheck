@@ -417,6 +417,19 @@ def _verification_sim_threshold() -> float:
         return 0.25
 
 
+# Chunk-ID prefix of the full-paper (pre-isolation) corpus used only by the
+# targeted verification pass; distinct from PAPER_ so IDs never collide with the
+# isolated corpus's evidence IDs (and never resolve to a displayed quote card).
+_FULL_PAPER_CHUNK_PREFIX = "FULLPAPER"
+_OUTSIDE_ISOLATION_MARK = "[outside the isolated target-study text]"
+
+
+def _containment_norm(text: str) -> str:
+    """Case/whitespace-folded text for substring containment checks across corpora
+    whose chunk boundaries differ."""
+    return " ".join((text or "").casefold().split())
+
+
 def _targeted_element_search(
     element: str,
     corpus: "EmbeddingCorpus",
@@ -424,12 +437,22 @@ def _targeted_element_search(
     exclude_ids: set[str],
     embedding_model: str,
     max_hits: int = 4,
+    exclude_contained_in: str | None = None,
 ) -> list[tuple[str, str, float]]:
     """Search the FULL corpus for one judge-flagged element: cosine hits above a
     similarity floor plus a literal scan for the element's name/synonyms. Returns
     up to ``max_hits`` rows not already shown to the judge; reference-section
-    chunks are excluded so citation titles can't corroborate presence."""
+    chunks are excluded so citation titles can't corroborate presence. With
+    ``exclude_contained_in`` (case/whitespace-folded text already shown), chunks
+    whose text is wholly contained in it are skipped too — for searching a
+    different corpus than the one the judge's excerpts came from."""
     excluded = exclude_ids | _reference_chunk_ids(corpus)
+    if exclude_contained_in:
+        excluded |= {
+            cid
+            for cid, seg in zip(corpus.chunk_ids, corpus.segments)
+            if _containment_norm(seg) and _containment_norm(seg) in exclude_contained_in
+        }
     rows: dict[str, tuple[str, str, float]] = {}
     try:
         qvec = get_embedding(element, model=embedding_model)
@@ -1136,6 +1159,10 @@ async def general_preregistration_comparison(
     # paper is used) so the judge knows which study the registration belongs to.
     target_study = experiment_label if (has_multiple_experiments and experiment_label) else None
     target_study_note = experiment_note if target_study else None
+    # The TRUE full paper, handed to the judgement stage only when isolation trimmed
+    # it, so the targeted verification pass can reach content isolation dropped
+    # (footnotes, table notes, other sections). None = the corpus already is the paper.
+    full_paper_text: str | None = None
 
     if has_multiple_experiments and experiment_label:
         if task_id and redis_client:
@@ -1199,6 +1226,7 @@ async def general_preregistration_comparison(
                     cache_dir=isolation_cache_dir,
                     isolation_passes=isolation_passes,
                 )
+                full_paper_text = extracted_paper_sections
                 extracted_paper_sections = canonical_paper_text
                 isolation_status = "ok"
                 logger.info(
@@ -1454,6 +1482,7 @@ async def general_preregistration_comparison(
                     comparison_context=comparison_context,
                     target_study=target_study,
                     target_study_note=target_study_note,
+                    full_paper_text=full_paper_text,
                 )
             )
         for index, dimension_info in enumerate(dimensions_to_compare, start=1):
@@ -1528,6 +1557,7 @@ async def general_preregistration_comparison(
                 evidence_manifest=evidence_manifest,
                 target_study=target_study,
                 target_study_note=target_study_note,
+                full_paper_text=full_paper_text,
             )
             result_obj.items.extend(comparison.items)
             processed_count = index
@@ -2415,6 +2445,7 @@ async def _run_strand_consensus(
     comparison_context: ComparisonContext,
     target_study: str | None = None,
     target_study_note: str | None = None,
+    full_paper_text: str | None = None,
 ) -> list[ComparisonItem]:
     """Independent-voter ("strand") consensus for the preregistration flow.
 
@@ -2457,6 +2488,7 @@ async def _run_strand_consensus(
                 evidence_manifest=manifest,
                 target_study=target_study,
                 target_study_note=target_study_note,
+                full_paper_text=full_paper_text,
             )
             strand_items.append(comparison.items[0])
         return strand_items
@@ -2740,6 +2772,7 @@ def run_comparison(
     num_voters: int = 1,
     target_study: str | None = None,
     target_study_note: str | None = None,
+    full_paper_text: str | None = None,
 ) -> ComparisonResult:
     prereg_path = f"{embeddings_prefix}_prereg.pkl" if embeddings_prefix else None
     paper_path = f"{embeddings_prefix}_paper.pkl" if embeddings_prefix else None
@@ -2784,6 +2817,30 @@ def run_comparison(
             max_chunk_tokens=max_chunk_tokens,
         )
         cache[paper_key] = paper_corpus
+
+    # Full-paper corpus for the targeted verification pass only (multi-study runs whose
+    # isolation trimmed the paper). Built lazily — most dimensions never flag a paper
+    # element — and cached alongside the other corpora so dimensions share it.
+    full_paper_key: str | None = None
+    isolated_norm = ""
+    if full_paper_text and full_paper_text.strip() != extracted_paper_sections.strip():
+        full_paper_key = _corpus_cache_key("fullpaper", full_paper_text)
+        isolated_norm = _containment_norm(extracted_paper_sections)
+
+    def _full_paper_corpus() -> EmbeddingCorpus | None:
+        if full_paper_key is None:
+            return None
+        corpus = cache.get(full_paper_key)
+        if corpus is None:
+            corpus = build_corpus(
+                full_paper_text,
+                model=embedding_model,
+                chunk_prefix=_FULL_PAPER_CHUNK_PREFIX,
+                max_segments=max_segments,
+                max_chunk_tokens=max_chunk_tokens,
+            )
+            cache[full_paper_key] = corpus
+        return corpus
 
     # Drop references to large raw texts once corpora are built to ease memory pressure on small dynos.
     preregistration_input = ""
@@ -3041,6 +3098,9 @@ def run_comparison(
     searched_keys: set[tuple[str, str]] = set()
     if probe is not None:
         shown_ids = _ids_in_prompt_blocks(prereg_prompt + paper_prompt)
+        # Text already in front of the judge, for de-duplicating full-paper hits
+        # (their chunk IDs differ from the isolated corpus's, so IDs can't).
+        shown_paper_norm = _containment_norm(" ".join(paper_prompt))
         for round_number in range(1, _MAX_VERIFICATION_ROUNDS + 1):
             extra_blocks: list[str] = []
             for field_name, corpus, doc_label in (
@@ -3052,17 +3112,47 @@ def run_comparison(
                     if key in searched_keys:
                         continue  # already searched; a repeat listing adds no information
                     searched_keys.add(key)
-                    hits = _targeted_element_search(
-                        element, corpus, exclude_ids=shown_ids, embedding_model=embedding_model
-                    )
+                    full_corpus = _full_paper_corpus() if doc_label == "paper" else None
+                    if full_corpus is not None:
+                        # Paper-side elements are searched in the TRUE full paper, so a
+                        # footnote or section the isolation dropped is still reachable.
+                        hits = _targeted_element_search(
+                            element,
+                            full_corpus,
+                            exclude_ids=shown_ids,
+                            embedding_model=embedding_model,
+                            exclude_contained_in=shown_paper_norm,
+                        )
+                    else:
+                        hits = _targeted_element_search(
+                            element, corpus, exclude_ids=shown_ids, embedding_model=embedding_model
+                        )
                     searched.append(f"'{element}' ({doc_label})")
                     if hits:
                         shown_ids.update(cid for cid, _t, _s in hits)
+                        if full_corpus is not None:
+                            shown_paper_norm += " " + _containment_norm(" ".join(t for _c, t, _s in hits))
                         labelled = " ".join(
-                            f"[{cid}, relevance_score={sim:.3f}] {text}" for cid, text, sim in hits
+                            f"[{cid}, relevance_score={sim:.3f}] "
+                            + (
+                                f"{_OUTSIDE_ISOLATION_MARK} "
+                                if full_corpus is not None
+                                and _containment_norm(text) not in isolated_norm
+                                else ""
+                            )
+                            + text
+                            for cid, text, sim in hits
+                        )
+                        outside_note = (
+                            f" Excerpts marked {_OUTSIDE_ISOLATION_MARK} come from parts of the paper that "
+                            "were not in the target study's isolated text (e.g. another study, the general "
+                            "discussion, or a footnote or table note); use them only where they apply to "
+                            "the target study."
+                            if _OUTSIDE_ISOLATION_MARK in labelled
+                            else ""
                         )
                         extra_blocks.append(
-                            f"Additional targeted {doc_label} excerpts (found by a full-document search for: {element}):\n{labelled}"
+                            f"Additional targeted {doc_label} excerpts (found by a full-document search for: {element}):{outside_note}\n{labelled}"
                         )
             if not extra_blocks:
                 break
