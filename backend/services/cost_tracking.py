@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 # Per-1M-token USD prices. LLMs: (input, output). Embeddings: single float.
 # APPROXIMATE — verify against provider pricing pages; override via COST_PRICING_JSON.
 _DEFAULT_PRICING: dict[str, Any] = {
+    # gpt-6.1-terra: OpenAI standard tier, <=272K-token context (developers.openai.com/
+    # api/docs/pricing, checked 2026-11-02). Longer contexts bill higher ($2.00/$7.50).
+    "gpt-6.1-terra": (1.00, 5.00),
     "gpt-5.5": (1.25, 10.0),
     "gpt-5": (1.25, 10.0),
     "gpt-4o-mini": (0.15, 0.60),

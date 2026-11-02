@@ -43,6 +43,15 @@ def test_tracker_prices_known_models():
     assert snap["estimate_complete"] is True
 
 
+def test_tracker_prices_gpt_6_1_terra():
+    # Previously unpriced, so llm_usd came out 0.0 for gpt-6.1-terra runs.
+    t = ct.CostTracker()
+    t.record_llm("gpt-6.1-terra", 2_000_000, 400_000)
+    snap = t.snapshot()
+    assert snap["llm_usd"] == pytest.approx(2 * 1.00 + 0.4 * 5.00)
+    assert snap["estimate_complete"] is True
+
+
 def test_tracker_flags_unpriced_models():
     t = ct.CostTracker()
     t.record_llm("some-unknown-model", 1000, 1000)
