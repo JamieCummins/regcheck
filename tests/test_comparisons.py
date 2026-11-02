@@ -1814,3 +1814,157 @@ def test_animals_flow_runs_dimensions_with_preclinical_context(tmp_path):
     assert "maze" in prereg_text.lower() or "pct123" in prereg_text.lower()
     assert "24 mice" in paper_text
     assert [i.dimension for i in result.items] == ["Sample size"]
+
+
+# ── isolation quality gate + label pre-check ──
+
+
+def test_isolation_rejection_reason_flags_refusal_and_near_empty():
+    paper = ("Method. Participants completed the task. " * 2600)  # ~104 KB paper
+    refusal = 'The paper does not contain a study labeled "Study 1."'
+    assert "too short" in comparisons._isolation_rejection_reason(refusal, paper)
+    # 3.3 KB of a 104 KB paper (intro only) is below the 5% floor.
+    assert "too short" in comparisons._isolation_rejection_reason("Introduction text. " * 175, paper)
+    # A healthy extraction passes.
+    assert comparisons._isolation_rejection_reason("Study 1 method and results. " * 300, paper) is None
+    # A long-enough refusal (short source) is still caught by its shape.
+    short_src = "x" * 100
+    assert "refusal" in comparisons._isolation_rejection_reason(refusal, short_src)
+    # The floor never exceeds half the source (tiny inputs aren't auto-rejected)...
+    assert comparisons._isolation_min_chars(40) == 20
+    # ...and a refusal phrase inside real headed content is not a refusal.
+    headed = "## Method\nThe sample does not include minors. Participants were adults."
+    assert comparisons._isolation_rejection_reason(headed, short_src) is None
+
+
+def test_isolation_refusal_is_rejected_and_never_cached(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        comparisons, "_claude_chat",
+        lambda **kw: 'The paper does not contain a study labeled "Study 1."',
+    )
+    paper = "Study 1 method. " * 1000
+    with pytest.raises(comparisons.IsolationRejected):
+        _run_coro(comparisons.extract_experiment_specific_paper_text(
+            paper, "1", client_choice="claude", cache_dir=str(tmp_path)))
+    assert not list(tmp_path.glob("isolation_*.txt"))  # refusal never cached
+
+
+def test_isolation_ensemble_drops_refusal_drafts(monkeypatch):
+    good = "## Study 3a\n" + "Participants N = 50 completed the task. " * 60
+    drafts = iter([good, "I cannot find a study labelled 3a in this text."])
+    monkeypatch.setattr(comparisons, "_claude_chat", lambda **kw: next(drafts))
+    out = _run_coro(comparisons.extract_experiment_specific_paper_text(
+        "Study 3a " + "x" * 4000, "3a", client_choice="claude", isolation_passes=2))
+    assert "cannot find" not in out
+    assert out.startswith("## Study 3a")
+
+
+def test_isolation_prompt_version_bumped():
+    # Stale pre-gate cache entries must never be served.
+    assert comparisons._ISOLATION_PROMPT_VERSION != "2026-06-29.1"
+
+
+@pytest.mark.parametrize(
+    "label,text,expected",
+    [
+        ("1", "In Study 1 we ...", True),
+        ("Study 1", "In Experiment 1 we ...", True),
+        ("2", "Experiments 2 and 3 used ...", True),
+        ("Study 1", "Study 10 replicated ...", False),
+        ("Study 1", "This study tested ...", False),
+        ("3a", "STUDY 3A: method", True),
+        ("Experiment 1b", "Experiment 1b used ...", True),
+        ("the online replication", "We ran the online replication on Prolific.", True),
+        ("the online replication", "We ran a lab study.", False),
+    ],
+)
+def test_study_label_in_text_variants(label, text, expected):
+    assert comparisons._study_label_in_text(label, text) is expected
+
+
+def _fake_redis():
+    class _R:
+        def __init__(s): s.h = {}
+        async def hset(s, k, mapping=None, **kw): s.h.setdefault(k, {}).update(mapping or kw)
+        async def hgetall(s, k): return s.h.get(k, {})
+        async def expire(s, *a, **k): return True
+        async def ttl(s, *a, **k): return 3600
+        async def persist(s, *a, **k): return True
+        async def set(s, k, v, ex=None): s.h[k] = v
+        async def get(s, k): return s.h.get(k)
+        async def exists(s, k): return 1 if k in s.h else 0
+        async def zadd(s, *a, **k): return 1
+    return _R()
+
+
+def _ok_runner(seen):
+    def fake_runner(p, pa, c, d, **kw):
+        seen.append({"paper": pa, **kw})
+        return comparisons.ComparisonResult(items=[comparisons.ComparisonItem(
+            dimension=d, deviation_judgement="no", deviation_information="ok")])
+    return fake_runner
+
+
+@pytest.mark.asyncio
+async def test_refusal_isolation_falls_back_to_full_text(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        comparisons, "_claude_chat",
+        lambda **kw: 'The paper does not contain a study labeled "Study 1."',
+    )
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 1.")
+    full = "Introduction. Study 1 method: we recruited 300 adults. " * 80
+    paper = tmp_path / "paper.txt"; paper.write_text(full)
+    seen: list[dict] = []
+    redis = _fake_redis()
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        task_id="t1", redis_client=redis,
+        selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
+        comparison_runner=_ok_runner(seen), multiple_experiments="yes",
+        experiment_number="1", isolation_cache_dir=str(tmp_path / "iso"))
+    st = redis.h["t1"]
+    assert st["state"] == "SUCCESS"
+    assert st["multi_study_isolation"] == "fallback_full_text"
+    assert "refusal" in st["multi_study_isolation_error"] or "too short" in st["multi_study_isolation_error"]
+    assert res.multi_study_isolation == "fallback_full_text"
+    assert "we recruited 300 adults" in seen[0]["paper"]          # ran on the full paper
+    assert not list((tmp_path / "iso").glob("isolation_*.txt"))   # nothing cached
+
+
+@pytest.mark.asyncio
+async def test_label_not_found_skips_isolation(tmp_path, monkeypatch):
+    import numpy as np
+    import backend.services.embeddings as emb
+
+    monkeypatch.setattr(
+        emb, "openai_embed_segments",
+        lambda s, model=None, **k: np.ones((max(1, len(list(s))), 8), dtype=np.float32),
+    )
+    calls = {"n": 0}
+
+    async def isolation(*a, **k):
+        calls["n"] += 1
+        return "isolated"
+
+    monkeypatch.setattr(comparisons, "extract_experiment_specific_paper_text", isolation)
+    prereg = tmp_path / "p.txt"; prereg.write_text("Preregister Study 1.")
+    paper = tmp_path / "paper.txt"; paper.write_text("This study recruited 300 adults. Discussion.")
+    seen: list[dict] = []
+    redis = _fake_redis()
+    res = await comparisons.general_preregistration_comparison(
+        str(prereg), ".txt", str(paper), ".txt", "claude", "pymupdf",
+        task_id="t1", redis_client=redis,
+        selected_dimensions=[{"dimension": "Sample size", "definition": "n"}],
+        comparison_runner=_ok_runner(seen), multiple_experiments="yes", experiment_number="Study 1")
+    assert calls["n"] == 0                                         # no LLM call
+    assert redis.h["t1"]["multi_study_isolation"] == "label_not_found_full_text"
+    assert res.multi_study_isolation == "label_not_found_full_text"
+    assert "recruited 300 adults" in seen[0]["paper"]
+    assert seen[0]["target_study"] == "Study 1"                    # judge still told the label

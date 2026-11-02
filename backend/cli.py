@@ -337,6 +337,7 @@ async def _run_batch(args) -> dict:
                     "output": str(out_path),
                     "dimensions": len(payload.get("items", [])),
                     "cost_usd": (payload.get("cost") or {}).get("total_usd"),
+                    "multi_study_isolation": payload.get("multi_study_isolation"),
                 }
             )
         except Exception as exc:

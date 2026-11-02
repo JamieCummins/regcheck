@@ -136,11 +136,16 @@
             </div>
         </header>
 
-        {% if multi_study_isolation == "failed" %}
+        {% if multi_study_isolation in ("failed", "fallback_full_text", "label_not_found_full_text") %}
         <div role="alert" style="margin:0 auto 1.1rem; max-width:1100px; padding:.85rem 1.1rem; border:1px solid rgba(214,158,46,.5); border-left:4px solid #d69e2e; border-radius:.5rem; background:rgba(214,158,46,.12); font-size:.92rem; line-height:1.5;">
             <strong>Multi-study isolation didn't run.</strong>
+            {% if multi_study_isolation == "label_not_found_full_text" %}
+            The paper never names study {{ multi_study_label or "the selected study" }}, so {{ brand_name }} skipped isolation and ran this comparison on the <strong>full paper</strong>.
+            If the paper reports only one study, this is expected.
+            {% else %}
             {{ brand_name }} couldn't isolate study {{ multi_study_label or "the selected study" }} from the paper, so this comparison ran on the <strong>full paper</strong> rather than just that study.{% if multi_study_isolation_error %} Reason: {{ multi_study_isolation_error }}.{% endif %}
             Re-running, or choosing a different model, may help.
+            {% endif %}
         </div>
         {% endif %}
 

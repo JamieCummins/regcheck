@@ -232,6 +232,13 @@ class ComparisonResult(BaseModel):
     # Live token/cost estimate for the run (see cost_tracking); optional so old
     # stored payloads and bare test results validate unchanged.
     cost: dict[str, Any] | None = None
+    # Multi-study isolation outcome, mirroring the Redis task fields of the same
+    # name so CLI/batch runs (no Redis) can detect a degraded run: "ok", "failed",
+    # "fallback_full_text" (output rejected by the quality gate) or
+    # "label_not_found_full_text" (label absent from the paper; isolation skipped).
+    # None when isolation was not requested.
+    multi_study_isolation: str | None = None
+    multi_study_isolation_error: str | None = None
 
 
 class _ComparisonResponseSchema(BaseModel):
@@ -683,7 +690,7 @@ async def _evidence_success_fields(
 
 
 # Bump when the isolation prompt below changes so any cached extractions auto-invalidate.
-_ISOLATION_PROMPT_VERSION = "2026-06-29.1"
+_ISOLATION_PROMPT_VERSION = "2026-11-02.1"
 
 
 def _isolation_model_tag(client_choice: str, reasoning_effort: str | None) -> str:
@@ -739,6 +746,74 @@ def _union_isolations(drafts: list[str]) -> str:
         + "\n\n## Additional content recovered from parallel isolation passes\n\n"
         + "\n\n".join(extras)
     )
+
+
+class IsolationRejected(ValueError):
+    """The isolation model's output failed the quality gate (a refusal or a
+    near-empty extraction); the caller falls back to the full paper text."""
+
+
+# Refusal phrasings seen from isolation models when the target label can't be
+# matched (e.g. 'The paper does not contain a study labeled "Study 1."').
+_ISOLATION_REFUSAL_RE = re.compile(
+    r"\b(?:does not|doesn't|did not|do not) (?:contain|include|report|describe|mention)\b"
+    r"|\bno (?:study|experiment) (?:labell?ed|called|named|numbered)\b"
+    r"|\b(?:cannot|can't|could not|couldn't|unable to) (?:find|locate|identify|isolate|extract)\b"
+    r"|\bthere (?:is|are) no (?:study|studies|experiment|experiments)\b",
+    re.IGNORECASE,
+)
+_HEADING_LINE_RE = re.compile(
+    r"^\s*(?:#{1,6}\s+\S.*|(?:\d+(?:\.\d+)*\.?\s+)?[A-Z][^.!?\n]{0,60})\s*$", re.MULTILINE
+)
+
+
+def _isolation_min_chars(source_chars: int) -> int:
+    """Length floor for an accepted isolation: max(2000 chars, 5% of the paper), but
+    never above half the source (so very short inputs/fixtures aren't auto-rejected)."""
+    return int(min(max(2000, 0.05 * source_chars), 0.5 * source_chars))
+
+
+def _isolation_rejection_reason(isolated: str, source_text: str) -> str | None:
+    """Conservative heuristic quality gate for an isolation draft (no extra LLM call).
+    Returns a human-readable reason to reject it, or None to accept. Rejects (1) drafts
+    shorter than ``_isolation_min_chars`` of the source and (2) refusal-shaped replies:
+    a refusal phrase in the opening lines of a short, heading-less handful of sentences."""
+    text = (isolated or "").strip()
+    floor = _isolation_min_chars(len(source_text or ""))
+    if len(text) < floor:
+        return (
+            f"isolated text too short ({len(text)} chars; minimum {floor} for a "
+            f"{len(source_text or '')}-char paper)"
+        )
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if (
+        _ISOLATION_REFUSAL_RE.search(text[:400])
+        and len(sentences) <= 8
+        and not _HEADING_LINE_RE.search(text)
+    ):
+        snippet = " ".join(text.split())[:120]
+        return f"isolation model returned a refusal-shaped reply: {snippet!r}"
+    return None
+
+
+_LABEL_TOKEN_RE = re.compile(r"\b(\d+[a-z]?|[a-z])\s*$", re.IGNORECASE)
+
+
+def _study_label_in_text(label: str, text: str) -> bool:
+    """True if the target-study label (or an obvious variant) occurs in the paper:
+    the label verbatim, or its trailing number/letter token prefixed by Study/Studies/
+    Experiment/Experiments (so "2", "Study 2" and "Experiment 2" are interchangeable,
+    while "Study 1" never matches "Study 10"). Case-insensitive."""
+    label = " ".join((label or "").split())
+    if not label or not text:
+        return False
+    tail = r"(?![A-Za-z0-9])"
+    variants = [r"(?<![A-Za-z0-9])" + re.escape(label).replace(r"\ ", r"\s+") + tail]
+    token = _LABEL_TOKEN_RE.search(label)
+    if token:
+        tok = re.escape(token.group(1))
+        variants.append(rf"\b(?:stud(?:y|ies)|experiments?)\s+{tok}{tail}")
+    return any(re.search(v, text, re.IGNORECASE) for v in variants)
 
 
 async def extract_experiment_specific_paper_text(
@@ -882,7 +957,7 @@ async def extract_experiment_specific_paper_text(
             except OSError:
                 logger.warning("Could not read isolation cache; recomputing", exc_info=True)
                 cached = ""
-            if cached:
+            if cached and _isolation_rejection_reason(cached, full_paper_text) is None:
                 logger.info(
                     "Study-specific extraction served from cache",
                     extra={"study_label": experiment_label, "cache_path": str(cache_path)},
@@ -893,15 +968,32 @@ async def extract_experiment_specific_paper_text(
         cleaned = (await asyncio.to_thread(_invoke_llm) or "").strip()
     else:
         # Belt-and-suspenders: run the isolation N times in parallel and union the spans.
-        drafts = await asyncio.gather(*[asyncio.to_thread(_invoke_llm) for _ in range(passes)])
-        cleaned = _union_isolations([(d or "").strip() for d in drafts])
+        drafts = [
+            (d or "").strip()
+            for d in await asyncio.gather(*[asyncio.to_thread(_invoke_llm) for _ in range(passes)])
+        ]
+        # Gate each draft before the union: one refusal must not poison (or, being
+        # the shortest, silently vanish into) an otherwise good ensemble.
+        accepted = [d for d in drafts if d and _isolation_rejection_reason(d, full_paper_text) is None]
+        cleaned = _union_isolations(accepted or drafts)
         logger.info(
-            "Study-specific extraction unioned across %d passes",
+            "Study-specific extraction unioned across %d passes (%d accepted)",
             passes,
+            len(accepted),
             extra={"study_label": experiment_label},
         )
     if not cleaned:
         raise ValueError("Received empty experiment-focused extraction from the model")
+    # Quality gate: a refusal or near-empty extraction is never used or cached; the
+    # caller falls back to the full paper (multi_study_isolation="fallback_full_text").
+    rejection = _isolation_rejection_reason(cleaned, full_paper_text)
+    if rejection:
+        logger.warning(
+            "Study-specific extraction rejected by quality gate: %s",
+            rejection,
+            extra={"study_label": experiment_label},
+        )
+        raise IsolationRejected(rejection)
     if cache_path is not None:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1070,59 +1162,113 @@ async def general_preregistration_comparison(
                     "multi_study_isolation_error": "",
                 },
             )
-        try:
-            canonical_paper_text = await extract_experiment_specific_paper_text(
-                extracted_paper_sections,
-                experiment_label=experiment_label,
-                experiment_note=experiment_note,
-                client_choice=client_choice,
-                reasoning_effort=reasoning_effort,
-                cache_dir=isolation_cache_dir,
-                isolation_passes=isolation_passes,
+        isolation_status = "pending"
+        isolation_error = ""
+        if not _study_label_in_text(experiment_label, extracted_paper_sections):
+            # Cheap pre-check: a label that never occurs in the paper (e.g. "Study 1"
+            # named only by the registration of a single-study paper) invites a
+            # refusal from the isolation model. Skip the call and use the full paper.
+            isolation_status = "label_not_found_full_text"
+            isolation_error = (
+                f'The label "{experiment_label}" does not occur in the paper text; '
+                "isolation was skipped and the full paper was used"
             )
-            extracted_paper_sections = canonical_paper_text
-            logger.info(
-                "Study-specific extraction succeeded",
-                extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
-            )
-            if task_id and redis_client:
-                await redis_client.hset(
-                    task_id,
-                    mapping={
-                        "state": "IN_PROGRESS",
-                        "result_json": _result_json_with_cost(result_obj),
-                        "total_dimensions": total_dimensions,
-                        "processed_dimensions": 0,
-                        "dimensions": json.dumps(dimension_names),
-                        "multi_study_isolation": "ok",
-                        "status": (
-                            f"Study {experiment_label} isolated; embedding preregistration and paper"
-                        ),
-                    },
-                )
-        except Exception as exc:
-            # Multi-study isolation is best-effort: on failure we still run the
-            # comparison on the FULL paper. But surface it loudly (clear log + a
-            # PERSISTENT flag the report can show) so a silently-degraded run on a
-            # critical feature isn't mistaken for a successful study-specific one.
-            logger.error(
-                "Study-specific extraction FAILED (%s: %s); falling back to full paper text",
-                type(exc).__name__,
-                exc,
-                extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
-                exc_info=exc,
+            logger.warning(
+                "Study label not found in paper; skipping isolation",
+                extra={"task_id": task_id, "study_label": experiment_label},
             )
             if task_id and redis_client:
                 await redis_client.hset(
                     task_id,
                     mapping={
-                        "multi_study_isolation": "failed",
-                        "multi_study_isolation_error": f"{type(exc).__name__}: {exc}"[:300],
+                        "multi_study_isolation": isolation_status,
+                        "multi_study_isolation_error": isolation_error[:300],
                         "status": (
-                            f"Could not isolate study {experiment_label}; ran the comparison on the full paper"
+                            f"Study {experiment_label} not named in the paper; ran the comparison on the full paper"
                         ),
                     },
                 )
+        if isolation_status == "pending":
+            try:
+                canonical_paper_text = await extract_experiment_specific_paper_text(
+                    extracted_paper_sections,
+                    experiment_label=experiment_label,
+                    experiment_note=experiment_note,
+                    client_choice=client_choice,
+                    reasoning_effort=reasoning_effort,
+                    cache_dir=isolation_cache_dir,
+                    isolation_passes=isolation_passes,
+                )
+                extracted_paper_sections = canonical_paper_text
+                isolation_status = "ok"
+                logger.info(
+                    "Study-specific extraction succeeded",
+                    extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
+                )
+                if task_id and redis_client:
+                    await redis_client.hset(
+                        task_id,
+                        mapping={
+                            "state": "IN_PROGRESS",
+                            "result_json": _result_json_with_cost(result_obj),
+                            "total_dimensions": total_dimensions,
+                            "processed_dimensions": 0,
+                            "dimensions": json.dumps(dimension_names),
+                            "multi_study_isolation": "ok",
+                            "status": (
+                                f"Study {experiment_label} isolated; embedding preregistration and paper"
+                            ),
+                        },
+                    )
+            except IsolationRejected as exc:
+                # The model answered, but with a refusal or a near-empty extraction:
+                # never used, never cached; run on the full paper and flag it distinctly.
+                isolation_status = "fallback_full_text"
+                isolation_error = f"Isolation output rejected ({exc}); ran on the full paper text"
+                logger.warning(
+                    "Study-specific extraction rejected (%s); falling back to full paper text",
+                    exc,
+                    extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
+                )
+                if task_id and redis_client:
+                    await redis_client.hset(
+                        task_id,
+                        mapping={
+                            "multi_study_isolation": isolation_status,
+                            "multi_study_isolation_error": isolation_error[:300],
+                            "status": (
+                                f"Could not isolate study {experiment_label}; ran the comparison on the full paper"
+                            ),
+                        },
+                    )
+            except Exception as exc:
+                # Multi-study isolation is best-effort: on failure we still run the
+                # comparison on the FULL paper. But surface it loudly (clear log + a
+                # PERSISTENT flag the report can show) so a silently-degraded run on a
+                # critical feature isn't mistaken for a successful study-specific one.
+                logger.error(
+                    "Study-specific extraction FAILED (%s: %s); falling back to full paper text",
+                    type(exc).__name__,
+                    exc,
+                    extra={"task_id": task_id, "study_label": experiment_label, "client": client_choice},
+                    exc_info=exc,
+                )
+                isolation_status = "failed"
+                isolation_error = f"{type(exc).__name__}: {exc}"
+                if task_id and redis_client:
+                    await redis_client.hset(
+                        task_id,
+                        mapping={
+                            "multi_study_isolation": "failed",
+                            "multi_study_isolation_error": f"{type(exc).__name__}: {exc}"[:300],
+                            "status": (
+                                f"Could not isolate study {experiment_label}; ran the comparison on the full paper"
+                            ),
+                        },
+                    )
+
+        result_obj.multi_study_isolation = isolation_status
+        result_obj.multi_study_isolation_error = isolation_error[:300] or None
 
     runner = comparison_runner or run_comparison
     corpus_cache: dict[str, EmbeddingCorpus] = {}
