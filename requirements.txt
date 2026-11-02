@@ -3,7 +3,7 @@ aiosqlite==0.20.0
 alembic==1.13.2
 anthropic==0.34.1
 asyncpg==0.29.0
-Authlib==1.7.2
+Authlib==1.9.1
 fastapi==0.139.0
 greenlet==3.0.3
 gunicorn==26.0.0
