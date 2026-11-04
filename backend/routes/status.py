@@ -141,6 +141,14 @@ async def task_status(request: Request, task_id: str):
             value = _decode(data.get(key))
             if value:
                 parsed_settings[key] = value
+        # ISRCTN runs: how the registration in force at recruitment start was
+        # reconstructed (per-field recovery tiers), written by the worker.
+        recovery_raw = _decode(data.get("registration_recovery"))
+        if recovery_raw:
+            try:
+                parsed_settings["registration_recovery"] = json.loads(recovery_raw)
+            except (json.JSONDecodeError, TypeError):  # pragma: no cover - defensive
+                pass
 
     # Registered Report runs: Track A carried-forward-text integrity payload.
     rr_raw = data.get("rr_integrity")

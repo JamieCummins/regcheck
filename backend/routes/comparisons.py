@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -17,9 +18,11 @@ from ..core.storage import get_s3_config, guess_content_type, s3_upload_fileobj
 from ..services import reports as reports_service
 from ..services.documents import read_file
 from ..services.llm import HOSTED_CLIENTS
+from ..services.isrctn import find_isrctn_id
 from ..services.osf import extract_osf_guid, fetch_osf_preregistration
 
 router = APIRouter()
+_NCT_RE = re.compile(r"NCT\d{8}", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 # Sentinel: distinguishes "owner not supplied (use the session user)" from an
@@ -372,6 +375,20 @@ async def _safe_hset(redis_client, task_id: str, mapping: dict, retries: int = 2
         raise last_error
 
 
+def _validate_trial_registration_id(registration_id: str | None) -> None:
+    """A clinical comparison needs a ClinicalTrials.gov or ISRCTN identifier (or
+    a link containing one); the worker picks the registry from its form."""
+    if not registration_id or not registration_id.strip():
+        raise HTTPException(
+            status_code=400, detail="A ClinicalTrials.gov or ISRCTN link or ID is required for this option"
+        )
+    if not _NCT_RE.search(registration_id) and find_isrctn_id(registration_id) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a ClinicalTrials.gov ID (e.g. NCT01234567) or an ISRCTN ID (e.g. ISRCTN17573805).",
+        )
+
+
 async def _queue_comparison(
     request: Request,
     *,
@@ -468,10 +485,7 @@ async def _queue_comparison(
     stored_csv_path: str | None = None
 
     if comparison_type == "clinical_trials":
-        if not registration_id or not registration_id.strip():
-            raise HTTPException(
-                status_code=400, detail="ClinicalTrials.gov link or ID is required for this option"
-            )
+        _validate_trial_registration_id(registration_id)
     elif comparison_type in ("general_preregistration", "registered_report"):
         if osf_url and osf_url.strip():
             # Preregistration comes from an OSF link; validate it here and fetch
@@ -789,10 +803,11 @@ async def compare_post(
     dimensions_data: str = Form(...),
     visibility: str | None = Form(None),
 ):
-    # Preregistration source: a file upload, a ClinicalTrials.gov registration, or
-    # an OSF link. (clinical_registration kept for backward compatibility.)
+    # Preregistration source: a file upload, a trial registry record
+    # (ClinicalTrials.gov or ISRCTN, told apart by the ID), or an OSF link.
+    # (clinical_registration kept for backward compatibility.)
     source = (prereg_source or "upload").strip().lower()
-    is_clinical = source == "clinical" or _bool_from_yes(clinical_registration)
+    is_clinical = source in ("clinical", "isrctn") or _bool_from_yes(clinical_registration)
     is_rr = (comparison_mode or "").strip().lower() == "registered_report"
     comparison_type: ComparisonType = (
         "clinical_trials"

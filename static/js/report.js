@@ -1719,8 +1719,50 @@
     const SETTINGS_TYPE_LABELS = { preregistration: "Preregistration", clinical_trials: "Clinical trial (ClinicalTrials.gov)", registered_report: "Registered report", registration_quality: "Registration quality" };
     const titleCase = (v) => String(v || "").replace(/^\w/, (c) => c.toUpperCase());
 
+    const RECOVERY_TIER_LABELS = {
+        confirmed: "Confirmed prospective",
+        probable: "Probably prospective",
+        unverified: "Unverified",
+        unrecoverable: "Unrecoverable",
+        retrospective: "Registered after start",
+    };
+
+    function formatIsoDate(value) {
+        const d = value ? new Date(value + "T00:00:00") : null;
+        return d && !isNaN(d) ? d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : (value || "");
+    }
+
+    // ISRCTN keeps no version history: the viewer discloses which registration
+    // version was reconstructed and how reliably each field was recovered.
+    function recoveryRows(rec) {
+        if (!rec || rec.registry !== "isrctn") return [];
+        const rows = [];
+        let version;
+        if (rec.prospective === false) {
+            version = `${rec.isrctn_id}, as first registered (${formatIsoDate(rec.registration_date)}); registered after recruitment started (${formatIsoDate(rec.start_date)})`;
+        } else if (rec.start_date) {
+            version = `${rec.isrctn_id}, version in force at recruitment start (${formatIsoDate(rec.start_date)})`;
+        } else {
+            version = `${rec.isrctn_id}, current version (no recruitment start date)`;
+        }
+        rows.push(["Registration version", version]);
+        const groups = {};
+        (Array.isArray(rec.fields) ? rec.fields : []).forEach((f) => {
+            (groups[f.tier] = groups[f.tier] || []).push(f.field);
+        });
+        Object.keys(RECOVERY_TIER_LABELS).forEach((tier) => {
+            if (groups[tier] && groups[tier].length) rows.push([RECOVERY_TIER_LABELS[tier], groups[tier].join(", ")]);
+        });
+        return rows;
+    }
+
     function settingsRows(s) {
-        const rows = [["Comparison", SETTINGS_TYPE_LABELS[s.comparison_type] || titleCase(s.comparison_type) || "Preregistration"]];
+        const rec = s.registration_recovery;
+        const typeLabel = rec && rec.registry === "isrctn" && s.comparison_type === "clinical_trials"
+            ? "Clinical trial (ISRCTN)"
+            : SETTINGS_TYPE_LABELS[s.comparison_type] || titleCase(s.comparison_type) || "Preregistration";
+        const rows = [["Comparison", typeLabel]];
+        rows.push(...recoveryRows(rec));
         rows.push(["Model", SETTINGS_MODEL_LABELS[s.client] || s.client || "—"]);
         if (s.client === "openai" && s.reasoning_effort) rows.push(["Reasoning effort", titleCase(s.reasoning_effort)]);
         const parserLabel = (v) => SETTINGS_PARSER_LABELS[String(v || "").replace(/_fallback$/, "")] || v;

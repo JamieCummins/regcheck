@@ -66,7 +66,7 @@
                       <div class="mode-choice">
                           <button type="button" class="mode-card comparison-mode-card" id="mode-standard" data-comparison-mode="standard" aria-pressed="false">
                               <span class="mode-card__title">Preregistration vs. paper</span>
-                              <span class="mode-card__desc">Compare a preregistration or registration (uploaded file, ClinicalTrials.gov, or OSF) with the published paper.</span>
+                              <span class="mode-card__desc">Compare a preregistration or registration (uploaded file, ClinicalTrials.gov, ISRCTN, or OSF) with the published paper.</span>
                               <span class="mode-card__cta">Select &rsaquo;</span>
                           </button>
                           <button type="button" class="mode-card mode-card--ghost comparison-mode-card" id="mode-registered-report" data-comparison-mode="registered_report" aria-pressed="false">
@@ -200,7 +200,7 @@
                   <section class="form-step choice-step" data-step="7">
                       <div class="choice-step__text">
                           <h2 class="step-heading">Where is your preregistration?</h2>
-                          <p class="step-sub">Upload files, provide a ClinicalTrials.gov identifier, or paste a link to the Open Science Framework.</p>
+                          <p class="step-sub">Upload files, provide a ClinicalTrials.gov or ISRCTN identifier, or paste a link to the Open Science Framework.</p>
                       </div>
                       <div class="choice-step__control">
                           <div class="field">
@@ -208,6 +208,7 @@
                               <select class="form-control app-toggles" id="prereg_source" name="prereg_source">
                                   <option value="upload" selected>Upload a file</option>
                                   <option value="clinical">ClinicalTrials.gov</option>
+                                  <option value="isrctn">ISRCTN</option>
                                   <option value="osf">OSF link</option>
                               </select>
                           </div>
@@ -230,9 +231,9 @@
                               </div>
                               <div id="clinical-upload" class="upload-branch" hidden>
                                   <div class="clinical-input">
-                                      <label class="field-label" for="registration_id">ClinicalTrials.gov link or ID</label>
+                                      <label class="field-label" for="registration_id" id="registration_id_label">ClinicalTrials.gov link or ID</label>
                                       <input type="text" class="form-control" id="registration_id" name="registration_id" placeholder="NCT01234567" disabled>
-                                      <p class="dropzone__note">Enter a valid ClinicalTrials.gov identifier or URL.</p>
+                                      <p class="dropzone__note" id="registration_id_note">Enter a valid ClinicalTrials.gov identifier or URL.</p>
                                   </div>
                               </div>
                               <div id="osf-upload" class="upload-branch" hidden>

@@ -551,9 +551,32 @@
             return comparisonSelect ? comparisonSelect.value : "upload";
         }
 
+        // ISRCTN shares the trial-registry input; the backend tells the
+        // registries apart by the identifier.
+        const REGISTRY_COPY = {
+            clinical: {
+                label: "ClinicalTrials.gov link or ID",
+                placeholder: "NCT01234567",
+                note: "Enter a valid ClinicalTrials.gov identifier or URL.",
+            },
+            isrctn: {
+                label: "ISRCTN link or ID",
+                placeholder: "ISRCTN17573805",
+                note: "Enter an ISRCTN identifier or URL. ISRCTN keeps no version history, so the version in force at recruitment start is reconstructed from the record's change notes.",
+            },
+        };
+        const registrationLabel = document.getElementById("registration_id_label");
+        const registrationNote = document.getElementById("registration_id_note");
+
         function setPreregSource(source) {
-            const isClinical = source === "clinical";
+            const isClinical = source === "clinical" || source === "isrctn";
             const isOsf = source === "osf";
+            const copy = REGISTRY_COPY[source];
+            if (copy) {
+                if (registrationLabel) registrationLabel.textContent = copy.label;
+                if (registrationInput) registrationInput.placeholder = copy.placeholder;
+                if (registrationNote) registrationNote.textContent = copy.note;
+            }
             if (comparisonTypeInput) {
                 comparisonTypeInput.value = isClinical ? "clinical_trials" : "general_preregistration";
             }
@@ -575,7 +598,7 @@
             const paperOk = FLOW === "quality" || (paperFileInput && paperFileInput.files.length > 0);
             const source = selectedSource();
             let ready;
-            if (source === "clinical") {
+            if (source === "clinical" || source === "isrctn") {
                 ready = registrationInput && registrationInput.value.trim().length > 0 && paperOk;
             } else if (source === "osf") {
                 ready = osfUrlInput && osfUrlInput.value.trim().length > 0 && paperOk;
@@ -647,7 +670,7 @@
         // Registered Report mode: chosen on the step-10 tiles (posted via the
         // hidden comparison_mode input). RR relabels the two upload panes as
         // Stage 1 / Stage 2, retitles the source step, and drops the
-        // ClinicalTrials.gov source (an RR Stage 1 is a manuscript, uploaded or
+        // trial-registry sources (an RR Stage 1 is a manuscript, uploaded or
         // fetched from OSF — never a CT.gov record).
         const comparisonModeInput = document.getElementById("comparison_mode");
         const comparisonModeCards = Array.from(document.querySelectorAll(".comparison-mode-card"));
@@ -680,13 +703,14 @@
                 if (heading) heading.textContent = rr ? "Where is your Stage 1 manuscript?" : "Where is your preregistration?";
                 if (sub) sub.textContent = rr
                     ? "Upload files or paste a link to the Open Science Framework."
-                    : "Upload files, provide a ClinicalTrials.gov identifier, or paste a link to the Open Science Framework.";
+                    : "Upload files, provide a ClinicalTrials.gov or ISRCTN identifier, or paste a link to the Open Science Framework.";
                 if (srcLabel) srcLabel.textContent = rr ? "Stage 1 source" : "Preregistration source";
             }
             if (comparisonSelect) {
-                const clinicalOption = comparisonSelect.querySelector('option[value="clinical"]');
-                if (clinicalOption) clinicalOption.hidden = rr;
-                if (rr && comparisonSelect.value === "clinical") {
+                comparisonSelect.querySelectorAll('option[value="clinical"], option[value="isrctn"]').forEach((option) => {
+                    option.hidden = rr;
+                });
+                if (rr && (comparisonSelect.value === "clinical" || comparisonSelect.value === "isrctn")) {
                     comparisonSelect.value = "upload";
                     setPreregSource(selectedSource());
                 }

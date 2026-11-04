@@ -6,6 +6,17 @@ Notable changes to RegCheck. The application version lives in
 
 ## Unreleased
 
+### Registration sources
+- Added: ISRCTN as a registration source (wizard, `/api/v1/compare` and the
+  `clinical` CLI command, as `registration_id`). ISRCTN's API serves only the
+  current record, so the registration in force at recruitment start is
+  reconstructed from the record's own change notes ("Current ... as of",
+  "Previous ...", "Added ...", inline "(updated ..., previously: ...)"), field
+  by field. Each field gets a recovery tier (confirmed, probable, unverified,
+  unrecoverable, or registered after start) that the report's "View settings"
+  lists. Trials registered after recruitment started use the text as first
+  registered.
+
 ### Comparison engine
 - Fixed: multi-study runs now tell every per-dimension judgement which study
   the registration belongs to (the label and any user note from the wizard's

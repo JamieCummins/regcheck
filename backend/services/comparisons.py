@@ -49,6 +49,7 @@ from .report_artifacts import (
     store_source_artifacts,
     verify_manifest_artifacts,
 )
+from . import isrctn
 from .trials import extract_nct_id, extract_nested_trial_with_metadata
 from .llm import (
     DEFAULT_CLAUDE_MODEL,
@@ -1884,6 +1885,18 @@ async def general_preregistration_comparison(
     return result_obj
 
 
+def _recovery_disclosure(metadata: dict[str, Any]) -> dict[str, Any]:
+    """The part of an ISRCTN reconstruction shown in the report's settings."""
+    keys = ("registry", "isrctn_id", "registration_date", "start_date", "last_updated", "prospective", "source")
+    return {
+        **{k: metadata.get(k) for k in keys},
+        "fields": [
+            {"field": f.get("field"), "tier": f.get("tier"), "reason": f.get("reason")}
+            for f in metadata.get("fields") or []
+        ],
+    }
+
+
 async def clinical_trial_comparison(
     registration_id: str,
     paper_path: str,
@@ -1905,13 +1918,27 @@ async def clinical_trial_comparison(
 ) -> ComparisonResult:
     cost_tracking.start_run()  # live per-run token/cost accounting
     logger.info("Started clinical trial comparison", extra={"task_id": task_id})
-    extract_nct = nct_extractor or extract_nct_id
-    nct_id = extract_nct(registration_id)
     trial_metadata: dict[str, Any] = {}
-    if trial_fetcher is None:
-        nested_trial, trial_metadata = extract_nested_trial_with_metadata(nct_id)
+    isrctn_id = isrctn.find_isrctn_id(registration_id) if trial_fetcher is None else None
+    if isrctn_id:
+        # ISRCTN keeps no version history; the registration in force at
+        # recruitment start is reconstructed from the record's change notes.
+        nested_trial, trial_metadata = await asyncio.to_thread(
+            isrctn.extract_nested_trial_with_metadata, isrctn_id
+        )
+        registry_label = "ISRCTN Registration"
+        if redis_client and task_id:
+            await redis_client.hset(
+                task_id, mapping={"registration_recovery": json.dumps(_recovery_disclosure(trial_metadata))}
+            )
     else:
-        nested_trial = trial_fetcher(nct_id)
+        registry_label = "ClinicalTrials.gov Registration"
+        extract_nct = nct_extractor or extract_nct_id
+        nct_id = extract_nct(registration_id)
+        if trial_fetcher is None:
+            nested_trial, trial_metadata = extract_nested_trial_with_metadata(nct_id)
+        else:
+            nested_trial = trial_fetcher(nct_id)
     prereg_text = "\n\n".join(
         f"{dimension}\n\n" + "\n".join(f"{sub}\n{text}" for sub, text in subcomponents.items())
         for dimension, subcomponents in nested_trial.items()
@@ -1999,7 +2026,7 @@ async def clinical_trial_comparison(
         registration_payload = await asyncio.to_thread(
             build_json_evidence_source,
             source_id="registration",
-            label="ClinicalTrials.gov Registration",
+            label=registry_label,
             data=nested_trial,
             chunk_prefix="PREREG",
             metadata={"role": "registration", "comparison_type": "clinical_trials", **trial_metadata},

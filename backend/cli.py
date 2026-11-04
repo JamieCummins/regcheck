@@ -672,7 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
     clinical.add_argument(
         "--registration-id",
         required=True,
-        help="Clinical trial registration identifier (e.g., NCT number).",
+        help="Clinical trial registration identifier: a ClinicalTrials.gov NCT number or an ISRCTN (e.g., ISRCTN17573805). For ISRCTN the version in force at recruitment start is reconstructed from the record's change notes.",
     )
     clinical.add_argument(
         "--paper",
