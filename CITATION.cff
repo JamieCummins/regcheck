@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: >-
+  If you use RegCheck, please cite the paper below
+  (GitHub's "Cite this repository" button gives it in APA and BibTeX).
+title: RegCheck
+abstract: >-
+  An LLM-assisted tool for structured comparisons between study registrations
+  (preregistrations, clinical trial registrations, preclinical registrations)
+  and the papers that report them.
+type: software
+authors:
+  - family-names: Cummins
+    given-names: Jamie
+    affiliation: University of Bern
+version: 1.0.0
+license: AGPL-3.0-only
+repository-code: "https://github.com/JamieCummins/regcheck"
+keywords:
+  - preregistration
+  - study registration
+  - clinical trials
+  - metascience
+  - large language models
+preferred-citation:
+  type: article
+  title: >-
+    RegCheck: A tool for structured comparisons between study registrations
+    and papers
+  authors:
+    - family-names: Cummins
+      given-names: Jamie
+    - family-names: Clarke
+      given-names: Beth
+    - family-names: Hussey
+      given-names: Ian
+    - family-names: Elson
+      given-names: Malte
+  year: 2026
+  journal: arXiv
+  doi: 10.48550/arXiv.2601.13330
+  url: "https://arxiv.org/abs/2601.13330"
+  identifiers:
+    - type: other
+      value: "arXiv:2601.13330"
+      description: arXiv identifier

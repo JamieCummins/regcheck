@@ -186,5 +186,21 @@ pytest
 - Supported LLM providers: `openai`, `claude`, `deepseek` (set corresponding API key). `reasoning_effort` applies only to OpenAI models.
 - PDF parser choice: `grobid` or `dpt2`; `.docx` files are supported via `python-docx` reader.
 
+## Citation
+If you use RegCheck, please cite the paper (also in [CITATION.cff](CITATION.cff), which GitHub's "Cite this repository" button reads):
+
+> Cummins, J., Clarke, B., Hussey, I., & Elson, M. (2026). *RegCheck: A tool for structured comparisons between study registrations and papers*. arXiv. https://doi.org/10.48550/arXiv.2601.13330
+
+```bibtex
+@article{cummins_regcheck_2026,
+  title   = {{RegCheck}: A tool for structured comparisons between study registrations and papers},
+  author  = {Cummins, Jamie and Clarke, Beth and Hussey, Ian and Elson, Malte},
+  journal = {arXiv preprint arXiv:2601.13330},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2601.13330},
+  url     = {https://arxiv.org/abs/2601.13330}
+}
+```
+
 ## License
 GNU Affero General Public License v3.0 (see `LICENSE`).
